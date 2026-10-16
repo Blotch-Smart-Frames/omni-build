@@ -4,6 +4,20 @@ Build, sign, install and ship iOS and Android apps with no native toolchain (no 
 
 [AngularLynx](https://github.com/Blotch-Smart-Frames/AngularLynx) is its first user: its `@blotch/angular-lynx-build` builder will run OmniBuild for `ng build --platform ios|android`.
 
+## Repository
+
+An npm workspaces + turbo monorepo with the Rust inside `packages/` (see the README for the package table). The npm names are `omni-build` for the launcher and `@omni-build/<platform>-<arch>` for the platform packages. Things that aren't obvious from the files:
+
+- **Each Rust crate is listed by path** in the root `Cargo.toml`'s `members`. A `packages/*` glob would also match the npm packages, which have no `Cargo.toml`, and Cargo would fail.
+- **A Rust crate that turbo should run has a private `package.json`** whose scripts call Cargo (see `packages/cli`). Its turbo `build` and `test` aren't cached: Cargo caches them in the shared `target/`.
+- **Platform packages aren't in the repository**, and the launcher's `package.json` doesn't list them. As workspaces, npm fails `npm install` with EBADPLATFORM on every machine but one. As `optionalDependencies` of an unpublished version, npm can't lock them and `npm ci` fails. `packages/omni-build/src/platforms.js` is the list. The release tooling (Phase 2) will generate the packages from it and write the `optionalDependencies` when it publishes.
+- **Versions move in lockstep:** `[workspace.package] version` in `Cargo.toml` and every `package.json`. The launcher's tests fail if `omni-build --version` differs from its `package.json`.
+
+```sh
+npm run build | test | lint | format | format:check   # all packages, through turbo
+cargo run -- --help                                    # the binary, straight from Cargo
+```
+
 ## Code Style
 
 - Always write comments explaining **why** something is done, not just what. Future developers need to understand the reasoning and intent behind decisions, especially around undocumented or reverse-engineered formats (`Assets.car`) and store validation rules.

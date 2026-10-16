@@ -1,0 +1,32 @@
+{
+  "name": "omni-build-monorepo",
+  "private": true,
+  "description": "Monorepo for OmniBuild: build, sign, install and ship iOS and Android apps with no native toolchain",
+  "homepage": "https://github.com/Blotch-Smart-Frames/omni-build#readme",
+  "bugs": {
+    "url": "https://github.com/Blotch-Smart-Frames/omni-build/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Blotch-Smart-Frames/omni-build.git"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint:fix",
+    "format": "turbo run format",
+    "format:check": "turbo run format:check"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.73.0",
+    "oxlint": "^1.88.0",
+    "turbo": "^2.11.9",
+    "vitest": "^5.0.5"
+  },
+  "packageManager": "npm@11.19.1"
+}

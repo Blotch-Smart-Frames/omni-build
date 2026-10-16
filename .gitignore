@@ -1,0 +1,12 @@
+# Rust
+/target
+
+# npm
+node_modules/
+*.tgz
+
+# Turbo
+.turbo
+
+# Mac
+.DS_Store

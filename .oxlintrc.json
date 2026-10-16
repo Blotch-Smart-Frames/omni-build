@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["unicorn", "oxc"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "unicorn/filename-case": ["error", { "case": "kebabCase" }],
+    "unicorn/no-array-for-each": "off",
+    "eslint/func-style": ["error", "expression"],
+    "eslint/no-duplicate-imports": "error"
+  }
+}

@@ -1,0 +1,26 @@
+# One Cargo workspace for every Rust crate in the monorepo, so they share a
+# lockfile and a target/ directory. Crates live in packages/ next to the npm
+# packages; each is listed here by path, since a glob would also match the npm
+# packages, which have no Cargo.toml.
+[workspace]
+resolver = "3"
+members = ["packages/cli"]
+
+[workspace.package]
+# Kept in step with the npm packages: the launcher's tests check that the
+# binary reports the same version as packages/omni-build/package.json.
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/Blotch-Smart-Frames/omni-build"
+
+[workspace.lints.rust]
+# OmniBuild reads and rewrites binary formats (AXML, resources.arsc, Mach-O,
+# Assets.car) from shells and files users hand it. Safe Rust rules out the
+# memory bugs that parsers of untrusted bytes are known for; dependencies may
+# still use unsafe internally.
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# Lowest priority so a crate can still override a single pedantic lint.
+pedantic = { level = "warn", priority = -1 }

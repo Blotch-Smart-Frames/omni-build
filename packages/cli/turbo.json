@@ -1,0 +1,16 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // Cargo is its own cache: it rebuilds only what changed, in the
+    // workspace's target/ directory outside this package. Caching in turbo
+    // too would mean restoring target/ (gigabytes) or skipping a build whose
+    // binary isn't there.
+    "build": {
+      "cache": false
+    },
+    "test": {
+      "cache": false
+    }
+  }
+}

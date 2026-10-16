@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      # The version in rust-toolchain.toml, with rustfmt and clippy. Installed
+      # in its own step so a slow download doesn't read as a slow task below.
+      - run: rustup toolchain install
+      - run: npm ci
+      - run: npm run format:check
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+      - run: npm run lint
+
+  # On every OS OmniBuild ships for: its point is building iOS and Android
+  # apps from any of them, so a test that passes only on macOS isn't enough.
+  test:
+    strategy:
+      # One OS failing shouldn't hide whether the others pass.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+      - run: npm test

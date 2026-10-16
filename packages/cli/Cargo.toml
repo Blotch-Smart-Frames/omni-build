@@ -1,0 +1,13 @@
+[package]
+name = "omni-build"
+description = "Build, sign, install and ship iOS and Android apps with no native toolchain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+
+[lints]
+workspace = true

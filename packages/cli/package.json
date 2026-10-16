@@ -1,0 +1,15 @@
+{
+  "name": "@omni-build/cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The omni-build binary, in Rust. This package.json only lets turbo run Cargo alongside the npm packages",
+  "license": "MIT",
+  "scripts": {
+    "build": "cargo build --release --locked",
+    "test": "cargo test --locked",
+    "lint": "cargo clippy --all-targets --locked -- -D warnings",
+    "lint:fix": "cargo clippy --all-targets --fix --allow-dirty --allow-staged",
+    "format": "cargo fmt && oxfmt --write .",
+    "format:check": "cargo fmt --check && oxfmt --check ."
+  }
+}

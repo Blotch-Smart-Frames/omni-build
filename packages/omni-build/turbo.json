@@ -1,0 +1,12 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // The tests run the launcher against the binary Cargo builds, so that
+    // build has to come first. The Rust crate isn't an npm dependency of this
+    // package (it's never published to npm), so `^build` wouldn't order it.
+    "test": {
+      "dependsOn": ["@omni-build/cli#build"]
+    }
+  }
+}

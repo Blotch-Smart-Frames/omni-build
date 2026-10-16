@@ -1,0 +1,43 @@
+{
+  "name": "omni-build",
+  "version": "0.0.0",
+  "description": "Build, sign, install and ship iOS and Android apps with no native toolchain: no Xcode, no JDK, no Android SDK",
+  "keywords": [
+    "aab",
+    "android",
+    "apk",
+    "codesign",
+    "ios",
+    "ipa",
+    "lynx"
+  ],
+  "homepage": "https://github.com/Blotch-Smart-Frames/omni-build#readme",
+  "bugs": {
+    "url": "https://github.com/Blotch-Smart-Frames/omni-build/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Blotch-Smart-Frames/omni-build.git",
+    "directory": "packages/omni-build"
+  },
+  "bin": {
+    "omni-build": "./src/cli.js"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.js"
+  ],
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check ."
+  },
+  "engines": {
+    "node": ">=22.12"
+  }
+}

@@ -1,0 +1,6 @@
+# Pinned so clippy and rustfmt give the same answers locally and in CI. Each
+# stable release adds lints, which would otherwise fail CI with no code change.
+# Bump it on purpose, and fix the new warnings in the same change.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
