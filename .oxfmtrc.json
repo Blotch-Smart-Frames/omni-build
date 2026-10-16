@@ -13,6 +13,7 @@
     "**/node_modules/**",
     "**/.claude/**",
     "**/.agents/**",
-    "target/**"
+    "target/**",
+    "packages/e2e/fixtures/**"
   ]
 }
