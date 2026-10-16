@@ -7,6 +7,10 @@
     // package (it's never published to npm), so `^build` wouldn't order it.
     "test": {
       "dependsOn": ["@omni-build/cli#build"]
+    },
+    "test:coverage": {
+      "dependsOn": ["@omni-build/cli#build"],
+      "outputs": ["coverage/**"]
     }
   }
 }

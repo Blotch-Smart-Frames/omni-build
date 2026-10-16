@@ -65,4 +65,12 @@ describe('resolveBinary', () => {
       }),
     ).toThrow(/@omni-build\/linux-x64, .* isn't installed/);
   });
+
+  it('looks for the platform package with Node module resolution', () => {
+    // The real resolver, not a stand-in: the repository never installs a
+    // platform package (see platforms.js), so this finds none.
+    expect(() =>
+      resolveBinary({ platform: 'linux', arch: 'x64', env: {} }),
+    ).toThrow(/@omni-build\/linux-x64, .* isn't installed/);
+  });
 });

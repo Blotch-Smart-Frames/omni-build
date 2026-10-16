@@ -1,31 +1,20 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process';
+import { run } from './run.js';
 
-import { resolveBinary } from './resolve-binary.js';
+// Only wires run() to this process: its arguments, stderr and exit. The
+// launcher adds no behaviour of its own, so `omni-build` works the same from
+// npm as from `cargo install`. The logic is in run.js, where tests can reach
+// it in-process; cli.test.js runs this file as a child process.
 
-// Runs the native binary with this process's arguments and terminal, then
-// exits the way it did. The launcher adds no behaviour of its own, so
-// `omni-build` works the same from npm as from `cargo install`.
+const { status, signal, message } = run(process.argv.slice(2));
 
-let binary;
-try {
-  binary = resolveBinary();
-} catch (error) {
-  console.error(`omni-build: ${error.message}`);
-  process.exit(1);
+if (message) {
+  console.error(message);
 }
-
-const result = spawnSync(binary, process.argv.slice(2), { stdio: 'inherit' });
-
-if (result.error) {
-  console.error(`omni-build: couldn't run ${binary}: ${result.error.message}`);
-  process.exit(1);
-}
-
-if (result.signal) {
+if (signal) {
   // Die of the same signal, so whatever started us (a shell, CI, the Angular
   // builder) sees why the binary stopped instead of an invented exit code.
-  process.kill(process.pid, result.signal);
+  process.kill(process.pid, signal);
 }
-process.exit(result.status ?? 1);
+process.exit(status);

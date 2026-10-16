@@ -32,10 +32,9 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "oxlint .",
-    "lint:fix": "oxlint --fix .",
-    "format": "oxfmt --write .",
-    "format:check": "oxfmt --check ."
+    "lint:fix": "oxlint --fix ."
   },
   "engines": {
     "node": ">=22.12"

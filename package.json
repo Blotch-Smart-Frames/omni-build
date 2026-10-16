@@ -17,12 +17,14 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
+    "test:coverage": "turbo run test:coverage",
     "lint": "turbo run lint",
     "lint:fix": "turbo run lint:fix",
-    "format": "turbo run format",
-    "format:check": "turbo run format:check"
+    "format": "oxfmt --write . && turbo run format",
+    "format:check": "oxfmt --check . && turbo run format:check"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^5.0.5",
     "oxfmt": "^0.73.0",
     "oxlint": "^1.88.0",
     "turbo": "^2.11.9",

@@ -7,9 +7,10 @@
   "scripts": {
     "build": "cargo build --release --locked",
     "test": "cargo test --locked",
+    "test:coverage": "cargo llvm-cov --locked --fail-under-lines 100 --fail-under-functions 100 --fail-under-regions 100",
     "lint": "cargo clippy --all-targets --locked -- -D warnings",
     "lint:fix": "cargo clippy --all-targets --fix --allow-dirty --allow-staged",
-    "format": "cargo fmt && oxfmt --write .",
-    "format:check": "cargo fmt --check && oxfmt --check ."
+    "format": "cargo fmt",
+    "format:check": "cargo fmt --check"
   }
 }

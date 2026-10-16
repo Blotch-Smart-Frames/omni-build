@@ -1,31 +1,47 @@
 name: CI
 
+# The pull request gate. Branch protection requires a single check, "CI
+# passed", which succeeds only when every job below does, so adding or
+# renaming a job never means editing the branch's settings.
+
 on:
   pull_request:
     branches: [master]
   push:
     branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  # A new push to a pull request makes its running checks moot. On master
+  # every commit is checked to the end.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   format:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
-      # The version in rust-toolchain.toml, with rustfmt and clippy. Installed
-      # in its own step so a slow download doesn't read as a slow task below.
+      # The version in rust-toolchain.toml, with its components. Installed in
+      # its own step so a slow download doesn't read as a slow task below, and
+      # before turbo starts Cargo tasks in parallel, which would race to
+      # install it.
       - run: rustup toolchain install
       - run: npm ci
+      # oxfmt over the whole repository, then rustfmt per crate.
       - run: npm run format:check
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -34,18 +50,31 @@ jobs:
           cache: npm
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Pull requests restore master's cache but don't save their own,
+          # which would evict it from the repository's 10 GB.
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: npm ci
+      # clippy with warnings as errors, and oxlint.
       - run: npm run lint
 
-  # On every OS OmniBuild ships for: its point is building iOS and Android
-  # apps from any of them, so a test that passes only on macOS isn't enough.
-  test:
-    strategy:
-      # One OS failing shouldn't hide whether the others pass.
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  # The workflows are code too: a typo in an expression or a matrix key
+  # otherwise only shows when that job runs, or silently never does.
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
+
+  # Every test, with the 100% coverage gate: cargo-llvm-cov for Rust and
+  # vitest's thresholds for the launcher both fail below 100% of lines,
+  # functions and regions or branches.
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -54,5 +83,107 @@ jobs:
           cache: npm
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - run: npm ci
+      - run: npm run test:coverage
+
+  # The same tests on the other desktop OSes, which OmniBuild runs on as much
+  # as Linux. Linux runs them in the coverage job.
+  test:
+    strategy:
+      # One OS failing shouldn't hide whether the other passes.
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: npm ci
       - run: npm test
+
+  # A release build for every target OmniBuild publishes (the list in
+  # packages/omni-build/src/platforms.js), each on a runner of that OS and
+  # CPU, so the binary is also run, not just compiled. A target that stops
+  # building fails the pull request that broke it rather than the release.
+  build:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      BINARY: target/${{ matrix.target }}/release/omni-build${{ startsWith(matrix.runner, 'windows') && '.exe' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      # Linux builds for musl rather than the runner's glibc, so the target
+      # isn't installed yet. Elsewhere this is the host target, already there.
+      - run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Run the binary
+        run: '"$BINARY" --version'
+      # The launcher ships one Linux binary per CPU for glibc and musl
+      # distributions alike (see platforms.js), which holds only if it's
+      # statically linked.
+      - name: Check the binary is statically linked
+        if: runner.os == 'Linux'
+        run: |
+          file "$BINARY"
+          file "$BINARY" | grep -Eq 'statically linked|static-pie linked'
+      # Kept briefly, to try a pull request's build on a machine without Rust.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: omni-build-${{ matrix.target }}
+          path: ${{ env.BINARY }}
+          if-no-files-found: error
+          retention-days: 7
+
+  ci-passed:
+    name: CI passed
+    needs: [format, lint, actionlint, coverage, test, build]
+    # Runs even when a job it needs fails, so the required check reports a
+    # failure. Skipped, it would count as passing.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail unless every job passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success")' > /dev/null
