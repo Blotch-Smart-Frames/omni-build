@@ -13,8 +13,12 @@ An npm workspaces + turbo monorepo with the Rust inside `packages/` (see the REA
 - **Platform packages aren't in the repository**, and the launcher's `package.json` doesn't list them. As workspaces, npm fails `npm install` with EBADPLATFORM on every machine but one. As `optionalDependencies` of an unpublished version, npm can't lock them and `npm ci` fails. `packages/omni-build/src/platforms.js` is the list. The release tooling (Phase 2) will generate the packages from it and write the `optionalDependencies` when it publishes.
 - **Versions move in lockstep:** `[workspace.package] version` in `Cargo.toml` and every `package.json`. The launcher's tests fail if `omni-build --version` differs from its `package.json`.
 
+- **CI requires 100% test coverage** of lines, functions and regions or branches, in Rust (cargo-llvm-cov) and JavaScript (vitest thresholds). Code that can only run in a child process gets an in-process seam rather than an exclusion: `cli.js` is a few lines wiring `run.js` to the process, and a `tests/` integration test running the binary covers `main()`.
+- **The PR gate is the "CI passed" job** in `.github/workflows/ci.yml`, which needs every other job. Add new jobs to its `needs`.
+
 ```sh
 npm run build | test | lint | format | format:check   # all packages, through turbo
+npm run test:coverage                                  # needs cargo-llvm-cov installed
 cargo run -- --help                                    # the binary, straight from Cargo
 ```
 

@@ -25,8 +25,11 @@ You need Node 24 and [rustup](https://rustup.rs), which installs the Rust versio
 npm install
 npm run build          # cargo build --release
 npm test               # cargo test, and the launcher's tests with vitest
+npm run test:coverage  # the same, failing below 100% coverage (needs cargo-llvm-cov)
 npm run lint           # clippy and oxlint
 npm run format         # rustfmt and oxfmt; CI runs format:check
 ```
+
+Pull requests must pass CI: formatting, lint (warnings are errors), 100% test coverage, tests on Linux, macOS and Windows, and a release build on each of the six targets OmniBuild ships for.
 
 Cargo also works on its own from the repository root, for example `cargo run -- --help`.
