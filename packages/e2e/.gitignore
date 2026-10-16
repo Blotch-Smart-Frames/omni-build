@@ -1,0 +1,15 @@
+# The harness's output (see README.md)
+/artifacts/
+/build/
+
+# Gradle
+/fixtures/android/.gradle/
+/fixtures/android/.kotlin/
+/fixtures/android/build/
+/fixtures/android/app/build/
+/fixtures/android/local.properties
+
+# Xcode and Android Studio, when a fixture is opened in them
+xcuserdata/
+.idea/
+*.iml

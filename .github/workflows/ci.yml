@@ -172,9 +172,208 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # End to end, in the three stages OmniBuild is used in (see packages/e2e):
+  #
+  # 1. e2e-shell-*: the real Swift and Kotlin app shells in
+  #    packages/e2e/fixtures, built with Xcode and Gradle. The only stage with
+  #    a native toolchain: OmniBuild's own CI makes the shells, never its users.
+  # 2. e2e-repackage: each shell through the omni-build binary from the build
+  #    job, on Linux, Windows and macOS, with no PATH and none of the
+  #    variables that lead to a JDK, the Android SDK or Xcode.
+  # 3. e2e-ios, e2e-android: every repackaged app installed and launched on
+  #    the iOS Simulator and an Android emulator, each checked against the
+  #    values it reports.
+  #
+  # The harness uses only Node's built-in modules, so these jobs skip `npm ci`.
+  e2e-shell-ios:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          # Nothing to cache without `npm ci`. setup-node would otherwise
+          # restore npm's cache because of package.json's packageManager field.
+          package-manager-cache: false
+      - run: node packages/e2e/src/run.js build --platform ios --out e2e/shells
+      - uses: actions/upload-artifact@v7
+        with:
+          name: e2e-shell-ios
+          path: e2e/shells
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-logs-shell-ios
+          path: packages/e2e/artifacts
+          retention-days: 7
+
+  e2e-shell-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      # The JDK the fixture is developed with; AGP 9 needs 17 or later.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      # Caches Gradle's downloads (AGP and its dependencies), saving only on
+      # master, and checks that the committed gradle-wrapper.jar is Gradle's.
+      - uses: gradle/actions/setup-gradle@v6
+      - run: node packages/e2e/src/run.js build --platform android --out e2e/shells
+      - uses: actions/upload-artifact@v7
+        with:
+          name: e2e-shell-android
+          path: e2e/shells
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-logs-shell-android
+          path: packages/e2e/artifacts
+          retention-days: 7
+
+  e2e-repackage:
+    name: e2e-repackage (${{ matrix.os }})
+    needs: [build, e2e-shell-ios, e2e-shell-android]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: Linux
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: Windows
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macOS
+            runner: macos-latest
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      # The release binary the build job made for this runner.
+      OMNI_BUILD_BINARY: ${{ github.workspace }}/omni-build-bin/omni-build${{ matrix.os == 'Windows' && '.exe' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: omni-build-${{ matrix.target }}
+          path: omni-build-bin
+      # Workflow artifacts don't keep file modes.
+      - name: Make the binary executable
+        if: matrix.os != 'Windows'
+        run: chmod +x "$OMNI_BUILD_BINARY"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: e2e-shell-*
+          path: e2e/shells
+          merge-multiple: true
+      - run: node packages/e2e/src/run.js repackage --platform ios --shell e2e/shells/OmniBuildShell.zip --out e2e/repackaged
+      - run: node packages/e2e/src/run.js repackage --platform android --shell e2e/shells/OmniBuildShell.apk --out e2e/repackaged
+      - uses: actions/upload-artifact@v7
+        with:
+          name: e2e-repackaged-${{ matrix.os }}
+          path: e2e/repackaged
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-logs-repackage-${{ matrix.os }}
+          path: packages/e2e/artifacts
+          retention-days: 7
+
+  e2e-ios:
+    needs: e2e-repackage
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      # One app per OS it was repackaged on, named for it.
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: e2e-repackaged-*
+          path: e2e/repackaged
+          merge-multiple: true
+      - run: node packages/e2e/src/run.js test --platform ios e2e/repackaged/*.zip
+      # Each app's report and a screenshot, and on a failure its logs.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: e2e-results-ios
+          path: packages/e2e/artifacts
+          retention-days: 7
+
+  e2e-android:
+    needs: e2e-repackage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: e2e-repackaged-*
+          path: e2e/repackaged
+          merge-multiple: true
+      # Hardware acceleration for the emulator on Linux runners.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # The image AngularLynx's E2E tests run on these runners. The fixture
+      # targets API 36 and runs on 24 and later.
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          script: node packages/e2e/src/run.js test --platform android e2e/repackaged/*.apk
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: e2e-results-android
+          path: packages/e2e/artifacts
+          retention-days: 7
+
   ci-passed:
     name: CI passed
-    needs: [format, lint, actionlint, coverage, test, build]
+    needs:
+      - format
+      - lint
+      - actionlint
+      - coverage
+      - test
+      - build
+      - e2e-shell-ios
+      - e2e-shell-android
+      - e2e-repackage
+      - e2e-ios
+      - e2e-android
     # Runs even when a job it needs fails, so the required check reports a
     # failure. Skipped, it would count as passing.
     if: always()

@@ -18,6 +18,7 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "test:coverage": "turbo run test:coverage",
+    "e2e": "npm run build -w @omni-build/cli && npm run e2e -w @omni-build/e2e --",
     "lint": "turbo run lint",
     "lint:fix": "turbo run lint:fix",
     "format": "oxfmt --write . && turbo run format",
