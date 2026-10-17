@@ -6,12 +6,12 @@ android {
     // The package of the shell's own Kotlin code and R class. It stays fixed
     // when OmniBuild changes the applicationId, as in a real shell.
     namespace = "dev.omnibuild.shell"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "dev.omnibuild.shell"
         minSdk = 24
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0.0"
     }
