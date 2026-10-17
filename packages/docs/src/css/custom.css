@@ -1,0 +1,544 @@
+/*
+ * The one-bit desktop: every colour on the site is ink or paper, and every
+ * grey is a dither of the two. Dark mode swaps ink and paper, as a one-bit
+ * screen's "inverse video" did, so it stays one-bit too.
+ *
+ * One pixel of the world is --px, two CSS pixels. Borders, rules, shadows and
+ * pattern cells are whole multiples of it, so lines stay as crisp as the
+ * dithers they sit next to.
+ */
+
+:root {
+  --px: 2px;
+  --ink: #000;
+  --paper: #fff;
+
+  --font-display: 'Jersey 10', 'Tiny5', monospace;
+  /*
+   * Tiny5 is drawn on a 5px grid, so it's set only at multiples of 5 to keep
+   * every stem a whole number of pixels: 15px for small labels, 20px for
+   * titles, menus and buttons. Running copy is in the reading face.
+   */
+  --font-pixel: 'Tiny5', monospace;
+  --pixel-s: 15px;
+  --pixel-m: 20px;
+
+  /*
+   * Ordered-dither tiles. They're SVG rather than CSS gradients because a
+   * gradient's hard stops are antialiased at small sizes, which turns a
+   * one-bit pattern into a blurred grey. Shown with `image-rendering:
+   * pixelated` at whole multiples of --px.
+   */
+  --dither-12: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h1v1H0zM2 2h1v1H2z' fill='%23000'/%3E%3C/svg%3E");
+  --dither-25: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h1v1H0z' fill='%23000'/%3E%3C/svg%3E");
+  --dither-50: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h1v1H0zM1 1h1v1H1z' fill='%23000'/%3E%3C/svg%3E");
+  --dither-75: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Cpath d='M1 0h1v1H1zM0 1h2v1H0z' fill='%23000'/%3E%3C/svg%3E");
+  --stripes: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='2' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h1v1H0z' fill='%23000'/%3E%3C/svg%3E");
+  --diagonal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='6' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h3v1H0zM1 1h3v1H1zM2 2h3v1H2zM3 3h3v1H3zM4 4h2v1H4zM0 4h1v1H0zM5 5h1v1H5zM0 5h2v1H0z' fill='%23000'/%3E%3C/svg%3E");
+
+  --ifm-color-primary: var(--ink);
+  --ifm-color-primary-dark: var(--ink);
+  --ifm-color-primary-darker: var(--ink);
+  --ifm-color-primary-darkest: var(--ink);
+  --ifm-color-primary-light: var(--ink);
+  --ifm-color-primary-lighter: var(--ink);
+  --ifm-color-primary-lightest: var(--ink);
+  --ifm-background-color: var(--paper);
+  --ifm-background-surface-color: var(--paper);
+  --ifm-font-color-base: var(--ink);
+  --ifm-heading-color: var(--ink);
+  --ifm-color-content: var(--ink);
+  --ifm-color-content-secondary: var(--ink);
+  --ifm-color-emphasis-100: var(--paper);
+  --ifm-color-emphasis-200: var(--paper);
+  --ifm-color-emphasis-300: var(--ink);
+  --ifm-color-emphasis-600: var(--ink);
+  --ifm-color-emphasis-700: var(--ink);
+  --ifm-color-emphasis-800: var(--ink);
+  --ifm-toc-border-color: var(--ink);
+  --ifm-hr-border-color: var(--ink);
+  --ifm-hr-height: var(--px);
+  --ifm-table-border-color: var(--ink);
+  --ifm-table-border-width: var(--px);
+  --ifm-table-stripe-background: transparent;
+  --ifm-table-head-background: var(--ink);
+  --ifm-table-head-color: var(--paper);
+  --ifm-code-background: transparent;
+  --ifm-code-border-radius: 0;
+  --ifm-pre-background: var(--paper);
+  --ifm-global-radius: 0;
+  --ifm-button-border-radius: 0;
+  --ifm-global-shadow-lw: none;
+  --ifm-global-shadow-md: none;
+  --ifm-global-shadow-tl: none;
+  --ifm-link-color: var(--ink);
+  --ifm-link-hover-color: var(--ink);
+  --ifm-link-decoration: underline;
+  --ifm-link-hover-decoration: none;
+  --ifm-menu-color: var(--ink);
+  --ifm-menu-color-active: var(--paper);
+  --ifm-menu-color-background-active: var(--ink);
+  --ifm-menu-color-background-hover: var(--ink);
+  --ifm-dropdown-background-color: var(--paper);
+  --ifm-dropdown-link-color: var(--ink);
+  --ifm-dropdown-hover-background-color: var(--ink);
+  --ifm-navbar-background-color: var(--paper);
+  --ifm-navbar-link-color: var(--ink);
+  --ifm-navbar-link-hover-color: var(--paper);
+  --ifm-navbar-height: 3rem;
+  --ifm-navbar-shadow: none;
+  --ifm-footer-background-color: var(--paper);
+  --ifm-footer-color: var(--ink);
+  --ifm-footer-link-color: var(--ink);
+  --ifm-footer-title-color: var(--ink);
+
+  --ifm-font-family-base:
+    'Atkinson Hyperlegible Next Variable', system-ui, -apple-system, 'Segoe UI',
+    sans-serif;
+  --ifm-heading-font-family: var(--font-display);
+  --ifm-font-family-monospace:
+    ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+  --ifm-font-size-base: 1.0625rem;
+  --ifm-line-height-base: 1.6;
+  --ifm-heading-font-weight: 400;
+  --ifm-heading-line-height: 1;
+  --ifm-h1-font-size: 4rem;
+  --ifm-h2-font-size: 2.75rem;
+  --ifm-h3-font-size: 2rem;
+  --ifm-h4-font-size: 1.5rem;
+  --ifm-code-font-size: 90%;
+
+  --docusaurus-highlighted-code-line-bg: transparent;
+  --docusaurus-collapse-button-bg: transparent;
+  --docusaurus-collapse-button-bg-hover: transparent;
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --ink: #fff;
+  --paper: #000;
+  --dither-12: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h1v1H0zM2 2h1v1H2z' fill='%23fff'/%3E%3C/svg%3E");
+  --dither-25: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h1v1H0z' fill='%23fff'/%3E%3C/svg%3E");
+  --dither-50: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h1v1H0zM1 1h1v1H1z' fill='%23fff'/%3E%3C/svg%3E");
+  --dither-75: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Cpath d='M1 0h1v1H1zM0 1h2v1H0z' fill='%23fff'/%3E%3C/svg%3E");
+  --stripes: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='2' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h1v1H0z' fill='%23fff'/%3E%3C/svg%3E");
+  --diagonal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='6' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h3v1H0zM1 1h3v1H1zM2 2h3v1H2zM3 3h3v1H3zM4 4h2v1H4zM0 4h1v1H0zM5 5h1v1H5zM0 5h2v1H0z' fill='%23fff'/%3E%3C/svg%3E");
+  color-scheme: dark;
+}
+
+/* Browser surfaces: selection inverts, as it did on a one-bit screen. */
+::selection {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+html {
+  scrollbar-color: var(--ink) var(--paper);
+}
+
+::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--paper) var(--dither-50) 0 0 / 4px 4px;
+  image-rendering: pixelated;
+  border-left: var(--px) solid var(--ink);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--paper);
+  border: var(--px) solid var(--ink);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--paper);
+}
+
+body {
+  background: var(--paper);
+  text-rendering: optimizeLegibility;
+}
+
+/*
+ * Focus is a dashed outline: the one-bit selection's "marching ants" held
+ * still, since an outline can't animate. The landing page's own selections
+ * march.
+ */
+:focus-visible {
+  outline: var(--px) dashed var(--ink);
+  outline-offset: var(--px);
+}
+
+/* Links invert on hover, the way a pressed menu item or button does. */
+a {
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: var(--px);
+}
+
+.markdown a:hover,
+.footer__link-item:hover,
+.table-of-contents__link:hover,
+.theme-edit-this-page:hover {
+  background: var(--ink);
+  color: var(--paper);
+  text-decoration: none;
+}
+
+/* --- Menu bar ---------------------------------------------------------- */
+
+.navbar {
+  border-bottom: var(--px) solid var(--ink);
+  padding-block: 0;
+  font-family: var(--font-pixel);
+}
+
+.navbar a {
+  text-decoration: none;
+}
+
+.navbar__brand {
+  margin-right: 1.5rem;
+}
+
+.navbar__logo {
+  height: 32px;
+  margin-right: 0.625rem;
+  image-rendering: pixelated;
+}
+
+.navbar__title {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.navbar__item {
+  font-size: var(--pixel-m);
+}
+
+.navbar__link {
+  padding: 0.25rem 0.75rem;
+  font-weight: 400;
+}
+
+.navbar__link:hover,
+.navbar__link--active,
+.dropdown:hover > .navbar__link {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.navbar__link--active:not(:hover) {
+  background: transparent;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: var(--px);
+  text-underline-offset: 0.3em;
+}
+
+/* External-link arrows are an icon font's, not ours. */
+.navbar svg[class*='iconExternalLink'],
+.footer svg[class*='iconExternalLink'] {
+  display: none;
+}
+
+.dropdown__menu {
+  border: var(--px) solid var(--ink);
+  border-radius: 0;
+  box-shadow: var(--px) var(--px) 0 var(--ink);
+  padding: 0.25rem 0;
+  min-width: 14rem;
+  font-family: var(--font-pixel);
+}
+
+.dropdown__link {
+  border-radius: 0;
+  font-size: var(--pixel-m);
+  padding: 0.25rem 1rem;
+}
+
+.dropdown__link:hover,
+.dropdown__link--active {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.dropdown > .navbar__link::after {
+  border: 0;
+  content: '';
+  width: 10px;
+  height: 6px;
+  margin-left: 0.4em;
+  top: 0;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+/* The menu bar's right end: the project's status, printed, not a badge. */
+.menubar-status {
+  /* A sentence, so the reading face, not the menu bar's Tiny5. */
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0 0.75rem;
+  white-space: nowrap;
+}
+
+.menubar-status::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 0.5em;
+  border: var(--px) solid var(--ink);
+  background: var(--paper) var(--dither-50) 0 0 / 4px 4px;
+  image-rendering: pixelated;
+  vertical-align: -1px;
+}
+
+.navbar-sidebar {
+  border-right: var(--px) solid var(--ink);
+  box-shadow: none;
+}
+
+.navbar-sidebar__brand {
+  border-bottom: var(--px) solid var(--ink);
+  box-shadow: none;
+}
+
+.clean-btn,
+.navbar__toggle {
+  border-radius: 0;
+}
+
+/* The colour-mode toggle: a square button that inverts. */
+[class*='toggleButton'] {
+  border-radius: 0;
+}
+
+[class*='toggleButton']:hover {
+  background: var(--ink) !important;
+  color: var(--paper);
+}
+
+/* --- Docs: plain paper for reading ------------------------------------- */
+
+.markdown {
+  --ifm-h1-vertical-rhythm-bottom: 1.25;
+  --ifm-heading-vertical-rhythm-top: 2.5;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  letter-spacing: 0.01em;
+  text-wrap: balance;
+}
+
+.markdown > p,
+.markdown > ul,
+.markdown > ol {
+  max-width: 70ch;
+}
+
+.markdown code {
+  /* Framed, not dithered: a dither under glyphs cuts through their strokes. */
+  border: 1px solid var(--ink);
+  padding: 0 0.2em;
+  background: var(--paper);
+}
+
+/* Code blocks are windows: a 2px frame and a hard one-bit shadow. */
+.theme-code-block {
+  border: var(--px) solid var(--ink);
+  border-radius: 0;
+  box-shadow: calc(var(--px) * 2) calc(var(--px) * 2) 0 var(--ink);
+}
+
+.theme-code-block [class*='codeBlockTitle'] {
+  border-bottom: var(--px) solid var(--ink) !important;
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-s);
+}
+
+.theme-code-block pre code {
+  image-rendering: auto;
+  background: transparent;
+}
+
+.theme-code-block button {
+  border: var(--px) solid var(--ink) !important;
+  border-radius: 0 !important;
+  background: var(--paper) !important;
+  opacity: 1;
+}
+
+.theme-code-block button:hover {
+  background: var(--ink) !important;
+  color: var(--paper);
+}
+
+.markdown table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+
+.markdown table th {
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-s);
+  font-weight: 400;
+  text-align: left;
+}
+
+.markdown table td,
+.markdown table th {
+  vertical-align: top;
+}
+
+/* Admonitions are alert boxes: a frame, a hard one-bit shadow, a pixel icon. */
+.alert {
+  --ifm-alert-background-color: var(--paper);
+  --ifm-alert-background-color-highlight: var(--ink);
+  --ifm-alert-foreground-color: var(--ink);
+  --ifm-alert-border-color: var(--ink);
+  --ifm-alert-border-left-width: var(--px);
+  border: var(--px) solid var(--ink);
+  border-radius: 0;
+  box-shadow: calc(var(--px) * 2) calc(var(--px) * 2) 0 var(--ink);
+}
+
+.alert [class*='admonitionHeading'] {
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-s);
+  text-transform: none;
+}
+
+.alert [class*='admonitionIcon'] svg {
+  fill: var(--ink);
+  stroke: none;
+}
+
+.pagination-nav__link {
+  border: var(--px) solid var(--ink);
+  border-radius: 0;
+}
+
+.pagination-nav__link:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.pagination-nav__label {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 400;
+}
+
+.menu {
+  font-family: var(--font-pixel);
+}
+
+.menu__link {
+  border-radius: 0;
+  font-size: var(--pixel-m);
+  text-decoration: none;
+}
+
+.menu__link--active:not(.menu__link--sublist) {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.menu__link:hover {
+  color: var(--paper);
+}
+
+.table-of-contents {
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-s);
+}
+
+.table-of-contents__link {
+  text-decoration: none;
+}
+
+.table-of-contents__link--active {
+  text-decoration: underline;
+  text-decoration-thickness: var(--px);
+  text-underline-offset: 0.25em;
+}
+
+/* The phone's "On this page" menu: a framed paper button, not a black bar. */
+.theme-doc-toc-mobile {
+  border: var(--px) solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-s);
+}
+
+.theme-doc-toc-mobile button {
+  color: var(--ink);
+}
+
+.theme-doc-sidebar-container {
+  border-right: var(--px) solid var(--ink) !important;
+}
+
+.theme-edit-this-page,
+.theme-last-updated {
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-s);
+}
+
+.breadcrumbs__link {
+  border-radius: 0;
+  font-family: var(--font-pixel);
+}
+
+.breadcrumbs__item--active .breadcrumbs__link {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* --- Footer ------------------------------------------------------------ */
+
+.footer {
+  /*
+   * Positioned so it paints above the landing page's fixed desktop field:
+   * the field sits in the page's positioned stacking context, which would
+   * otherwise paint over a static footer.
+   */
+  position: relative;
+  z-index: 1;
+  border-top: var(--px) solid var(--ink);
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-s);
+}
+
+.footer__title {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 400;
+}
+
+.footer__copyright {
+  font-size: var(--pixel-s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

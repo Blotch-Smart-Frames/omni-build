@@ -1,0 +1,57 @@
+.icon {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 112px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+div.icon {
+  cursor: default;
+}
+
+.icon:hover {
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.glyph {
+  display: block;
+}
+
+.label {
+  max-width: 100%;
+  padding: 1px 6px;
+  background: var(--paper);
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-s);
+  line-height: 1.35;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.icon:hover .label,
+.selected .label {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* A selected icon is drawn inverted, ink for paper. */
+.selected .glyph {
+  filter: invert(1);
+}
+
+.icon:focus-visible {
+  outline: none;
+}
+
+.icon:focus-visible .label {
+  outline: var(--px) dashed var(--ink);
+  outline-offset: var(--px);
+}

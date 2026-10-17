@@ -360,6 +360,21 @@ jobs:
           path: packages/e2e/artifacts
           retention-days: 7
 
+  # The documentation site, built as the Docs workflow deploys it. Docusaurus
+  # fails the build on a broken link or anchor, so a renamed page or heading
+  # fails here rather than on the published site.
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @omni-build/docs
+
   ci-passed:
     name: CI passed
     needs:
@@ -374,6 +389,7 @@ jobs:
       - e2e-repackage
       - e2e-ios
       - e2e-android
+      - docs
     # Runs even when a job it needs fails, so the required check reports a
     # failure. Skipped, it would count as passing.
     if: always()

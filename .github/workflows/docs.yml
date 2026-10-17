@@ -1,0 +1,58 @@
+name: Docs
+
+# Publishes the documentation site (packages/docs) to GitHub Pages from
+# master. CI's docs job builds the same site on every pull request, so a
+# broken link fails there before it reaches this workflow.
+#
+# The repository's Pages source must be set to "GitHub Actions" (Settings >
+# Pages) for the deploy job to publish.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - packages/docs/**
+      - package-lock.json
+      - .github/workflows/docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  # A deploy that's already running finishes: cancelling it partway could
+  # leave Pages without a site. A newer push queues behind it.
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @omni-build/docs
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: packages/docs/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only this job can publish: Pages needs write access and an OIDC token
+    # to verify the deployment came from this workflow.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

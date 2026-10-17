@@ -15,6 +15,7 @@ An npm workspaces and [Turborepo](https://turborepo.com) monorepo, with the Rust
 | `packages/cli`        | The `omni-build` binary, a Rust crate. Its `package.json` is private and only lets turbo run Cargo                           |
 | `packages/omni-build` | The `omni-build` npm package: a launcher that runs the binary built for the user's OS and CPU                                |
 | `packages/e2e`        | End-to-end tests: real Swift and Kotlin app shells, repackaged on every OS, run on the iOS Simulator and an Android emulator |
+| `packages/docs`       | The documentation site and landing page, built with Docusaurus and published to GitHub Pages                                 |
 
 The per-platform npm packages that will hold the binaries (`@omni-build/darwin-arm64`, `@omni-build/linux-x64`, ...) aren't in the repository. npm refuses to install a workspace whose `os` or `cpu` doesn't match the machine, so the release workflow will generate them from the list in `packages/omni-build/src/platforms.js`.
 
@@ -24,7 +25,7 @@ You need Node 24 and [rustup](https://rustup.rs), which installs the Rust versio
 
 ```sh
 npm install
-npm run build          # cargo build --release
+npm run build          # cargo build --release, and the docs site
 npm test               # cargo test, and the launcher's tests with vitest
 npm run test:coverage  # the same, failing below 100% coverage (needs cargo-llvm-cov)
 npm run lint           # clippy and oxlint
@@ -32,6 +33,6 @@ npm run format         # rustfmt and oxfmt; CI runs format:check
 npm run e2e -- --platform ios  # build, repackage and run a real app on the iOS Simulator, or android (see packages/e2e)
 ```
 
-Pull requests must pass CI: formatting, lint (warnings are errors), 100% test coverage, tests on Linux, macOS and Windows, a release build on each of the six targets OmniBuild ships for, and the end-to-end tests on the iOS Simulator and an Android emulator.
+Pull requests must pass CI: formatting, lint (warnings are errors), 100% test coverage, tests on Linux, macOS and Windows, a release build on each of the six targets OmniBuild ships for, the end-to-end tests on the iOS Simulator and an Android emulator, and a build of the docs site.
 
 Cargo also works on its own from the repository root, for example `cargo run -- --help`.

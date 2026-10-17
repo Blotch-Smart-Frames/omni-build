@@ -1,0 +1,12 @@
+/*
+ * Fixed behind the whole landing page, so every window scrolls over the
+ * same desktop. The static 50% pattern underneath shows until the shader's
+ * first frame, and stays if WebGL 2 isn't there.
+ */
+.field {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--paper) var(--dither-50) 0 0 / 4px 4px;
+  image-rendering: pixelated;
+}

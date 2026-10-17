@@ -1,0 +1,11 @@
+# Docusaurus
+/build
+/.docusaurus
+/.cache-loader
+
+# Impeccable's working files: decision pages, mocks and review captures.
+# DESIGN.md and .impeccable/design.json are the design record and stay.
+/.impeccable/mocks
+/.impeccable/review
+/.impeccable/build
+/.impeccable/questions
