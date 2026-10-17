@@ -7,12 +7,13 @@ description: Building, testing and linting OmniBuild's monorepo.
 
 OmniBuild is an npm workspaces and [Turborepo](https://turborepo.com) monorepo with the Rust inside it.
 
-| Package               | What it is                                                                                                                   |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `packages/cli`        | The `omni-build` binary, a Rust crate                                                                                        |
-| `packages/omni-build` | The `omni-build` npm package: a launcher that runs the binary built for the user's OS and CPU                                |
-| `packages/e2e`        | End-to-end tests: real Swift and Kotlin app shells, repackaged on every OS, run on the iOS Simulator and an Android emulator |
-| `packages/docs`       | This site                                                                                                                    |
+| Package                   | What it is                                                                                                                   |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `packages/cli`            | The `omni-build` binary, a Rust crate                                                                                        |
+| `packages/omni-build`     | The `omni-build` npm package: a launcher that runs the binary built for the user's OS and CPU                                |
+| `packages/e2e`            | End-to-end tests: real Swift and Kotlin app shells, repackaged on every OS, run on the iOS Simulator and an Android emulator |
+| `packages/platform-watch` | Opens an issue when the app shells need a newer Xcode or Android API level, or can't read a vendor's page. Runs daily in CI  |
+| `packages/docs`           | This site                                                                                                                    |
 
 ## Development
 
