@@ -95,17 +95,22 @@
   --ifm-font-family-base:
     'Atkinson Hyperlegible Next Variable', system-ui, -apple-system, 'Segoe UI',
     sans-serif;
-  --ifm-heading-font-family: var(--font-display);
+  /*
+   * Headings are in the reading face: the only headings left to Infima are
+   * the docs', and a docs page is read top to bottom, headings included.
+   * The landing page's headings set their own pixel faces.
+   */
+  --ifm-heading-font-family: var(--ifm-font-family-base);
   --ifm-font-family-monospace:
     ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
   --ifm-font-size-base: 1.0625rem;
   --ifm-line-height-base: 1.6;
-  --ifm-heading-font-weight: 400;
-  --ifm-heading-line-height: 1;
-  --ifm-h1-font-size: 4rem;
-  --ifm-h2-font-size: 2.75rem;
-  --ifm-h3-font-size: 2rem;
-  --ifm-h4-font-size: 1.5rem;
+  --ifm-heading-font-weight: 700;
+  --ifm-heading-line-height: 1.2;
+  --ifm-h1-font-size: 2.5rem;
+  --ifm-h2-font-size: 1.75rem;
+  --ifm-h3-font-size: 1.375rem;
+  --ifm-h4-font-size: 1.125rem;
   --ifm-code-font-size: 90%;
 
   --docusaurus-highlighted-code-line-bg: transparent;
@@ -327,6 +332,12 @@ a {
 
 /* --- Docs: plain paper for reading ------------------------------------- */
 
+/*
+ * A docs page, its own navigation included, is set in the reading face. The
+ * pixel faces stop at the site's chrome (the menu bar and the footer): they
+ * carry the desktop, but slow down a page that's read line by line.
+ */
+
 .markdown {
   --ifm-h1-vertical-rhythm-bottom: 1.25;
   --ifm-heading-vertical-rhythm-top: 2.5;
@@ -336,7 +347,7 @@ a {
 .markdown h2,
 .markdown h3,
 .markdown h4 {
-  letter-spacing: 0.01em;
+  letter-spacing: -0.01em;
   text-wrap: balance;
 }
 
@@ -362,8 +373,9 @@ a {
 
 .theme-code-block [class*='codeBlockTitle'] {
   border-bottom: var(--px) solid var(--ink) !important;
-  font-family: var(--font-pixel);
-  font-size: var(--pixel-s);
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.875rem;
+  font-weight: 600;
 }
 
 .theme-code-block pre code {
@@ -391,9 +403,8 @@ a {
 }
 
 .markdown table th {
-  font-family: var(--font-pixel);
-  font-size: var(--pixel-s);
-  font-weight: 400;
+  font-size: 0.875rem;
+  font-weight: 700;
   text-align: left;
 }
 
@@ -415,8 +426,8 @@ a {
 }
 
 .alert [class*='admonitionHeading'] {
-  font-family: var(--font-pixel);
-  font-size: var(--pixel-s);
+  font-size: 0.875rem;
+  font-weight: 700;
   text-transform: none;
 }
 
@@ -436,11 +447,11 @@ a {
 }
 
 .pagination-nav__label {
-  font-family: var(--font-display);
-  font-size: 1.75rem;
-  font-weight: 400;
+  font-size: 1.125rem;
+  font-weight: 700;
 }
 
+/* The phone's menu drawer lists the menu bar's items, so it keeps Tiny5. */
 .menu {
   font-family: var(--font-pixel);
 }
@@ -449,6 +460,16 @@ a {
   border-radius: 0;
   font-size: var(--pixel-m);
   text-decoration: none;
+}
+
+/* The docs sidebar, in the page or in the phone's drawer. */
+.theme-doc-sidebar-menu {
+  font-family: var(--ifm-font-family-base);
+}
+
+.theme-doc-sidebar-menu .menu__link {
+  font-size: 1rem;
+  font-weight: 500;
 }
 
 .menu__link--active:not(.menu__link--sublist) {
@@ -461,8 +482,7 @@ a {
 }
 
 .table-of-contents {
-  font-family: var(--font-pixel);
-  font-size: var(--pixel-s);
+  font-size: 0.875rem;
 }
 
 .table-of-contents__link {
@@ -480,8 +500,8 @@ a {
   border: var(--px) solid var(--ink);
   border-radius: 0;
   background: var(--paper);
-  font-family: var(--font-pixel);
-  font-size: var(--pixel-s);
+  font-size: 0.875rem;
+  font-weight: 600;
 }
 
 .theme-doc-toc-mobile button {
@@ -494,13 +514,12 @@ a {
 
 .theme-edit-this-page,
 .theme-last-updated {
-  font-family: var(--font-pixel);
-  font-size: var(--pixel-s);
+  font-size: 0.875rem;
 }
 
 .breadcrumbs__link {
   border-radius: 0;
-  font-family: var(--font-pixel);
+  font-size: 0.875rem;
 }
 
 .breadcrumbs__item--active .breadcrumbs__link {

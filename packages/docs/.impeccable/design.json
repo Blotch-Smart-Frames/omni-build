@@ -29,13 +29,15 @@
     ],
     "typographyMeta": {
       "display": { "displayName": "Display (Jersey 10)", "purpose": "The landing headline only. Narrow screens: clamp(2.5rem, 11.5vw, 4.5rem)." },
-      "headline": { "displayName": "Headline (Jersey 10)", "purpose": "The statement opening each section window. Docs h1 4rem, h2 2.75rem." },
-      "title": { "displayName": "Title (Jersey 10)", "purpose": "List titles, target names, wordmark, docs h3; 1.75rem for footer titles and pagination, 1.5rem for docs h4 and phone list records." },
+      "headline": { "displayName": "Headline (Jersey 10)", "purpose": "The statement opening each section window." },
+      "title": { "displayName": "Title (Jersey 10)", "purpose": "Target names and the wordmark; 1.75rem for footer titles, 1.5rem for phone list records." },
       "body": { "displayName": "Body (Atkinson Hyperlegible Next)", "purpose": "Section copy (max 62ch) and docs prose (max 70ch)." },
+      "doc-heading": { "displayName": "Doc heading (Atkinson 700)", "purpose": "Docs h1 2.5rem, h2 1.75rem, h3 1.375rem, h4 1.125rem; the roadmap window's list titles (1.375rem) and docs pagination labels (1.125rem)." },
+      "doc-navigation": { "displayName": "Doc navigation (Atkinson)", "purpose": "Docs sidebar items at 1rem, 500; table of contents, breadcrumbs, edit link, table column heads, code-block titles and admonition headings at 0.875rem." },
       "body-lede": { "displayName": "Lede", "purpose": "The landing front window's one-line explanation, max 28em." },
       "status": { "displayName": "Status (Atkinson 600)", "purpose": "Any sentence in chrome: window status lines, the demonstration notice, results, field labels." },
-      "label-m": { "displayName": "Label M (Tiny5 20px, --pixel-m)", "purpose": "Window titles, buttons, menu and sidebar items, phase names, list row heads." },
-      "label-s": { "displayName": "Label S (Tiny5 15px, --pixel-s)", "purpose": "Icon labels, table column heads, table of contents, code-block titles, admonition headings, small buttons, tags, footer." },
+      "label-m": { "displayName": "Label M (Tiny5 20px, --pixel-m)", "purpose": "Window titles, buttons, menu-bar items and the phone's menu drawer, list row heads." },
+      "label-s": { "displayName": "Label S (Tiny5 15px, --pixel-s)", "purpose": "Icon labels, the landing tables' column heads, small buttons, footer." },
       "mono": { "displayName": "Mono", "purpose": "Code and the read-only install field." }
     },
     "shadows": [
@@ -134,12 +136,12 @@
   ],
   "narrative": {
     "northStar": "The One-Bit Desktop",
-    "overview": "The site is a working one-bit desktop, not a page dressed as one. Every surface is ink or paper, and every grey is an ordered dither of the two. Content lives in windows: white rectangles with a 2px ink frame, a striped title bar, a square close box and a hard, unblurred drop shadow. The windows sit on a desktop whose ground is a live dither field, and they behave as windows did: they drag by their title bars, roll up to their title bars, and zoom open out of icons. The documentation pages use the same chrome, but read on plain paper.\n\nOne pixel of this world is two CSS pixels (`--px`). Borders, rules, shadows, outlines and pattern cells are whole multiples of it, so lines stay as crisp as the dithers next to them. Patterns are SVG tiles rendered with `image-rendering: pixelated`, never CSS gradients, because a gradient's stops antialias into a blurred grey. Interaction comes from the medium's own grammar: pressing and hovering invert, a selected icon or row is drawn in inverse video, focus is marching ants, the current item in a list is a highlighted row, and the item that comes next wears animated marching ants.\n\nThe world keeps the medium's generic grammar and drops everything that belongs to Apple: no Apple logo, no Chicago or Geneva, no Finder, Trash or happy-computer icons. Every icon, the logo and the favicon are OmniBuild's own 16 by 16 pixel grids. Nothing imitates Apple's or Google's sites or product art.",
+    "overview": "The site is a working one-bit desktop, not a page dressed as one. Every surface is ink or paper, and every grey is an ordered dither of the two. Content lives in windows: white rectangles with a 2px ink frame, a striped title bar, a square close box and a hard, unblurred drop shadow. The windows sit on a desktop whose ground is a live dither field, and they behave as windows did: they drag by their title bars, roll up to their title bars, and zoom open out of icons. The documentation pages use the same chrome, but read on plain paper, in the reading face.\n\nOne pixel of this world is two CSS pixels (`--px`). Borders, rules, shadows, outlines and pattern cells are whole multiples of it, so lines stay as crisp as the dithers next to them. Patterns are SVG tiles rendered with `image-rendering: pixelated`, never CSS gradients, because a gradient's stops antialias into a blurred grey. Interaction comes from the medium's own grammar: pressing and hovering invert, a selected icon or row is drawn in inverse video, focus is marching ants, the current item in a list is a highlighted row, and the item that comes next wears animated marching ants.\n\nThe world keeps the medium's generic grammar and drops everything that belongs to Apple: no Apple logo, no Chicago or Geneva, no Finder, Trash or happy-computer icons. Every icon, the logo and the favicon are OmniBuild's own 16 by 16 pixel grids. Nothing imitates Apple's or Google's sites or product art.",
     "keyCharacteristics": [
       "Two values, ink and paper; greys only as 12, 25, 50 and 75% ordered dithers.",
       "Dark mode is inverse video: ink and paper swap, and the system stays one-bit.",
       "Windows with 2px frames, striped title bars, square close boxes and hard ink shadows.",
-      "Three faces with fixed jobs: Jersey 10 for display, Tiny5 for chrome and labels, Atkinson Hyperlegible Next for every sentence.",
+      "Three faces with fixed jobs: Jersey 10 for display, Tiny5 for chrome and labels, Atkinson Hyperlegible Next for every sentence and for the docs pages whole.",
       "Motion is stepped and pixel-whole: XOR outlines, zoom rectangles, marching ants, barber-pole progress."
     ],
     "rules": [
@@ -148,6 +150,7 @@
       { "name": "The Clear Glyph Rule", "body": "No dither, stripe or pattern ever sits under glyphs. A title on a striped bar sits on its own paper slab; an icon label sits on paper over the dither ground; inline code is a 1px ink frame, not a shaded chip; a read-only field carries its 50% dither only in a band inside its frame.", "section": "colors" },
       { "name": "The Five-Pixel Rule", "body": "Tiny5 is drawn on a 5px grid and is set only at 15px (`--pixel-s`) and 20px (`--pixel-m`), so every stem is a whole number of pixels. It is never bolded, never set at other sizes and never used for running copy.", "section": "typography" },
       { "name": "The Sentence Face Rule", "body": "Every sentence, status lines included, is set in Atkinson Hyperlegible Next. Tiny5 is for words and labels; when a sentence sits in chrome it is Atkinson at 600.", "section": "typography" },
+      { "name": "The Reading Page Rule", "body": "A docs page is set entirely in Atkinson Hyperlegible Next, its headings and navigation included, and so is the landing page's roadmap, which summarises the plan. The pixel faces stop at the site's chrome: the menu bar, window title bars and the footer.", "section": "typography" },
       { "name": "The One-Bit Syntax Rule", "body": "Code has no colours to tell tokens apart, so keywords, builtins, tags and selectors are bold, comments are italic and deletions are struck through, in ink on paper.", "section": "typography" },
       { "name": "The Hard Shadow Rule", "body": "Shadows are solid ink at `--px` multiples (2, 4, 6px) with no blur and no spread. One-bit screens had no blur, so neither does this world.", "section": "elevation" },
       { "name": "The Window Shade Rule", "body": "Every close box does something a reader can undo. When the page can reopen the window (the demonstration reopens from its icon), the close box closes it with zoom rectangles back to the icon. Otherwise it rolls the window up to its title bar, and a second press rolls it down. A section is never lost to a click.", "section": "components" }
