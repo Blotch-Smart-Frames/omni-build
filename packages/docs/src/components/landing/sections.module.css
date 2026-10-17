@@ -1,0 +1,462 @@
+/*
+ * Below the first screen the desktop carries on: one window per section,
+ * staggered across the same twelve columns and overlapping a little, as
+ * windows left open do. Each can still be dragged by its title bar.
+ */
+.sections {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: 24px;
+  row-gap: 64px;
+  max-width: 1560px;
+  margin: 0 auto;
+  padding: 32px 48px 128px;
+}
+
+.window {
+  align-self: start;
+}
+
+.how {
+  grid-column: 1 / span 8;
+}
+
+.before {
+  grid-column: 5 / span 8;
+  margin-top: -32px;
+}
+
+.runs {
+  grid-column: 1 / span 6;
+}
+
+.install {
+  grid-column: 7 / span 5;
+  margin-top: 72px;
+}
+
+.roadmap {
+  grid-column: 2 / span 10;
+  margin-top: -16px;
+}
+
+.dialog {
+  grid-column: 3 / span 8;
+}
+
+.body {
+  padding: 28px 32px 30px;
+}
+
+.statement {
+  max-width: 24ch;
+  margin: 0 0 16px;
+  font-family: var(--font-display);
+  font-size: clamp(2.25rem, 3.4vw, 3.25rem);
+  line-height: 0.95;
+  text-wrap: balance;
+}
+
+.copy {
+  max-width: 62ch;
+  margin: 0 0 24px;
+  font-size: 1.0625rem;
+  line-height: 1.6;
+}
+
+.copy:last-child {
+  margin-bottom: 0;
+}
+
+.copy code,
+.targets code {
+  padding: 0 4px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  font-size: 0.875em;
+}
+
+/* --- List views ------------------------------------------------------- */
+
+.tableWrap {
+  overflow-x: auto;
+  border: var(--px) solid var(--ink);
+}
+
+.list {
+  display: table;
+  width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+
+.list th {
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-s);
+}
+
+.list th,
+.list td {
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: var(--px) solid var(--ink);
+  background: transparent;
+  text-align: left;
+  vertical-align: top;
+  font-weight: 400;
+}
+
+.list tr {
+  border: 0;
+  background: transparent;
+}
+
+.list tbody tr:last-child th,
+.list tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.list thead th {
+  background: var(--ink);
+  color: var(--paper);
+  white-space: nowrap;
+}
+
+.list tbody th {
+  width: 26%;
+  /* A row's label outranks its cells. */
+  font-size: var(--pixel-m);
+  line-height: 1.2;
+  /* Infima colours every th as a column head; a row head is body text. */
+  color: var(--ink);
+}
+
+/* A row's line inverts under the pointer, as a selected row did. */
+.list tbody tr:hover th,
+.list tbody tr:hover td {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.unchanged td:last-child {
+  text-decoration: underline;
+  text-decoration-thickness: var(--px);
+  text-underline-offset: 0.25em;
+}
+
+/* --- Where it runs ---------------------------------------------------- */
+
+.targets {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.targets li {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  column-gap: 16px;
+  align-items: baseline;
+  padding: 12px 0;
+  border-top: var(--px) solid var(--ink);
+}
+
+.targets li:last-child {
+  border-bottom: var(--px) solid var(--ink);
+}
+
+.os {
+  grid-row: span 2;
+  font-family: var(--font-display);
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.targets code {
+  justify-self: start;
+  margin-top: 4px;
+}
+
+/* --- Install ---------------------------------------------------------- */
+
+.fieldLabel {
+  display: block;
+  margin: 0 0 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/*
+ * Disabled, as a dimmed field was: the dither is on its frame, a band of 50%
+ * inside an ink rule, and never under the command, so the text reads.
+ */
+.field {
+  width: 100%;
+  margin-bottom: 20px;
+  padding: 10px 12px;
+  border: calc(var(--px) * 3) solid transparent;
+  border-radius: 0;
+  outline: var(--px) solid var(--ink);
+  background:
+    linear-gradient(var(--paper), var(--paper)) padding-box,
+    var(--dither-50) 0 0 / 4px 4px border-box;
+  background-color: var(--paper);
+  image-rendering: pixelated;
+  color: var(--ink);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+.field code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: inherit;
+}
+
+/* --- Roadmap ---------------------------------------------------------- */
+
+.roadmapBody {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 40px;
+}
+
+.listTitle {
+  margin: 0 0 12px;
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.checklist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+.checklist li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: 12px;
+  padding: 8px 10px;
+}
+
+.checkbox {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: var(--px) solid var(--ink);
+  background: var(--paper);
+}
+
+.phase {
+  display: block;
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-m);
+  line-height: 1.2;
+}
+
+.scope {
+  display: block;
+  font-size: 0.875rem;
+}
+
+.nextTag {
+  margin-left: 10px;
+  padding: 0 6px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--pixel-s);
+}
+
+/*
+ * The next phase wears marching ants: four dashed edges whose dashes walk
+ * a pixel at a time, round and round.
+ */
+.next {
+  background-image:
+    linear-gradient(90deg, var(--ink) 50%, transparent 0),
+    linear-gradient(90deg, var(--ink) 50%, transparent 0),
+    linear-gradient(0deg, var(--ink) 50%, transparent 0),
+    linear-gradient(0deg, var(--ink) 50%, transparent 0);
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  background-size:
+    8px 2px,
+    8px 2px,
+    2px 8px,
+    2px 8px;
+  background-position:
+    0 0,
+    0 100%,
+    0 0,
+    100% 0;
+  animation: ants 0.6s steps(4) infinite;
+}
+
+@keyframes ants {
+  to {
+    background-position:
+      8px 0,
+      -8px 100%,
+      0 -8px,
+      100% 8px;
+  }
+}
+
+/* --- Follow along ----------------------------------------------------- */
+
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+}
+
+.blast {
+  position: relative;
+  height: 160px;
+  border-bottom: var(--px) solid var(--ink);
+  background: var(--paper) var(--dither-50) 0 0 / 4px 4px;
+  image-rendering: pixelated;
+}
+
+.dialogText {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 24px;
+  padding: 28px 32px 32px;
+}
+
+.dialogIcon {
+  margin-top: 4px;
+}
+
+.dialogActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px 20px;
+  margin-top: 8px;
+}
+
+@media (max-width: 1100px) {
+  .sections {
+    padding-inline: 32px;
+  }
+
+  .how,
+  .before,
+  .roadmap,
+  .dialog {
+    grid-column: 1 / -1;
+    margin-top: 0;
+  }
+
+  .runs {
+    grid-column: 1 / span 7;
+  }
+
+  .install {
+    grid-column: 8 / span 5;
+    margin-top: 0;
+  }
+}
+
+@media (max-width: 996px) {
+  .sections {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 32px;
+    padding: 8px 16px 64px;
+  }
+
+  .window,
+  .runs,
+  .install {
+    grid-column: 1;
+    margin: 0 calc(var(--px) * 3) 0 0;
+  }
+
+  .body {
+    padding: 22px 18px 24px;
+  }
+
+  .roadmapBody {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+
+  .targets li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .os {
+    grid-row: auto;
+  }
+
+  .dialogText {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 22px 18px 24px;
+  }
+
+  .dialogActions {
+    justify-content: flex-start;
+  }
+
+  /*
+   * Three columns of file names don't fit a phone, and scrolling sideways
+   * would hide the column that matters. Each row becomes a small record,
+   * every value labelled with its column.
+   */
+  .list thead {
+    display: none;
+  }
+
+  .list,
+  .list tbody,
+  .list tr,
+  .list th,
+  .list td {
+    display: block;
+    width: auto;
+  }
+
+  .list tbody tr {
+    padding: 10px 12px;
+    border-bottom: var(--px) solid var(--ink);
+  }
+
+  .list tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .list tbody th,
+  .list tbody td {
+    padding: 0;
+    border: 0;
+  }
+
+  .list tbody th {
+    width: auto;
+    margin-bottom: 4px;
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    line-height: 1.1;
+  }
+
+  .list td::before {
+    content: attr(data-label) ': ';
+    padding-right: 4px;
+    text-decoration: underline;
+    text-decoration-thickness: var(--px);
+    text-underline-offset: 0.2em;
+  }
+}

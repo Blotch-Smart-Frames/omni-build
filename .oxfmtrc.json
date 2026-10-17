@@ -14,6 +14,9 @@
     "**/.claude/**",
     "**/.agents/**",
     "target/**",
-    "packages/e2e/fixtures/**"
+    "packages/e2e/fixtures/**",
+    "packages/docs/build/**",
+    "packages/docs/.docusaurus/**",
+    "**/.impeccable/**"
   ]
 }

@@ -1,0 +1,346 @@
+/*
+ * The desktop: twelve columns of windows and a column of icons on the
+ * right, as icons sat on a one-bit desktop. The demonstration window
+ * overlaps the main one's lower right, where the main window has no copy.
+ */
+.desktop {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr)) 112px;
+  column-gap: 24px;
+  align-items: start;
+  max-width: 1560px;
+  min-height: calc(100svh - var(--ifm-navbar-height));
+  margin: 0 auto;
+  padding: 40px 48px 72px;
+}
+
+.main {
+  grid-column: 1 / span 8;
+  grid-row: 1;
+  z-index: 1;
+}
+
+.mainBody {
+  padding: 40px 44px 32px;
+}
+
+.headline {
+  margin: 0 0 24px;
+  max-width: 19ch;
+  font-family: var(--font-display);
+  font-size: clamp(3.5rem, 6.2vw, 5.75rem);
+  font-weight: 400;
+  line-height: 0.92;
+  letter-spacing: 0.005em;
+  text-wrap: balance;
+}
+
+.lede {
+  max-width: 28em;
+  margin: 0 0 28px;
+  font-size: 1.1875rem;
+  line-height: 1.55;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+}
+
+/* --- The demonstration ---------------------------------------------- */
+
+.demo {
+  grid-column: 8 / span 5;
+  grid-row: 1;
+  z-index: 2;
+  margin-top: clamp(150px, 19vh, 260px);
+}
+
+.demoBody {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 16px 20px;
+  padding: 16px 20px 20px;
+}
+
+/* The first line of the window, in inverse video, so the run is read as a
+   demonstration before it starts. */
+.notice {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 5px 10px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* The phone is a frame around the screen, nothing more. */
+.phone {
+  width: 100%;
+  border: calc(var(--px) * 3) solid var(--ink);
+  border-radius: 14px;
+  background: var(--paper);
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  padding: 10px;
+  background: var(--paper);
+  text-align: center;
+}
+
+.screenName {
+  margin-top: 6px;
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+.screenMeta {
+  font-size: 0.6875rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.unset {
+  padding: 0 4px;
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.job {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.steps {
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-pixel);
+}
+
+.steps li {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: 8px;
+  padding: 4px 6px;
+}
+
+.tick {
+  grid-row: span 2;
+  padding-top: 3px;
+}
+
+.file {
+  font-size: var(--pixel-s);
+  line-height: 1.3;
+}
+
+.detail {
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+/* The step being worked on is highlighted, as a selected list row was. */
+.stepNow {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: auto;
+}
+
+.progress {
+  flex: 1;
+  height: 20px;
+  border: var(--px) solid var(--ink);
+  padding: var(--px);
+}
+
+.progress span {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transition: width 0.5s steps(6, end);
+}
+
+/* While the job runs, the filled part is barber-pole stripes, walking a
+ * whole pixel at a time. */
+.busy span {
+  background: var(--paper) var(--diagonal) 0 0 / 12px 12px;
+  image-rendering: pixelated;
+  animation: march 0.6s steps(6) infinite;
+}
+
+@keyframes march {
+  to {
+    background-position: 12px 0;
+  }
+}
+
+.percent {
+  min-width: 3.5em;
+  font-family: var(--font-pixel);
+  text-align: right;
+}
+
+.result {
+  min-height: 1.4em;
+  margin: 8px 0 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.again {
+  padding: 2px 10px;
+  border: var(--px) solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-s);
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.again:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* Dimmed, as a disabled control was, but only its frame: the label stays
+   solid ink so it reads. */
+.again:disabled {
+  cursor: default;
+  border-style: dotted;
+}
+
+/* --- Icons ----------------------------------------------------------- */
+
+.icons {
+  grid-column: 13;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+/* Only the folder is dragged, so only it stops a touch from scrolling. */
+.draggableIcon {
+  touch-action: none;
+}
+
+/*
+ * Below 1240px the demonstration can't overlap the main window without
+ * covering its copy, so it moves under it, offset to the right. It clears
+ * the main window's status line rather than tucking over it.
+ */
+@media (max-width: 1240px) {
+  .desktop {
+    grid-template-columns: repeat(12, minmax(0, 1fr)) 96px;
+    padding-inline: 32px;
+  }
+
+  .main {
+    grid-column: 1 / span 10;
+  }
+
+  .demo {
+    grid-column: 4 / span 9;
+    grid-row: 2;
+    margin-top: 24px;
+  }
+
+  .icons {
+    grid-row: 1 / span 2;
+  }
+}
+
+/*
+ * Narrow screens tile the windows edge to edge, the icons as a row between
+ * them, at the same pixel scale.
+ */
+@media (max-width: 996px) {
+  .desktop {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 24px;
+    min-height: 0;
+    padding: 16px 16px 48px;
+  }
+
+  .main,
+  .demo,
+  .icons {
+    grid-column: 1;
+    grid-row: auto;
+    margin-top: 0;
+  }
+
+  .main {
+    margin-right: calc(var(--px) * 3);
+  }
+
+  /* The demonstration follows the main window directly, so its title bar
+     is in the first screen; the icons come after it. */
+  .demo {
+    margin-right: calc(var(--px) * 3);
+  }
+
+  .mainBody {
+    padding: 28px 22px 24px;
+  }
+
+  .headline {
+    margin-bottom: 18px;
+    font-size: clamp(2.5rem, 11.5vw, 4.5rem);
+  }
+
+  .lede {
+    font-size: 1.0625rem;
+  }
+
+  .icons {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 4px;
+  }
+
+  .icons > * {
+    width: 84px;
+  }
+}
+
+@media (max-width: 520px) {
+  .demoBody {
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 14px;
+    padding: 14px;
+  }
+
+  .screenName {
+    font-size: 1.375rem;
+  }
+
+  .screenMeta {
+    font-size: 0.625rem;
+  }
+}

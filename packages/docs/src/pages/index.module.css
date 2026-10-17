@@ -1,0 +1,7 @@
+/* The desktop field is fixed behind the page, so the page itself stays
+   transparent down to the footer. */
+.page {
+  position: relative;
+  isolation: isolate;
+  overflow-x: clip;
+}

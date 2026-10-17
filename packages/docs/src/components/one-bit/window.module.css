@@ -1,0 +1,130 @@
+.window {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  color: var(--ink);
+  border: var(--px) solid var(--ink);
+  /* A hard shadow is the medium's own depth: one-bit screens had no blur. */
+  box-shadow: calc(var(--px) * 3) calc(var(--px) * 3) 0 var(--ink);
+}
+
+.titleBar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 7px 8px;
+  border-bottom: var(--px) solid var(--ink);
+  /*
+   * Six ink lines, a pixel apart, behind the title: the active window's
+   * stripes. Clipped to the content box so the bar keeps a paper margin.
+   */
+  background: var(--stripes) 0 0 / 2px 4px content-box;
+  background-color: var(--paper);
+  image-rendering: pixelated;
+  user-select: none;
+}
+
+.inactive .titleBar {
+  background-image: none;
+}
+
+.draggable {
+  cursor: grab;
+}
+
+.draggable:active {
+  cursor: grabbing;
+}
+
+.title {
+  margin: 0;
+  padding: 0 12px;
+  background: var(--paper);
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-m);
+  font-weight: 400;
+  line-height: 20px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: calc(100% - 64px);
+}
+
+.closeBox {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  translate: 0 -50%;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: var(--px) solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  /* The cross shows on hover, as a close box did when pressed. */
+}
+
+.closeBox svg {
+  opacity: 0;
+}
+
+.closeBox:hover svg,
+.closeBox:focus-visible svg {
+  opacity: 1;
+}
+
+.closeBox:active {
+  background: var(--ink);
+}
+
+.closeBox:active svg path:last-child {
+  fill: var(--paper);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+}
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding: 6px 14px;
+  border-top: var(--px) solid var(--ink);
+  /* Status lines are sentences, often about the project's status, so they
+     are set in the reading face; Tiny5 is for words and labels. */
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* Rolled up, a window is its title bar alone. */
+.body[hidden],
+.status[hidden] {
+  display: none;
+}
+
+.window:has(> .body[hidden]) .titleBar {
+  border-bottom: 0;
+}
+
+/* The drag outline is drawn by inverting what's under it, as XOR did. */
+.ghost {
+  position: absolute;
+  inset: calc(var(--px) * -1);
+  border: var(--px) dashed #fff;
+  mix-blend-mode: difference;
+  pointer-events: none;
+  z-index: 10;
+}

@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-17T00:00:00Z",
+  "title": "Design System: OmniBuild",
+  "extensions": {
+    "colorMeta": {
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#000000",
+        "tonalRamp": ["#000000", "#ffffff"],
+        "note": "One-bit: no tonal ramp exists. Tones between ink and paper are dither tiles (see patterns), never grey values. Swaps with paper in dark mode via --ink."
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#000000", "#ffffff"],
+        "note": "Swaps with ink in dark mode via --paper."
+      }
+    },
+    "patterns": [
+      { "name": "dither-12", "variable": "--dither-12", "tile": "4x4, two ink dots", "size": "defined, not yet used in the build", "purpose": "Lightest dither tone." },
+      { "name": "dither-25", "variable": "--dither-25", "tile": "2x2, one ink dot", "size": "defined, not yet used in the build", "purpose": "Light dither tone." },
+      { "name": "dither-50", "variable": "--dither-50", "tile": "2x2 checker", "size": "4px 4px", "purpose": "Desktop ground before and without the WebGL field, scrollbar track, menu-bar status square, read-only field frame band." },
+      { "name": "dither-75", "variable": "--dither-75", "tile": "2x2, three ink dots", "size": "defined, not yet used in the build", "purpose": "Dark dither tone." },
+      { "name": "stripes", "variable": "--stripes", "tile": "1x2, one ink row", "size": "2px 4px", "purpose": "Active window title bar, clipped to the content box." },
+      { "name": "diagonal", "variable": "--diagonal", "tile": "6x6 diagonal band", "size": "12px 12px", "purpose": "Barber-pole fill of a running progress bar." }
+    ],
+    "typographyMeta": {
+      "display": { "displayName": "Display (Jersey 10)", "purpose": "The landing headline only. Narrow screens: clamp(2.5rem, 11.5vw, 4.5rem)." },
+      "headline": { "displayName": "Headline (Jersey 10)", "purpose": "The statement opening each section window. Docs h1 4rem, h2 2.75rem." },
+      "title": { "displayName": "Title (Jersey 10)", "purpose": "List titles, target names, wordmark, docs h3; 1.75rem for footer titles and pagination, 1.5rem for docs h4 and phone list records." },
+      "body": { "displayName": "Body (Atkinson Hyperlegible Next)", "purpose": "Section copy (max 62ch) and docs prose (max 70ch)." },
+      "body-lede": { "displayName": "Lede", "purpose": "The landing front window's one-line explanation, max 28em." },
+      "status": { "displayName": "Status (Atkinson 600)", "purpose": "Any sentence in chrome: window status lines, the demonstration notice, results, field labels." },
+      "label-m": { "displayName": "Label M (Tiny5 20px, --pixel-m)", "purpose": "Window titles, buttons, menu and sidebar items, phase names, list row heads." },
+      "label-s": { "displayName": "Label S (Tiny5 15px, --pixel-s)", "purpose": "Icon labels, table column heads, table of contents, code-block titles, admonition headings, small buttons, tags, footer." },
+      "mono": { "displayName": "Mono", "purpose": "Code and the read-only install field." }
+    },
+    "shadows": [
+      { "name": "menu", "value": "2px 2px 0 var(--ink)", "purpose": "Dropdown menus off the menu bar." },
+      { "name": "panel", "value": "4px 4px 0 var(--ink)", "purpose": "Docs code blocks and admonitions." },
+      { "name": "window", "value": "6px 6px 0 var(--ink)", "purpose": "Every landing-page window." },
+      { "name": "default-ring", "value": "0 0 0 2px var(--paper), 0 0 0 6px var(--ink)", "purpose": "The default button's outer ring." }
+    ],
+    "motion": [
+      { "name": "progress-width", "value": "width 0.5s steps(6, end)", "purpose": "Progress bar fill advancing in whole steps." },
+      { "name": "barber-pole", "value": "march 0.6s steps(6) infinite", "purpose": "Running progress bar's diagonal fill walking 2px at a time." },
+      { "name": "marching-ants", "value": "ants 0.6s steps(4) infinite", "purpose": "Dashed border walking around the next roadmap phase." },
+      { "name": "xor-outline", "value": "border: 2px dashed|solid #fff; mix-blend-mode: difference", "purpose": "Drag ghosts and zoom rectangles that show on ink, paper and dither alike." },
+      { "name": "reduced-motion", "value": "animation and transition durations 0.01ms", "purpose": "prefers-reduced-motion: reduce stops all motion." }
+    ],
+    "breakpoints": [
+      { "name": "phone-narrow", "value": "520px" },
+      { "name": "single-column", "value": "996px" },
+      { "name": "sections-full", "value": "1100px" },
+      { "name": "demo-below", "value": "1240px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Push Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Square framed button in Tiny5 20px; hover inverts, press nudges 2px.",
+      "html": "<a class=\"ds-button\" href=\"#\">Read the plan</a>",
+      "css": ".ds-button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 8px 22px; border: 2px solid var(--ink, #000); border-radius: 0; background: var(--paper, #fff); color: var(--ink, #000); font-family: 'Tiny5', monospace; font-size: 20px; line-height: 1.2; text-decoration: none; white-space: nowrap; cursor: pointer; } .ds-button:hover { background: var(--ink, #000); color: var(--paper, #fff); } .ds-button:active { translate: 2px 2px; } .ds-button:focus-visible { outline: 2px dashed var(--ink, #000); outline-offset: 10px; }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "The button Return would press: the push button with a thick outer ring.",
+      "html": "<a class=\"ds-button-default\" href=\"#\">Watch on GitHub</a>",
+      "css": ".ds-button-default { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; margin: 6px; padding: 8px 22px; border: 2px solid var(--ink, #000); border-radius: 0; background: var(--paper, #fff); color: var(--ink, #000); box-shadow: 0 0 0 2px var(--paper, #fff), 0 0 0 6px var(--ink, #000); font-family: 'Tiny5', monospace; font-size: 20px; line-height: 1.2; text-decoration: none; white-space: nowrap; cursor: pointer; } .ds-button-default:hover { background: var(--ink, #000); color: var(--paper, #fff); } .ds-button-default:active { translate: 2px 2px; } .ds-button-default:focus-visible { outline: 2px dashed var(--ink, #000); outline-offset: 10px; }"
+    },
+    {
+      "name": "Small Button",
+      "kind": "button",
+      "refersTo": "button-small",
+      "description": "In-chrome button in Tiny5 15px; disabled shows a dotted frame, label stays solid.",
+      "html": "<button class=\"ds-button-small\" type=\"button\">Run again</button> <button class=\"ds-button-small\" type=\"button\" disabled>Run again</button>",
+      "css": ".ds-button-small { padding: 2px 10px; border: 2px solid var(--ink, #000); border-radius: 0; background: var(--paper, #fff); color: var(--ink, #000); font-family: 'Tiny5', monospace; font-size: 15px; font-weight: 400; cursor: pointer; } .ds-button-small:hover:not(:disabled) { background: var(--ink, #000); color: var(--paper, #fff); } .ds-button-small:disabled { border-style: dotted; cursor: default; } .ds-button-small:focus-visible { outline: 2px dashed var(--ink, #000); outline-offset: 2px; }"
+    },
+    {
+      "name": "Window",
+      "kind": "card",
+      "refersTo": "window",
+      "description": "The signature container: 2px frame, striped title bar with the title on a paper slab, square close box, status line, 6px hard shadow.",
+      "html": "<section class=\"ds-window\"><div class=\"ds-window-bar\"><p class=\"ds-window-title\">OmniBuild</p><button class=\"ds-window-close\" type=\"button\" aria-label=\"Roll up OmniBuild\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 7 7\" shape-rendering=\"crispEdges\"><path d=\"M0 0h7v1H0zM0 6h7v1H0z\" fill=\"currentColor\"/></svg></button></div><div class=\"ds-window-body\"><p>No Xcode, no JDK, no Android SDK.</p></div><div class=\"ds-window-status\">In planning. Nothing to install yet.</div></section>",
+      "css": ".ds-window { position: relative; display: flex; flex-direction: column; max-width: 420px; background: var(--paper, #fff); color: var(--ink, #000); border: 2px solid var(--ink, #000); box-shadow: 6px 6px 0 var(--ink, #000); } .ds-window-bar { position: relative; display: flex; align-items: center; justify-content: center; min-height: 34px; padding: 7px 8px; border-bottom: 2px solid var(--ink, #000); background: var(--stripes) 0 0 / 2px 4px content-box; background-color: var(--paper, #fff); image-rendering: pixelated; } .ds-window-title { margin: 0; padding: 0 12px; background: var(--paper, #fff); font-family: 'Tiny5', monospace; font-size: 20px; line-height: 20px; letter-spacing: 0.02em; } .ds-window-close { position: absolute; right: 10px; top: 50%; translate: 0 -50%; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 2px solid var(--ink, #000); border-radius: 0; background: var(--paper, #fff); color: var(--ink, #000); cursor: pointer; } .ds-window-close svg { opacity: 0; } .ds-window-close:hover svg, .ds-window-close:focus-visible svg { opacity: 1; } .ds-window-close:active { background: var(--ink, #000); color: var(--paper, #fff); } .ds-window-close:focus-visible { outline: 2px dashed var(--ink, #000); outline-offset: 2px; } .ds-window-body { padding: 28px 32px 30px; font-family: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif; font-size: 1.0625rem; line-height: 1.6; } .ds-window-body p { margin: 0; } .ds-window-status { padding: 6px 14px; border-top: 2px solid var(--ink, #000); font-family: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif; font-size: 0.875rem; font-weight: 600; line-height: 1.4; }"
+    },
+    {
+      "name": "Desktop Icon",
+      "kind": "custom",
+      "refersTo": "icon-label",
+      "description": "Own 16x16 pixel glyph over a Tiny5 15px label on a paper slab; hover and selection invert; focus is marching ants on the label.",
+      "html": "<a class=\"ds-icon\" href=\"#\"><svg width=\"48\" height=\"48\" viewBox=\"0 0 16 16\" shape-rendering=\"crispEdges\"><path d=\"M1 2h5v1H1zM0 3h1v10H0zM6 3h1v1H6zM7 4h8v1H7zM15 5h1v8h-1zM1 6h14v1H1zM1 13h14v1H1z\" fill=\"var(--ink, #000)\"/><path d=\"M1 3h5v3H1zM6 4h1v2H6zM7 5h8v1H7zM1 7h14v6H1z\" fill=\"var(--paper, #fff)\"/></svg><span class=\"ds-icon-label\">Tides</span></a>",
+      "css": ".ds-icon { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; width: 112px; padding: 4px 0; color: var(--ink, #000); text-decoration: none; } .ds-icon svg { image-rendering: pixelated; } .ds-icon-label { padding: 1px 6px; background: var(--paper, #fff); font-family: 'Tiny5', monospace; font-size: 15px; line-height: 1.35; text-align: center; } .ds-icon:hover .ds-icon-label { background: var(--ink, #000); color: var(--paper, #fff); } .ds-icon:focus-visible { outline: none; } .ds-icon:focus-visible .ds-icon-label { outline: 2px dashed var(--ink, #000); outline-offset: 2px; }"
+    },
+    {
+      "name": "Menu Bar",
+      "kind": "nav",
+      "refersTo": "button",
+      "description": "Paper bar with a 2px rule, Jersey 10 wordmark, Tiny5 20px items that invert on hover, and a printed status line.",
+      "html": "<nav class=\"ds-menubar\"><span class=\"ds-menubar-brand\">OmniBuild</span><a class=\"ds-menubar-item\" href=\"#\">Docs</a><a class=\"ds-menubar-item\" href=\"#\">The plan</a><span class=\"ds-menubar-status\">Planning: nothing to install yet</span><a class=\"ds-menubar-item\" href=\"#\">GitHub</a></nav>",
+      "css": ".ds-menubar { display: flex; align-items: center; height: 48px; padding: 0 16px; border-bottom: 2px solid var(--ink, #000); background: var(--paper, #fff); color: var(--ink, #000); font-family: 'Tiny5', monospace; } .ds-menubar-brand { margin-right: 24px; font-family: 'Jersey 10', 'Tiny5', monospace; font-size: 2rem; line-height: 1; } .ds-menubar-item { padding: 4px 12px; font-size: 20px; color: var(--ink, #000); text-decoration: none; } .ds-menubar-item:hover { background: var(--ink, #000); color: var(--paper, #fff); } .ds-menubar-item:focus-visible { outline: 2px dashed var(--ink, #000); outline-offset: 2px; } .ds-menubar-status { margin-left: auto; padding: 0 12px; font-family: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif; font-size: 0.875rem; font-weight: 600; white-space: nowrap; }"
+    },
+    {
+      "name": "List View",
+      "kind": "custom",
+      "refersTo": "list-head",
+      "description": "Framed table: inverted Tiny5 15px head, Tiny5 20px row heads, 2px rules, rows invert under the pointer.",
+      "html": "<div class=\"ds-list-wrap\"><table class=\"ds-list\"><thead><tr><th>File</th><th>Today</th></tr></thead><tbody><tr><th>Info.plist</th><td>Xcode writes it</td></tr><tr><th>Signature</th><td>codesign on a Mac</td></tr></tbody></table></div>",
+      "css": ".ds-list-wrap { border: 2px solid var(--ink, #000); } .ds-list { width: 100%; border-collapse: collapse; font-family: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif; font-size: 0.9375rem; line-height: 1.45; color: var(--ink, #000); } .ds-list th, .ds-list td { padding: 8px 12px; border-bottom: 2px solid var(--ink, #000); text-align: left; vertical-align: top; font-weight: 400; } .ds-list thead th { background: var(--ink, #000); color: var(--paper, #fff); font-family: 'Tiny5', monospace; font-size: 15px; } .ds-list tbody th { width: 26%; font-family: 'Tiny5', monospace; font-size: 20px; line-height: 1.2; } .ds-list tbody tr:last-child th, .ds-list tbody tr:last-child td { border-bottom: 0; } .ds-list tbody tr:hover th, .ds-list tbody tr:hover td { background: var(--ink, #000); color: var(--paper, #fff); }"
+    },
+    {
+      "name": "Progress Bar",
+      "kind": "custom",
+      "refersTo": "window",
+      "description": "Framed 20px bar with a 2px paper gap; solid ink at rest, stepped barber pole while running.",
+      "html": "<div class=\"ds-progress ds-progress-busy\" role=\"progressbar\" aria-valuenow=\"50\" aria-valuemin=\"0\" aria-valuemax=\"100\"><span style=\"width:50%\"></span></div>",
+      "css": ".ds-progress { width: 240px; height: 20px; padding: 2px; border: 2px solid var(--ink, #000); background: var(--paper, #fff); } .ds-progress span { display: block; height: 100%; background: var(--ink, #000); transition: width 0.5s steps(6, end); } .ds-progress-busy span { background: var(--paper, #fff) var(--diagonal) 0 0 / 12px 12px; image-rendering: pixelated; animation: ds-march 0.6s steps(6) infinite; } @keyframes ds-march { to { background-position: 12px 0; } } @media (prefers-reduced-motion: reduce) { .ds-progress-busy span { animation: none; } }"
+    },
+    {
+      "name": "Inline Code",
+      "kind": "chip",
+      "refersTo": "inline-code",
+      "description": "A 1px ink frame on paper: framed, never dithered, so the glyphs stay whole.",
+      "html": "<p class=\"ds-code-line\">Run <code class=\"ds-code\">omni-build --help</code> to see the commands.</p>",
+      "css": ".ds-code-line { font-family: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif; font-size: 1.0625rem; color: var(--ink, #000); } .ds-code { padding: 0 4px; border: 1px solid var(--ink, #000); border-radius: 0; background: var(--paper, #fff); font-family: ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace; font-size: 0.875em; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The One-Bit Desktop",
+    "overview": "The site is a working one-bit desktop, not a page dressed as one. Every surface is ink or paper, and every grey is an ordered dither of the two. Content lives in windows: white rectangles with a 2px ink frame, a striped title bar, a square close box and a hard, unblurred drop shadow. The windows sit on a desktop whose ground is a live dither field, and they behave as windows did: they drag by their title bars, roll up to their title bars, and zoom open out of icons. The documentation pages use the same chrome, but read on plain paper.\n\nOne pixel of this world is two CSS pixels (`--px`). Borders, rules, shadows, outlines and pattern cells are whole multiples of it, so lines stay as crisp as the dithers next to them. Patterns are SVG tiles rendered with `image-rendering: pixelated`, never CSS gradients, because a gradient's stops antialias into a blurred grey. Interaction comes from the medium's own grammar: pressing and hovering invert, a selected icon or row is drawn in inverse video, focus is marching ants, the current item in a list is a highlighted row, and the item that comes next wears animated marching ants.\n\nThe world keeps the medium's generic grammar and drops everything that belongs to Apple: no Apple logo, no Chicago or Geneva, no Finder, Trash or happy-computer icons. Every icon, the logo and the favicon are OmniBuild's own 16 by 16 pixel grids. Nothing imitates Apple's or Google's sites or product art.",
+    "keyCharacteristics": [
+      "Two values, ink and paper; greys only as 12, 25, 50 and 75% ordered dithers.",
+      "Dark mode is inverse video: ink and paper swap, and the system stays one-bit.",
+      "Windows with 2px frames, striped title bars, square close boxes and hard ink shadows.",
+      "Three faces with fixed jobs: Jersey 10 for display, Tiny5 for chrome and labels, Atkinson Hyperlegible Next for every sentence.",
+      "Motion is stepped and pixel-whole: XOR outlines, zoom rectangles, marching ants, barber-pole progress."
+    ],
+    "rules": [
+      { "name": "The Two Values Rule", "body": "Ink and paper are the only colours. A grey, a tint, an opacity fade or a coloured accent is never introduced; a tone between them is a dither tile at a whole multiple of `--px`, rendered pixelated.", "section": "colors" },
+      { "name": "The Inverse Video Rule", "body": "Emphasis and state are shown by swapping ink and paper: hover, press, selection, the active nav item, the current step, table heads and notices. Dark mode is the same swap applied to the whole screen.", "section": "colors" },
+      { "name": "The Clear Glyph Rule", "body": "No dither, stripe or pattern ever sits under glyphs. A title on a striped bar sits on its own paper slab; an icon label sits on paper over the dither ground; inline code is a 1px ink frame, not a shaded chip; a read-only field carries its 50% dither only in a band inside its frame.", "section": "colors" },
+      { "name": "The Five-Pixel Rule", "body": "Tiny5 is drawn on a 5px grid and is set only at 15px (`--pixel-s`) and 20px (`--pixel-m`), so every stem is a whole number of pixels. It is never bolded, never set at other sizes and never used for running copy.", "section": "typography" },
+      { "name": "The Sentence Face Rule", "body": "Every sentence, status lines included, is set in Atkinson Hyperlegible Next. Tiny5 is for words and labels; when a sentence sits in chrome it is Atkinson at 600.", "section": "typography" },
+      { "name": "The One-Bit Syntax Rule", "body": "Code has no colours to tell tokens apart, so keywords, builtins, tags and selectors are bold, comments are italic and deletions are struck through, in ink on paper.", "section": "typography" },
+      { "name": "The Hard Shadow Rule", "body": "Shadows are solid ink at `--px` multiples (2, 4, 6px) with no blur and no spread. One-bit screens had no blur, so neither does this world.", "section": "elevation" },
+      { "name": "The Window Shade Rule", "body": "Every close box does something a reader can undo. When the page can reopen the window (the demonstration reopens from its icon), the close box closes it with zoom rectangles back to the icon. Otherwise it rolls the window up to its title bar, and a second press rolls it down. A section is never lost to a click.", "section": "components" }
+    ],
+    "dos": [
+      "**Do** use only `{colors.ink}` and `{colors.paper}`, and make every intermediate tone a dither tile at a whole multiple of `--px` with `image-rendering: pixelated`.",
+      "**Do** put content in windows: 2px ink frame, striped title bar with the title on a paper slab, square close box, 6px hard shadow.",
+      "**Do** show state by inverting: hover, press, selection, current row and active item swap ink and paper.",
+      "**Do** set Tiny5 at 15px or 20px only, and every sentence in Atkinson Hyperlegible Next (600 in chrome).",
+      "**Do** show focus as a 2px dashed outline (marching ants), and the next or selected item with animated ants where the page can animate them.",
+      "**Do** show a disabled control with a dotted frame and a solid label.",
+      "**Do** give every close box an undoable action: close when the page can reopen the window, roll up otherwise.",
+      "**Do** draw new icons as OmniBuild's own pixel grids (`#` ink, `o` paper, `.` transparent) at whole-number scales.",
+      "**Do** time animations with `steps()` and honour `prefers-reduced-motion`."
+    ],
+    "donts": [
+      "**Don't** use any colour, grey hex, opacity fade, gradient or blur.",
+      "**Don't** put a dither, stripe or pattern under text; frame it instead.",
+      "**Don't** round UI corners or soften shadows; shadows are solid ink offsets of 2, 4 or 6px.",
+      "**Don't** use the Apple logo, Chicago or Geneva, or Finder, Trash or happy-computer icons, or imitate Apple's or Google's sites or product art.",
+      "**Don't** use icon fonts or glyph icons; Docusaurus's external-link arrows are hidden for that reason.",
+      "**Don't** set Tiny5 for running copy, bolded, or at sizes other than 15px and 20px.",
+      "**Don't** turn status into a badge or pill; it is a printed line.",
+      "**Don't** let a window grab touch drags; on touch the page scrolls."
+    ]
+  }
+}

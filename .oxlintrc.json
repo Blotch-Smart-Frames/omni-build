@@ -9,5 +9,18 @@
     "unicorn/no-array-for-each": "off",
     "eslint/func-style": ["error", "expression"],
     "eslint/no-duplicate-imports": "error"
-  }
+  },
+  "overrides": [
+    {
+      // React Bits components are copied in from https://reactbits.dev as
+      // they're published. Keeping them as close to upstream as the rest of
+      // the rules allow makes a later update a plain copy, so only the style
+      // rules they break are off; correctness still applies.
+      "files": ["packages/docs/src/components/react-bits/**"],
+      "rules": {
+        "eslint/func-style": "off",
+        "unicorn/no-new-array": "off"
+      }
+    }
+  ]
 }

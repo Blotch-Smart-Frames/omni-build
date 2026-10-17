@@ -1,0 +1,41 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 22px;
+  border: var(--px) solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-pixel);
+  font-size: var(--pixel-m);
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--ink);
+  color: var(--paper);
+  text-decoration: none;
+}
+
+.button:active {
+  translate: var(--px) var(--px);
+}
+
+/* The default button's ring: paper, then two pixels of ink. */
+.primary {
+  box-shadow:
+    0 0 0 var(--px) var(--paper),
+    0 0 0 calc(var(--px) * 3) var(--ink);
+  margin: calc(var(--px) * 3);
+}
+
+.button:focus-visible {
+  outline: var(--px) dashed var(--ink);
+  outline-offset: calc(var(--px) * 5);
+}
