@@ -22,15 +22,25 @@ typography:
     fontWeight: 400
     lineHeight: 0.92
   doc-h1:
-    fontFamily: "'Jersey 10', 'Tiny5', monospace"
-    fontSize: '4rem'
-    fontWeight: 400
-    lineHeight: 1
+    fontFamily: "'Atkinson Hyperlegible Next Variable', system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontSize: '2.5rem'
+    fontWeight: 700
+    lineHeight: 1.2
   doc-h2:
-    fontFamily: "'Jersey 10', 'Tiny5', monospace"
-    fontSize: '2.75rem'
-    fontWeight: 400
-    lineHeight: 1
+    fontFamily: "'Atkinson Hyperlegible Next Variable', system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontSize: '1.75rem'
+    fontWeight: 700
+    lineHeight: 1.2
+  doc-h3:
+    fontFamily: "'Atkinson Hyperlegible Next Variable', system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontSize: '1.375rem'
+    fontWeight: 700
+    lineHeight: 1.2
+  doc-h4:
+    fontFamily: "'Atkinson Hyperlegible Next Variable', system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontSize: '1.125rem'
+    fontWeight: 700
+    lineHeight: 1.2
   title:
     fontFamily: "'Jersey 10', 'Tiny5', monospace"
     fontSize: '2rem'
@@ -167,7 +177,7 @@ components:
 
 **Creative North Star: "The One-Bit Desktop"**
 
-The site is a working one-bit desktop, not a page dressed as one. Every surface is ink or paper, and every grey is an ordered dither of the two. Content lives in windows: white rectangles with a 2px ink frame, a striped title bar, a square close box and a hard, unblurred drop shadow. The windows sit on a desktop whose ground is a live dither field, and they behave as windows did: they drag by their title bars, roll up to their title bars, and zoom open out of icons. The documentation pages use the same chrome, but read on plain paper.
+The site is a working one-bit desktop, not a page dressed as one. Every surface is ink or paper, and every grey is an ordered dither of the two. Content lives in windows: white rectangles with a 2px ink frame, a striped title bar, a square close box and a hard, unblurred drop shadow. The windows sit on a desktop whose ground is a live dither field, and they behave as windows did: they drag by their title bars, roll up to their title bars, and zoom open out of icons. The documentation pages use the same chrome, but read on plain paper, in the reading face.
 
 One pixel of this world is two CSS pixels (`--px`). Borders, rules, shadows, outlines and pattern cells are whole multiples of it, so lines stay as crisp as the dithers next to them. Patterns are SVG tiles rendered with `image-rendering: pixelated`, never CSS gradients, because a gradient's stops antialias into a blurred grey. Interaction comes from the medium's own grammar: pressing and hovering invert, a selected icon or row is drawn in inverse video, focus is marching ants, the current item in a list is a highlighted row, and the item that comes next wears animated marching ants.
 
@@ -215,25 +225,29 @@ In dark mode (`[data-theme='dark']`) the two custom properties `--ink` and `--pa
 
 All three faces are self-hosted from Fontsource, so the site makes no third-party font requests.
 
-**Character:** A heavy pixel display face for statements, a crisp 5-pixel-grid face for the desktop's words and chrome, and a reading face built for legibility for everything that is a sentence. The pixel faces carry the world; the reading face carries the meaning.
+**Character:** A heavy pixel display face for statements, a crisp 5-pixel-grid face for the desktop's words and chrome, and a reading face built for legibility for everything that is a sentence, and for the docs pages whole. The pixel faces carry the world; the reading face carries the meaning.
 
 ### Hierarchy
 
 - **Display** (Jersey 10, 400, `clamp(3.5rem, 6.2vw, 5.75rem)`, line-height 0.92, max 19ch): the landing headline in the front window. On narrow screens `clamp(2.5rem, 11.5vw, 4.5rem)`.
-- **Headline** (Jersey 10, 400, `clamp(2.25rem, 3.4vw, 3.25rem)`, line-height 0.95, max 24ch): the one statement opening each section window. Docs h1 is 4rem and h2 2.75rem in the same face.
-- **Title** (Jersey 10, 400, 2rem, line-height 1): list titles, target names, the navbar wordmark, docs h3. Footer titles and pagination labels at 1.75rem, docs h4 at 1.5rem.
+- **Headline** (Jersey 10, 400, `clamp(2.25rem, 3.4vw, 3.25rem)`, line-height 0.95, max 24ch): the one statement opening each section window.
+- **Title** (Jersey 10, 400, 2rem, line-height 1): target names and the navbar wordmark. Footer titles at 1.75rem, phone list records at 1.5rem.
+- **Doc heading** (Atkinson, 700, line-height 1.2, -0.01em): docs h1 2.5rem, h2 1.75rem, h3 1.375rem, h4 1.125rem. The roadmap window's list titles are 1.375rem and docs pagination labels 1.125rem.
+- **Doc navigation** (Atkinson): docs sidebar items at 1rem, 500; the table of contents, breadcrumbs, edit link, table column heads, code-block titles and admonition headings at 0.875rem (heads and titles at 600 to 700).
 - **Body** (Atkinson, 400, 1.0625rem, line-height 1.6, max 62 to 70ch): section copy and docs prose. The landing lede is 1.1875rem at 1.55, max 28em.
-- **Body S** (Atkinson, 400, 1rem, line-height 1.45): roadmap checklist sentences. **Caption** (Atkinson, 400, 0.75rem): the demonstration's step details.
+- **Body S** (Atkinson, 400, 1rem, line-height 1.45): roadmap checklist sentences, with phase names at 700. **Caption** (Atkinson, 400, 0.75rem): the demonstration's step details.
 - **Status** (Atkinson, 600, 0.875rem, line-height 1.4): window status lines, the demonstration notice, results and field labels: any sentence that sits in chrome.
 - **Illustration text is not on the ramp.** The drawn phone in the demonstration (14px corners, 0.625 to 0.6875rem screen text, a 1.375rem app name on phones) belongs to the drawing, as the icons' pixels do; the detector's advisories on those values are expected.
-- **Label M** (Tiny5, 400, 20px): window titles, buttons, menu-bar and sidebar items, dropdown items, roadmap phase names, list row heads.
-- **Label S** (Tiny5, 400, 15px): icon labels, table column heads, the table of contents, code-block titles, admonition headings, small buttons, tags, the footer.
+- **Label M** (Tiny5, 400, 20px): window titles, buttons, menu-bar items and the phone's menu drawer, dropdown items, list row heads.
+- **Label S** (Tiny5, 400, 15px): icon labels, the landing tables' column heads, small buttons, the footer.
 
 ### Named Rules
 
 **The Five-Pixel Rule.** Tiny5 is drawn on a 5px grid and is set only at 15px (`--pixel-s`) and 20px (`--pixel-m`), so every stem is a whole number of pixels. It is never bolded, never set at other sizes and never used for running copy.
 
 **The Sentence Face Rule.** Every sentence, status lines included, is set in Atkinson Hyperlegible Next. Tiny5 is for words and labels; when a sentence sits in chrome it is Atkinson at 600.
+
+**The Reading Page Rule.** A docs page is set entirely in Atkinson Hyperlegible Next, its headings and navigation included, and so is the landing page's roadmap, which summarises the plan. The pixel faces stop at the site's chrome: the menu bar, window title bars and the footer.
 
 **The One-Bit Syntax Rule.** Code has no colours to tell tokens apart, so keywords, builtins, tags and selectors are bold, comments are italic and deletions are struck through, in ink on paper.
 
@@ -315,7 +329,7 @@ The signature container: a white rectangle with chrome.
 ### Progress and Checklists
 
 - **Progress bar:** 20px tall, 2px frame with a 2px paper gap. The filled part is solid ink at rest and the Diagonal barber pole while running, walking 2px at a time; width moves in 6 steps.
-- **Steps and checklists:** the current step is an inverted row; done steps carry a pixel check; roadmap checkboxes are 20px framed squares. The next phase wears marching ants (8px dashes, 4 steps) and an inverted Tiny5 15px tag.
+- **Steps and checklists:** the current step is an inverted row; done steps carry a pixel check; roadmap checkboxes are 20px framed squares. The next phase wears marching ants (8px dashes, 4 steps) and an inverted tag in Atkinson 700 at 0.75rem.
 
 ### Inline Code and Fields
 
