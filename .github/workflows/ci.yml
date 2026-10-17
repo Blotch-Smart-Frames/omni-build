@@ -188,6 +188,13 @@ jobs:
   e2e-shell-ios:
     runs-on: macos-latest
     timeout-minutes: 30
+    env:
+      # The Xcode the shells are built with, one of those on the runner image
+      # (github.com/actions/runner-images). Pinned rather than the image's
+      # default, so a new Xcode, and with it a new SDK in every shell, is a
+      # change of its own. The platform watch reads this line to tell when
+      # Apple requires or releases a newer one.
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -346,7 +353,9 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       # The image AngularLynx's E2E tests run on these runners. The fixture
-      # targets API 36 and runs on 24 and later.
+      # targets API 37 and runs on 24 and later. A device only applies the
+      # behaviour changes of the level an app targets when it runs that level
+      # or newer, so this checks the shells install and run, not those changes.
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34

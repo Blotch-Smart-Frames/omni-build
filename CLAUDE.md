@@ -16,6 +16,7 @@ An npm workspaces + turbo monorepo with the Rust inside `packages/` (see the REA
 - **CI requires 100% test coverage** of lines, functions and regions or branches, in Rust (cargo-llvm-cov) and JavaScript (vitest thresholds). Code that can only run in a child process gets an in-process seam rather than an exclusion: `cli.js` is a few lines wiring `run.js` to the process, and a `tests/` integration test running the binary covers `main()`.
 - **The PR gate is the "CI passed" job** in `.github/workflows/ci.yml`, which needs every other job. Add new jobs to its `needs`.
 - **E2E tests run in three stages** (`packages/e2e`): Xcode and Gradle build real Swift and Kotlin shells (only in our CI, never for users), omni-build repackages them on Linux, Windows and macOS with no `PATH` or toolchain variables, and the iOS Simulator and an Android emulator run every result. The fixture apps report their own ID, name, version, payload and icon on launch, so no UI driver is needed. A value OmniBuild learns to rewrite gets a field in both fixtures' reports.
+- **The platform watch** (`packages/platform-watch`) runs daily and opens an issue when the shells need a newer Xcode or Android API level, or when it can't download or parse one of Apple's or Google's pages. It reads the shells' toolchain from `DEVELOPER_DIR` in `ci.yml` and the Android fixture's `build.gradle.kts`, so moving either means updating `src/sources.js`.
 
 ```sh
 npm run build | test | lint | format | format:check   # all packages, through turbo

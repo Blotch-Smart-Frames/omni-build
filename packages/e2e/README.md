@@ -30,7 +30,7 @@ npm run e2e -- --help                            # Every option
 
 `npm run e2e` from the repository root builds the omni-build binary first. The harness runs `target/release/omni-build`, or the binary `OMNI_BUILD_BINARY` names.
 
-Android needs a JDK (17 or later) and the Android SDK with API 36, found through `ANDROID_HOME` or Android Studio's default location. The iOS tests create and reuse their own simulator, "OmniBuild E2E", so your own simulators stay untouched.
+Android needs a JDK (17 or later) and the Android SDK with API 37, found through `ANDROID_HOME` or Android Studio's default location. The iOS tests create and reuse their own simulator, "OmniBuild E2E", so your own simulators stay untouched.
 
 ## What it checks
 
