@@ -36,7 +36,10 @@ describe('readSources', () => {
       value: { length: 6 },
     });
     expect(fetch).toHaveBeenCalledWith(remote.location, {
-      headers: { 'user-agent': expect.stringContaining('platform-watch') },
+      headers: {
+        'user-agent': expect.stringContaining('platform-watch'),
+        'accept-language': 'en',
+      },
       signal: expect.any(AbortSignal),
     });
   });
@@ -111,6 +114,27 @@ describe('readSources', () => {
       ok: false,
       error: "couldn't parse it: no pin",
     });
+  });
+
+  it("quotes the title of a page it couldn't parse", async () => {
+    const source = {
+      ...remote,
+      parse: () => {
+        throw new Error('no sentence');
+      },
+    };
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          '<html><head><title> Google Play の対象 API レベル要件を満たす </title></head></html>',
+        ),
+    );
+
+    const readings = await read([source], fetch);
+
+    expect(readings.get('page').error).toBe(
+      'couldn\'t parse it: no sentence (the page\'s title: "Google Play の対象 API レベル要件を満たす")',
+    );
   });
 
   it('reads every source, whatever happens to the others', async () => {

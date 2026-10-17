@@ -17,7 +17,13 @@ const download = async (url, { fetch, wait }) => {
   for (let attempt = 1; ; attempt++) {
     try {
       const response = await fetch(url, {
-        headers: { 'user-agent': USER_AGENT },
+        headers: {
+          'user-agent': USER_AGENT,
+          // The parsers read English sentences. Node's fetch otherwise sends
+          // `Accept-Language: *`, which Google's developer site answers with
+          // a translation picked at random (German, Persian, Japanese, ...).
+          'accept-language': 'en',
+        },
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
       if (!response.ok) {
@@ -37,6 +43,14 @@ const download = async (url, { fetch, wait }) => {
 // TLS, a reset connection) in `cause`.
 const describe = (error) =>
   error.cause ? `${error.message}: ${error.cause.message}` : error.message;
+
+// A page's title tells a reworded page from a different one (a translation,
+// an error page, a sign-in wall) at a glance, so an issue about a source that
+// couldn't be parsed quotes it.
+const titled = (content) => {
+  const title = content.match(/<title>([^<]*)<\/title>/)?.[1].trim();
+  return title ? ` (the page's title: "${title}")` : '';
+};
 
 /**
  * @typedef {{ source: object, ok: true, value: unknown }
@@ -78,7 +92,7 @@ export const readSources = async (sources, { root, fetch, wait }) => {
         return {
           source,
           ok: false,
-          error: `couldn't parse it: ${error.message}`,
+          error: `couldn't parse it: ${error.message}${titled(content)}`,
         };
       }
     }),

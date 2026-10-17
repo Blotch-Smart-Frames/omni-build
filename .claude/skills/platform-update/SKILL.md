@@ -103,7 +103,7 @@ When looking for other mentions of the old version, leave out `packages/platform
 
 The issue quotes the error and names the source by its `id` in `packages/platform-watch/src/sources.js`.
 
-1. **See what changed.** Download the source into the scratchpad and look for the value the parser wants. The source's `looksFor` describes it. The page may have moved (a new URL), been reworded (the regex no longer matches), or changed shape. A file source in this repository may have had its line moved or rewritten.
+1. **See what changed.** Download the source into the scratchpad and look for the value the parser wants. The source's `looksFor` describes it. The page may have moved (a new URL), been reworded (the regex no longer matches), or changed shape. A file source in this repository may have had its line moved or rewritten. If it reads fine locally but failed on GitHub, the server is sending different pages to different requests: fetch it several times, with the headers `read.js` sends, and compare. Google's developer site once answered a vague `Accept-Language` with a random translation.
 2. **Fix the parser or the `location`.** Keep it strict: it should find the number in the sentence that states it, or throw. A loose match that quietly returns an old number is worse than an issue.
 3. **Replace that source's excerpt** in `src/sources.test.js` with the new real markup, trimmed to the relevant part. Keep the case that throws when the sentence is missing.
 4. **If the vendor stopped publishing the value** at all, find another official source and add it. Don't scrape an unofficial mirror.
