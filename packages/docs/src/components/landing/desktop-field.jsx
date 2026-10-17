@@ -15,25 +15,27 @@ const DesktopField = () => {
     colorMode === 'dark' ? ['#000000', '#ffffff'] : ['#ffffff', '#000000'];
 
   return (
-    <div className={styles.field} aria-hidden="true">
-      <BrowserOnly>
-        {() => (
-          <Dither
-            palette={palette}
-            ditherMode="bayer"
-            pixelSize={2}
-            waveSpeed={0.025}
-            waveFrequency={2.4}
-            waveAmplitude={0.32}
-            contrast={0.85}
-            mouseEffect="erase"
-            mouseRadius={0.35}
-            mouseStrength={1.2}
-            trail={0.6}
-            clickRipple
-          />
-        )}
-      </BrowserOnly>
+    <div className={styles.frame} aria-hidden="true">
+      <div className={styles.field}>
+        <BrowserOnly>
+          {() => (
+            <Dither
+              palette={palette}
+              ditherMode="bayer"
+              pixelSize={2}
+              waveSpeed={0.025}
+              waveFrequency={2.4}
+              waveAmplitude={0.32}
+              contrast={0.85}
+              mouseEffect="erase"
+              mouseRadius={0.35}
+              mouseStrength={1.2}
+              trail={0.6}
+              clickRipple
+            />
+          )}
+        </BrowserOnly>
+      </div>
     </div>
   );
 };

@@ -341,7 +341,7 @@ The signature container: a white rectangle with chrome.
 Motion is pixel-whole and stepped (`steps()` timing on every animation), and `prefers-reduced-motion` reduces it all to instant.
 
 - **XOR outlines:** drag ghosts and zoom rectangles are 2px white borders with `mix-blend-mode: difference`, so they show on ink, paper and dither alike.
-- **Desktop field:** React Bits Dither, Bayer-ordered, 2px pixels, ink and paper only; the pointer erases a patch and a click ripples. The static Dither 50 shows until the first frame and without WebGL 2.
+- **Desktop field:** React Bits Dither, Bayer-ordered, 2px pixels, ink and paper only; the pointer erases a patch and a click ripples. The static Dither 50 shows until the first frame and without WebGL 2. It ends where the page does: past either end, where Safari bounces, there is plain paper.
 - **Closing field:** React Bits PixelBlast with softness, glow, twinkle, edge fade, jitter and noise all at 0, so it stays hard square pixels.
 - **Screen change:** React Bits PixelTransition dissolves in a 14-cell grid of ink.
 - **Headline reveal:** React Bits DecryptedText resolves the display headline from block glyphs; the percentage uses React Bits Counter at 20px.
