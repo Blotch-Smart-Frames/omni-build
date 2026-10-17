@@ -357,7 +357,11 @@ a {
   max-width: 70ch;
 }
 
-.markdown code {
+/*
+ * Inline code only: a code block's <code> keeps Docusaurus's own padding
+ * (--ifm-pre-padding), which this rule would otherwise outrank.
+ */
+.markdown :not(pre) > code {
   /* Framed, not dithered: a dither under glyphs cuts through their strokes. */
   border: 1px solid var(--ink);
   padding: 0 0.2em;
@@ -383,11 +387,20 @@ a {
   background: transparent;
 }
 
+/*
+ * The copy and wrap buttons show only while the block is hovered or a button
+ * has focus, as Docusaurus does, so they don't sit over a long first line.
+ * They show fully, not at Docusaurus's 40%: a faded button would be a grey.
+ */
 .theme-code-block button {
   border: var(--px) solid var(--ink) !important;
   border-radius: 0 !important;
   background: var(--paper) !important;
-  opacity: 1;
+}
+
+.theme-code-block:hover button,
+.theme-code-block button:focus-visible {
+  opacity: 1 !important;
 }
 
 .theme-code-block button:hover {
