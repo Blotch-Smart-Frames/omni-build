@@ -1,10 +1,4 @@
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,8 +75,15 @@ describe('expected', () => {
     });
   });
 
-  it("is the shell's own values for iOS, which it doesn't yet", () => {
-    expect(expected('ios')).toEqual(SHELL);
+  it("is the app's values for iOS, but for the icon, which it can't write yet", () => {
+    expect(expected('ios')).toEqual({
+      ...SHELL,
+      id: 'dev.omnibuild.e2e.app',
+      name: 'OmniBuild E2E',
+      version: '2.5.0',
+      build: '42',
+      payload: 'Payload from the OmniBuild E2E app\n',
+    });
   });
 });
 
@@ -91,7 +92,6 @@ describe('repackage', () => {
     const shell = path.join('shells', 'OmniBuildShell.apk');
 
     const app = await repackage({
-      platform: 'android',
       shell,
       outDir,
       log: 'commands.log',
@@ -106,24 +106,18 @@ describe('repackage', () => {
     );
   });
 
-  it('only runs omni-build, then copies an iOS shell', async () => {
-    const shell = path.join(tempDir(), 'OmniBuildShell.zip');
-    writeFileSync(shell, 'the shell');
+  it('runs an iOS shell through it the same way', async () => {
+    const shell = path.join('shells', 'OmniBuildShell.zip');
     onPlatform('darwin');
 
-    const app = await repackage({
-      platform: 'ios',
-      shell,
-      outDir,
-      log: 'commands.log',
-    });
+    const app = await repackage({ shell, outDir, log: 'commands.log' });
 
     expect(app).toBe(path.join(outDir, 'OmniBuildShell-macos.zip'));
-    expect(readFileSync(app, 'utf8')).toBe('the shell');
-    expect(run).toHaveBeenCalledWith(binary, ['--version'], {
-      log: 'commands.log',
-      env: { HOME: '/home/me', TMPDIR: '/tmp/me' },
-    });
+    expect(run).toHaveBeenCalledWith(
+      binary,
+      ['repackage', shell, '--config', APP_CONFIG, '--out', app],
+      { log: 'commands.log', env: { HOME: '/home/me', TMPDIR: '/tmp/me' } },
+    );
   });
 
   it('names an app for an OS it has no name for by its platform', async () => {
@@ -131,7 +125,6 @@ describe('repackage', () => {
 
     expect(
       await repackage({
-        platform: 'android',
         shell: 'OmniBuildShell.aab',
         outDir,
         log: 'commands.log',
@@ -144,14 +137,12 @@ describe('repackage', () => {
     vi.mocked(existsSync).mockReturnValueOnce(true).mockReturnValueOnce(true);
 
     await repackage({
-      platform: 'android',
       shell: 'OmniBuildShell.apk',
       outDir,
       log: 'commands.log',
     });
     onPlatform('win32');
     const app = await repackage({
-      platform: 'android',
       shell: 'OmniBuildShell.apk',
       outDir,
       log: 'commands.log',
@@ -170,7 +161,6 @@ describe('repackage', () => {
 
     await expect(
       repackage({
-        platform: 'android',
         shell: 'OmniBuildShell.apk',
         outDir,
         log: 'commands.log',

@@ -161,7 +161,6 @@ describe('run', () => {
         [
           {
             ...artifactsOf('repackage'),
-            platform: 'android',
             shell: path.join(packageDir, 'a.apk'),
             outDir,
           },
@@ -169,7 +168,6 @@ describe('run', () => {
         [
           {
             ...artifactsOf('repackage'),
-            platform: 'android',
             shell: path.join(packageDir, 'a.aab'),
             outDir,
           },

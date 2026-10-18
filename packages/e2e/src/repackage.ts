@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -76,52 +76,48 @@ const omniBuildBinary = () => {
 };
 
 /**
- * The platforms whose shells omni-build repackages. It can't repackage an
- * iOS shell until Phase 0's iOS spike (#1), so the stage copies those.
- */
-const REPACKAGED = new Set(['android']);
-
-/**
  * What each platform's apps must report after the repackage stage, and
  * what signed them: the app config's values where omni-build rewrites
  * them, and the shell's own elsewhere.
  */
 export const expected = (
   platform: 'ios' | 'android',
-): typeof SHELL & { signer?: string } =>
-  platform === 'android'
+): typeof SHELL & { signer?: string } => {
+  const app = {
+    ...SHELL,
+    id: APP.id,
+    name: APP.name,
+    version: APP.version,
+    build: String(APP.build),
+    payload: readFileSync(
+      path.join(path.dirname(APP_CONFIG), APP.payload, 'payload.txt'),
+      'utf8',
+    ),
+  };
+  return platform === 'android'
     ? {
-        ...SHELL,
-        id: APP.id,
-        name: APP.name,
-        version: APP.version,
-        build: String(APP.build),
-        payload: readFileSync(
-          path.join(path.dirname(APP_CONFIG), APP.payload, 'payload.txt'),
-          'utf8',
-        ),
+        ...app,
         icon: APP_ICON,
         // The debug key omni-build creates and signs with when it's given
         // no key: only it could have signed the app with this.
         signer: 'CN=OmniBuild Debug, O=OmniBuild',
       }
-    : SHELL;
+    : // omni-build can't write Assets.car or sign iOS apps yet, so they
+      // keep the shell's icon, and the Simulator runs them with the
+      // signature Xcode gave the shell, which no longer matches.
+      app;
+};
 
 /**
  * The repackage stage: what OmniBuild users do, on any OS, with nothing but
  * the omni-build binary. Writes the result into `outDir`, named for the OS
  * it ran on, and returns its path.
- *
- * For a platform omni-build can't repackage yet, this only checks that the
- * binary runs in the toolchain-free environment, and copies the shell.
  */
 export const repackage = async ({
-  platform,
   shell,
   outDir,
   log,
 }: {
-  platform: 'ios' | 'android';
   shell: string;
   outDir: string;
   log: string;
@@ -134,15 +130,10 @@ export const repackage = async ({
     outDir,
     `${path.basename(shell, extension)}-${OS_NAMES[process.platform] ?? process.platform}${extension}`,
   );
-  if (REPACKAGED.has(platform)) {
-    await run(
-      omniBuildBinary(),
-      ['repackage', shell, '--config', APP_CONFIG, '--out', output],
-      { log, env: toolchainFree() },
-    );
-  } else {
-    await run(omniBuildBinary(), ['--version'], { log, env: toolchainFree() });
-    copyFileSync(shell, output);
-  }
+  await run(
+    omniBuildBinary(),
+    ['repackage', shell, '--config', APP_CONFIG, '--out', output],
+    { log, env: toolchainFree() },
+  );
   return output;
 };

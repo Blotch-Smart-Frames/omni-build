@@ -16,6 +16,9 @@ crc32fast = "1.5.2"
 flate2 = "1.1.10"
 # PNG only: app icons are PNGs, and resizing them is all OmniBuild does.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+# Without serde: Info.plist is edited as a dictionary, so the keys OmniBuild
+# doesn't know stay as Xcode wrote them.
+plist = { version = "1.10.1", default-features = false }
 # rsa, x509-cert, cms and const-oid are RustCrypto crates of one generation,
 # which share der, spki and pkcs8. rsa 0.10 is still a release candidate.
 rsa = { version = "0.9.10", features = ["getrandom", "sha2"] }

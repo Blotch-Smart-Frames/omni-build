@@ -30,4 +30,16 @@ jarsigner -keystore ~/.android/debug.keystore -storepass android \
   -signedjar packages/cli/tests/fixtures/shell.aab trimmed.aab androiddebugkey
 ```
 
-The Rust tests find files in both shells by their place in the archive, so a remade fixture needs the same entries in the same order.
+The Rust tests find files in both Android shells by their place in the archive, so a remade fixture needs the same entries in the same order.
+
+## `shell.app.zip`
+
+The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. It's without its icons (`Assets.car` and the PNGs beside it), and its executable is emptied, keeping its mode: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, and never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
+
+```sh
+node packages/e2e/src/cli.ts build --platform ios
+ditto -x -k packages/e2e/build/shells/ios/OmniBuildShell.zip trimmed
+rm trimmed/OmniBuildShell.app/Assets.car trimmed/OmniBuildShell.app/AppIcon*.png
+: > trimmed/OmniBuildShell.app/OmniBuildShell
+ditto -c -k --norsrc --keepParent trimmed/OmniBuildShell.app packages/cli/tests/fixtures/shell.app.zip
+```

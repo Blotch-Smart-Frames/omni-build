@@ -288,7 +288,7 @@ describe('the demonstration window', () => {
 
     // First in the window, so it's read before the run.
     const notice = within(demo()!).getByText(
-      'Demonstration: OmniBuild only repackages Android shells so far.',
+      'Demonstration: OmniBuild repackages Android shells, and iOS ones only for the Simulator, so far.',
     );
     expect(notice.parentElement!.firstElementChild).toBe(notice);
     expect(phoneScreen()).toEqual([

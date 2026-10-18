@@ -276,7 +276,8 @@ const Hero = () => {
           {/* First, so it's read before the run: a demonstration must never
               pass for a release. */}
           <p className={styles.notice}>
-            Demonstration: OmniBuild only repackages Android shells so far.
+            Demonstration: OmniBuild repackages Android shells, and iOS ones
+            only for the Simulator, so far.
           </p>
           <PixelTransition
             className={styles.phone}

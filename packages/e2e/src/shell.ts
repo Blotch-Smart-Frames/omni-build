@@ -8,9 +8,9 @@
  *   version, build) and `res/values/strings.xml` (name)
  * - both: `payload.txt`, and the icons, solid squares of this colour.
  *
- * Once OmniBuild repackages the shells, the tests will also check an app
- * with different values for each of these, which only OmniBuild could have
- * put there.
+ * The apps the tests make from them have different values for each of
+ * these (`app/app.json`), so an app that reports one got it from OmniBuild.
+ * See expected() in repackage.ts.
  */
 export const SHELL = {
   id: 'dev.omnibuild.shell',
