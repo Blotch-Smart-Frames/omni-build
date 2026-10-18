@@ -4,7 +4,7 @@
 // with `os` and `cpu` fields so npm installs only the one matching the
 // machine, as esbuild, rspack and oxlint do.
 //
-// The release tooling (Phase 2 in #1) generates those packages from this list
+// The release tooling (Phase 1 in #1) generates those packages from this list
 // and writes them into this package's optionalDependencies when it publishes,
 // rather than the repository listing them: npm can't lock a version that
 // isn't published yet, and `npm ci` fails on a dependency missing from the

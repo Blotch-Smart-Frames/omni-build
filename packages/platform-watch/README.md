@@ -15,7 +15,7 @@ Opens a GitHub issue when the app shells need a newer Xcode or Android API level
 | [Google Play's target API level page](https://developer.android.com/google/play/requirements/target-sdk) | The API level Play requires apps to target, and from when     |
 | [The Android SDK repository](https://dl.google.com/android/repository/repository2-3.xml)                 | New stable API levels, previews left out                      |
 
-The shells' two files are the E2E fixtures for now, the only shells there are. When the release shells arrive (Phase 2 of [#1](https://github.com/Blotch-Smart-Frames/omni-build/issues/1)), point those sources in `src/sources.ts` at theirs.
+The shells' two files are the E2E fixtures for now, the only shells there are. When the release shells arrive (Phase 1 of [#1](https://github.com/Blotch-Smart-Frames/omni-build/issues/1)), point those sources in `src/sources.ts` at theirs.
 
 ## The issues it opens
 

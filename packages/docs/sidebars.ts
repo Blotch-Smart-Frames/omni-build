@@ -9,7 +9,6 @@ const sidebars: SidebarsConfig = {
     'how-it-works',
     'installation',
     'repackaging',
-    'angularlynx',
     'roadmap',
     'contributing',
   ],

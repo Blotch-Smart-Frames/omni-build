@@ -47,7 +47,7 @@ Paths are relative to the config file. A field you leave out keeps the shell's v
 
 ## Signing
 
-An APK is signed with APK Signature Schemes v2 and v3, which Android 7.0 and later verify. An app bundle gets a JAR signature, which is how Google Play checks an upload before it signs the APKs it makes from the bundle with the app's own key. With no key given, OmniBuild uses a debug key it creates the first time, in `~/.omni-build/android-debug-key.pem`, the way the Android SDK keeps its own in `~/.android`. APKs signed with it install on devices and emulators. Signing with your own upload key, for Google Play, comes with [Phase 2](./roadmap.md).
+An APK is signed with APK Signature Schemes v2 and v3, which Android 7.0 and later verify. An app bundle gets a JAR signature, which is how Google Play checks an upload before it signs the APKs it makes from the bundle with the app's own key. With no key given, OmniBuild uses a debug key it creates the first time, in `~/.omni-build/android-debug-key.pem`, the way the Android SDK keeps its own in `~/.android`. APKs signed with it install on devices and emulators. Signing with your own upload key, for Google Play, comes with [Phase 1](./roadmap.md).
 
 iOS apps aren't signed yet. Changing an app's files breaks the signature Xcode gave the shell, which the iOS Simulator doesn't check but a device does, so OmniBuild only repackages Simulator builds for now. To run one, unzip it and install the `.app`:
 

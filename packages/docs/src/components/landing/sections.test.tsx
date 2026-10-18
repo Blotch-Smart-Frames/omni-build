@@ -208,20 +208,18 @@ describe('Roadmap', () => {
         .join('');
     expect(items.map(phase)).toEqual([
       '0. Spikes',
-      '1. Dev client',
-      '2. Android',
-      '3. iOS',
-      '4. ng deploy',
-      '5. Native modules',
+      '1. Android',
+      '2. iOS',
+      '3. Upload',
+      '4. Native modules',
     ]);
     expect(
       items.map(
         (item) => item.querySelector(`.${styles.nextTag}`)?.textContent,
       ),
-    ).toEqual(['next', undefined, undefined, undefined, undefined, undefined]);
+    ).toEqual(['next', undefined, undefined, undefined, undefined]);
     expect(items.map((item) => item.classList.contains(styles.next))).toEqual([
       true,
-      false,
       false,
       false,
       false,

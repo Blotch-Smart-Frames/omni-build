@@ -83,7 +83,7 @@ When looking for other mentions of the old version, leave out `packages/platform
 
 4. **Go through the behaviour changes for apps targeting N:** `developer.android.com/about/versions/<A>/behavior-changes-<A>`, where `A` is the Android version (so far API − 20: API 37 is Android 17). Fix what applies to the Kotlin shells.
 
-5. **Run it on an emulator of N locally.** Behaviour changes only take effect on a device running N or newer. CI's `e2e-android` emulator level is shared with AngularLynx's choice, so keep it unless the user asks. Locally, the shells' behaviour at N gets checked:
+5. **Run it on an emulator of N locally.** Behaviour changes only take effect on a device running N or newer. CI's `e2e-android` emulator level is chosen apart from the target level, so keep it unless the user asks. Locally, the shells' behaviour at N gets checked:
 
    ```bash
    sdkmanager --install 'system-images;android-<N>.0;google_apis;arm64-v8a'
