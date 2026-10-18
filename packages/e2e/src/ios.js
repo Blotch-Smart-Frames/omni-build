@@ -223,6 +223,8 @@ export const ios = {
   name: 'iOS',
   toolchain: 'Xcode',
   build,
+  // Nothing yet: the shell is copied, still signed as Xcode built it.
+  verify: async () => ({}),
   // Booting is the slowest part, so it starts first and goes on while the
   // other stages work.
   startDevice: ({ log }) => bootSimulator({ log, wait: false }),

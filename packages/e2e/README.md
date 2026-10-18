@@ -14,7 +14,7 @@ They follow how OmniBuild is meant to be used ([#1](https://github.com/Blotch-Sm
 | `repackage` | Linux, Windows and macOS            | Runs each shell through the omni-build release binary, which gets no `PATH` and no toolchain variables (below)            |
 | `test`      | macOS (Simulator), Linux (emulator) | Installs and launches every repackaged app, one per OS it was repackaged on, and checks what each reports                 |
 
-**omni-build has no repackaging command yet**, so for now `repackage` only checks that the binary runs in that environment, and copies the shell unchanged. Phase 0's first command replaces the copy: it will give the shell another app's values, and `EXPECTED` in `src/repackage.js` becomes those values.
+**Android shells go through `omni-build repackage`**, which for now signs the APK with the debug key omni-build creates in the home folder. The `test` stage checks the result with Google's own tools first: `zipalign` for the alignment Android needs to map stored entries, and `apksigner` for every signature scheme. **iOS shells are copied unchanged** until Phase 0's iOS spike: for them, the stage only checks that the binary runs in that environment. `expected()` in `src/repackage.js` says what each platform's apps must report, and turns into an app's own values as omni-build learns to rewrite each one.
 
 **No toolchain in reach.** GitHub's Linux and Windows runners come with a JDK and the Android SDK, and its macOS runners with Xcode. So `repackage` runs omni-build with only `HOME`, `USERPROFILE`, the temporary folder variables and `SystemRoot`: no `PATH` (it can't start a program by name) and no `JAVA_HOME`, `ANDROID_HOME` or `DEVELOPER_DIR`. A step that quietly relied on a vendor tool fails in CI, not on a user's machine without one.
 
@@ -30,7 +30,7 @@ npm run e2e -- --help                            # Every option
 
 `npm run e2e` from the repository root builds the omni-build binary first. The harness runs `target/release/omni-build`, or the binary `OMNI_BUILD_BINARY` names.
 
-Android needs a JDK (17 or later) and the Android SDK with API 37, found through `ANDROID_HOME` or Android Studio's default location. The iOS tests create and reuse their own simulator, "OmniBuild E2E", so your own simulators stay untouched.
+Android needs a JDK (17 or later) and the Android SDK with API 37 and build tools 35 or later (for `zipalign -P`), found through `ANDROID_HOME` or Android Studio's default location. The iOS tests create and reuse their own simulator, "OmniBuild E2E", so your own simulators stay untouched.
 
 ## What it checks
 
@@ -42,6 +42,7 @@ Android needs a JDK (17 or later) and the Android SDK with API 37, found through
 | `build`   | `CFBundleVersion`                                             | `versionCode`                                     |
 | `payload` | `payload.txt` in the `.app`                                   | `assets/payload.txt` in the APK                   |
 | `icon`    | the centre pixel of the icon PNG named in `CFBundleIconFiles` | the centre pixel of the manifest's `android:icon` |
+| `signer`  | not yet checked                                               | the signing certificate's name, from `apksigner`  |
 
 The app also has to install and launch at all, which checks the package's structure and signature. The shells' own values are in `src/shell.js`, and must match the fixtures.
 
@@ -55,5 +56,5 @@ Each stage writes to `artifacts/<platform>/<stage>/` (in CI, the `e2e-logs-*` an
 - **The iOS shell travels as a zip of the `.app`**, made with `ditto`, which keeps each file's mode. A `.app` is a folder, and its executable's mode wouldn't survive a workflow artifact or a Windows file system.
 - **The iOS icon check reads the PNGs Xcode writes next to `Assets.car`.** The home screen uses the copy inside `Assets.car`, which no public API reads: `actool` stores app icons as a kind of asset `UIImage(named:)` doesn't load. That copy needs checking outside the app, with `assetutil --info`.
 - **The fixtures are native projects**, so they keep Xcode's and Android Studio's formatting: oxfmt skips `fixtures/`.
-- **The release APK is signed with the debug key**, so it installs without a keystore of its own.
+- **The release APK is signed with the Android SDK's debug key**, so it installs without a keystore of its own. omni-build re-signs it with its own.
 - **The harness uses only Node's built-in modules**, so CI runs it without `npm ci`. It's itself a test, so it has no unit tests or coverage gate of its own.
