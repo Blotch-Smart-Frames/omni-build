@@ -17,6 +17,7 @@ An npm workspaces and [Turborepo](https://turborepo.com) monorepo, with the Rust
 | `packages/e2e`            | End-to-end tests: real Swift and Kotlin app shells, repackaged on every OS, run on the iOS Simulator and an Android emulator |
 | `packages/platform-watch` | Opens an issue when the app shells need a newer Xcode or Android API level, or can't read a vendor's page. Runs daily in CI  |
 | `packages/docs`           | The documentation site and landing page, built with Docusaurus and published to GitHub Pages                                 |
+| `packages/coverage-guard` | Fails the coverage gate wherever 100% would pass over untested code. `npm run test:coverage` runs it after the tests         |
 
 The npm packages are TypeScript. Node runs the private ones' `.ts` files as they are, by stripping the types, so their imports name the `.ts` file and they use only syntax that strips away (no enums or namespaces). The `omni-build` launcher is compiled to `dist/` for npm, because Node won't strip types in `node_modules`.
 
@@ -30,7 +31,7 @@ You need Node 24 and [rustup](https://rustup.rs), which installs the Rust versio
 npm install
 npm run build          # cargo build --release, and the docs site
 npm test               # cargo test, and every package's vitest tests
-npm run test:coverage  # the same, failing below 100% coverage (needs cargo-llvm-cov)
+npm run test:coverage  # the same, failing below 100% coverage, then coverage-guard (needs cargo-llvm-cov)
 npm run lint           # clippy and oxlint
 npm run typecheck      # tsc over the TypeScript packages
 npm run format         # rustfmt and oxfmt; CI runs format:check
