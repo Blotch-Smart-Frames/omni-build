@@ -36,8 +36,8 @@ struct Repackage {
     /// Where to write the app.
     #[arg(long, short)]
     out: PathBuf,
-    /// The app config, a JSON file: the app's `id`, `version` and `build`
-    /// number. What it leaves out stays as the shell has it.
+    /// The app config, a JSON file: the app's `id`, `name`, `version` and
+    /// `build` number. What it leaves out stays as the shell has it.
     #[arg(long, short)]
     config: Option<PathBuf>,
 }

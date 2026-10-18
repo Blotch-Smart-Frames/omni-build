@@ -13,6 +13,8 @@ use serde::Deserialize;
 pub struct App {
     /// The application ID on Android, the bundle ID on iOS.
     pub id: Option<String>,
+    /// The name under the app's icon.
+    pub name: Option<String>,
     /// The version people see: `versionName` on Android.
     pub version: Option<String>,
     /// The build number stores compare: `versionCode` on Android.
@@ -41,7 +43,7 @@ mod tests {
         let path = dir.path().join("app.json");
         fs::write(
             &path,
-            r#"{ "id": "dev.example.app", "version": "2.5.0", "build": 42 }"#,
+            r#"{ "id": "dev.example.app", "name": "Example", "version": "2.5.0", "build": 42 }"#,
         )
         .unwrap();
 
@@ -49,6 +51,7 @@ mod tests {
             App::read(&path).unwrap(),
             App {
                 id: Some("dev.example.app".to_owned()),
+                name: Some("Example".to_owned()),
                 version: Some("2.5.0".to_owned()),
                 build: Some(42),
             }

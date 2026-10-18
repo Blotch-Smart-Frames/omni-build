@@ -9,6 +9,7 @@
 
 use anyhow::{Context, Result, bail};
 
+use super::chunk::chunks;
 use super::string_pool::StringPool;
 use crate::bytes::Reader;
 use crate::config::App;
@@ -19,12 +20,14 @@ const START_ELEMENT: u16 = 0x0102;
 /// A string pool index meaning "no string".
 const NO_STRING: u32 = u32::MAX;
 /// `Res_value` data types.
+const TYPE_REFERENCE: u8 = 0x01;
 const TYPE_STRING: u8 = 0x03;
 const TYPE_INT_DEC: u8 = 0x10;
 const TYPE_INT_HEX: u8 = 0x11;
 
 // The android: attributes OmniBuild reads or rewrites, by resource ID, as
 // Android itself identifies them (android.R.attr).
+const LABEL: u32 = 0x0101_0001;
 const NAME: u32 = 0x0101_0003;
 const MANAGE_SPACE_ACTIVITY: u32 = 0x0101_0004;
 const PERMISSION: u32 = 0x0101_0006;
@@ -44,8 +47,17 @@ const MIN_SDK: u32 = 24;
 /// The highest version code Google Play accepts.
 const MAX_VERSION_CODE: u32 = 2_100_000_000;
 
-/// Gives the manifest the app's ID, version and build number.
-pub fn rewrite(data: &[u8], app: &App) -> Result<Vec<u8>> {
+/// The rewritten manifest, and where else the app's values go.
+#[derive(Debug)]
+pub struct Rewritten {
+    pub manifest: Vec<u8>,
+    /// The string resource the app's name goes in, when the shell's label
+    /// is one rather than text in the manifest.
+    pub name_resource: Option<u32>,
+}
+
+/// Gives the manifest the app's ID, name, version and build number.
+pub fn rewrite(data: &[u8], app: &App) -> Result<Rewritten> {
     let mut manifest = Manifest::parse(data)?;
     let min_sdk = manifest
         .find("uses-sdk", MIN_SDK_VERSION)
@@ -76,7 +88,22 @@ pub fn rewrite(data: &[u8], app: &App) -> Result<Vec<u8>> {
             .context("it has no android:versionCode to change")?;
         manifest.set_int(attribute, build);
     }
-    Ok(manifest.to_bytes())
+    // The application's label is the name under the icon, unless the
+    // launcher activity has a label of its own: shells shouldn't.
+    let mut name_resource = None;
+    if let Some(name) = &app.name {
+        let attribute = manifest
+            .find("application", LABEL)
+            .context("it has no android:label to change")?;
+        match manifest.typed(attribute) {
+            (TYPE_REFERENCE, id) => name_resource = Some(id),
+            _ => manifest.set_string(attribute, name),
+        }
+    }
+    Ok(Rewritten {
+        manifest: manifest.to_bytes(),
+        name_resource,
+    })
 }
 
 struct Manifest {
@@ -110,39 +137,33 @@ impl Manifest {
 
         let mut resource_map = Vec::new();
         let mut attributes = Vec::new();
-        let mut position = 0;
-        while position < nodes.len() {
-            let mut chunk = Reader::at(&nodes, position);
-            let (kind, header_size, size) =
-                (chunk.u16(), usize::from(chunk.u16()), offset(chunk.u32()));
-            // An element's attributes: where they start, each one's size,
-            // and how many there are.
-            let mut element = Reader::at(&nodes, position + header_size);
-            element.skip(4);
-            let name = element.u32();
-            let (start, attribute_size, count) = (
-                usize::from(element.u16()),
-                usize::from(element.u16()),
-                usize::from(element.u16()),
-            );
-            let end = position.saturating_add(size);
-            if size < 8
-                || end > nodes.len()
-                || header_size > size
-                || (kind == START_ELEMENT
-                    && (attribute_size < 20 || header_size + start + count * attribute_size > size))
-            {
-                bail!("it's corrupt or cut short");
-            }
-            match kind {
+        for chunk in chunks(&nodes, 0, nodes.len())? {
+            match chunk.kind {
                 RESOURCE_MAP => {
-                    let mut ids = Reader::at(&nodes, position + header_size);
-                    resource_map = (0..(size - header_size) / 4).map(|_| ids.u32()).collect();
+                    let mut ids = Reader::at(&nodes, chunk.body());
+                    resource_map = (0..(chunk.size - chunk.header_size) / 4)
+                        .map(|_| ids.u32())
+                        .collect();
                 }
                 START_ELEMENT => {
+                    // The element's name, then where its attributes start,
+                    // each one's size, and how many there are.
+                    let mut element = Reader::at(&nodes, chunk.body());
+                    element.skip(4);
+                    let name = element.u32();
+                    let (start, attribute_size, count) = (
+                        usize::from(element.u16()),
+                        usize::from(element.u16()),
+                        usize::from(element.u16()),
+                    );
+                    if attribute_size < 20
+                        || chunk.header_size + start + count * attribute_size > chunk.size
+                    {
+                        bail!("it's corrupt or cut short");
+                    }
                     let element = pool.get(name).unwrap_or_default();
                     for index in 0..count {
-                        let offset = position + header_size + start + index * attribute_size;
+                        let offset = chunk.body() + start + index * attribute_size;
                         let name = Reader::at(&nodes, offset + 4).u32();
                         attributes.push(Attribute {
                             element: element.clone(),
@@ -154,7 +175,6 @@ impl Manifest {
                 }
                 _ => {}
             }
-            position = end;
         }
         Ok(Self {
             pool,
@@ -464,6 +484,14 @@ mod tests {
             id: id.map(str::to_owned),
             version: version.map(str::to_owned),
             build,
+            ..App::default()
+        }
+    }
+
+    fn named(name: &str) -> App {
+        App {
+            name: Some(name.to_owned()),
+            ..App::default()
         }
     }
 
@@ -471,7 +499,10 @@ mod tests {
     fn leaves_the_manifest_as_it_was_without_changes() {
         let manifest = shell_manifest();
 
-        assert_eq!(rewrite(&manifest, &App::default()).unwrap(), manifest);
+        assert_eq!(
+            rewrite(&manifest, &App::default()).unwrap().manifest,
+            manifest
+        );
     }
 
     #[test]
@@ -482,7 +513,8 @@ mod tests {
             &manifest,
             &app(Some("dev.example.app"), Some("2.5.0"), Some(42)),
         )
-        .unwrap();
+        .unwrap()
+        .manifest;
 
         assert_eq!(value(&rewritten, "manifest", "package"), "dev.example.app");
         assert_eq!(value(&rewritten, "manifest", "versionName"), "2.5.0");
@@ -589,7 +621,9 @@ mod tests {
     fn changes_what_derives_from_the_application_id() {
         let manifest = manifest_with_derived_values();
 
-        let rewritten = rewrite(&manifest, &app(Some("dev.example.app"), None, None)).unwrap();
+        let rewritten = rewrite(&manifest, &app(Some("dev.example.app"), None, None))
+            .unwrap()
+            .manifest;
 
         let changed: Vec<String> = values(&rewritten)
             .into_iter()
@@ -667,6 +701,33 @@ mod tests {
     }
 
     #[test]
+    fn puts_the_name_where_the_label_is() {
+        let shell = shell_manifest();
+        let literal = binary_xml(&[
+            (
+                "uses-sdk",
+                vec![("minSdkVersion", Some(super::MIN_SDK_VERSION), Int(24))],
+            ),
+            (
+                "application",
+                vec![("label", Some(super::LABEL), Str("Shell"))],
+            ),
+        ]);
+
+        let in_resources = rewrite(&shell, &named("Repackaged")).unwrap();
+        let in_manifest = rewrite(&literal, &named("Repackaged")).unwrap();
+
+        // The shell's label is @string/app_name.
+        assert_eq!(in_resources.name_resource, Some(0x7f02_0000));
+        assert_eq!(in_resources.manifest, shell);
+        assert_eq!(in_manifest.name_resource, None);
+        assert_eq!(
+            value(&in_manifest.manifest, "application", "label"),
+            "Repackaged"
+        );
+    }
+
+    #[test]
     fn reports_a_manifest_without_what_it_changes() {
         let manifest = binary_xml(&[(
             "uses-sdk",
@@ -685,6 +746,7 @@ mod tests {
                 app(None, None, Some(2)),
                 "it has no android:versionCode to change",
             ),
+            (named("App"), "it has no android:label to change"),
         ] {
             assert_eq!(rewrite(&manifest, &app).unwrap_err().to_string(), message);
         }
