@@ -1,7 +1,7 @@
 //! The app config: the values that turn a shell into an app.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -19,15 +19,29 @@ pub struct App {
     pub version: Option<String>,
     /// The build number stores compare: `versionCode` on Android.
     pub build: Option<u32>,
+    /// The app's icon: a square PNG, which OmniBuild resizes to each size
+    /// the shell has its icon in.
+    pub icon: Option<PathBuf>,
+    /// A folder of files the app reads at run time, such as its Lynx
+    /// bundle: they go in the APK's `assets/`, replacing the shell's files
+    /// of the same name.
+    pub payload: Option<PathBuf>,
 }
 
 impl App {
-    /// Reads an app config from a JSON file.
+    /// Reads an app config from a JSON file. The paths in it are relative
+    /// to the file's folder.
     pub fn read(path: &Path) -> Result<Self> {
         let json = fs::read_to_string(path)
             .with_context(|| format!("couldn't read the app config {}", path.display()))?;
-        serde_json::from_str(&json)
-            .with_context(|| format!("the app config {} isn't valid", path.display()))
+        let app: Self = serde_json::from_str(&json)
+            .with_context(|| format!("the app config {} isn't valid", path.display()))?;
+        let folder = path.parent().unwrap_or(path);
+        Ok(Self {
+            icon: app.icon.map(|icon| folder.join(icon)),
+            payload: app.payload.map(|payload| folder.join(payload)),
+            ..app
+        })
     }
 }
 
@@ -43,7 +57,8 @@ mod tests {
         let path = dir.path().join("app.json");
         fs::write(
             &path,
-            r#"{ "id": "dev.example.app", "name": "Example", "version": "2.5.0", "build": 42 }"#,
+            r#"{ "id": "dev.example.app", "name": "Example", "version": "2.5.0", "build": 42,
+                "icon": "icon.png", "payload": "bundle" }"#,
         )
         .unwrap();
 
@@ -54,6 +69,9 @@ mod tests {
                 name: Some("Example".to_owned()),
                 version: Some("2.5.0".to_owned()),
                 build: Some(42),
+                // Relative to the config's folder.
+                icon: Some(dir.path().join("icon.png")),
+                payload: Some(dir.path().join("bundle")),
             }
         );
     }

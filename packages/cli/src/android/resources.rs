@@ -62,6 +62,20 @@ impl ResourceTable {
         })
     }
 
+    /// The resource's string values, one for each configuration it has a
+    /// string in. A file resource's value is its path in the APK.
+    pub fn strings(&self, id: u32) -> Result<Vec<String>> {
+        Ok(self
+            .slots(id)?
+            .into_iter()
+            .filter(|slot| self.packages[slot.data_type] == TYPE_STRING)
+            .filter_map(|slot| {
+                let index = Reader::at(&self.packages, slot.data).u32();
+                self.pool.get(index)
+            })
+            .collect())
+    }
+
     /// Makes a resource a string in every configuration it has a value in.
     pub fn set_string(&mut self, id: u32, value: &str) -> Result<()> {
         let slots = self.slots(id)?;
@@ -289,10 +303,7 @@ mod tests {
             [(TYPE_STRING, Some("Repackaged".to_owned()))]
         );
         // The icon's file path, in the same pool, is as it was.
-        assert_eq!(
-            values(&table, 0x7f01_0000),
-            [(TYPE_STRING, Some("res/o-.png".to_owned()))]
-        );
+        assert_eq!(table.strings(0x7f01_0000).unwrap(), ["res/o-.png"]);
     }
 
     #[test]
@@ -329,6 +340,21 @@ mod tests {
             assert_eq!(values(&table, 0x7f02_0000), []);
             assert_eq!(values(&table, 0x7f02_0002), []);
         }
+    }
+
+    #[test]
+    fn reads_only_the_values_that_are_strings() {
+        let entries = [entry(0, TYPE_STRING, 0), entry(0, 0x10, 7)].concat();
+        let chunk = type_chunk(
+            0,
+            2,
+            &[0u32.to_le_bytes(), 16u32.to_le_bytes()].concat(),
+            &entries,
+        );
+        let table = ResourceTable::parse(&table(&[chunk])).unwrap();
+
+        assert_eq!(table.strings(0x7f02_0000).unwrap(), ["Shell"]);
+        assert_eq!(table.strings(0x7f02_0001).unwrap(), Vec::<String>::new());
     }
 
     #[test]

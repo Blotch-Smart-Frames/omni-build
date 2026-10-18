@@ -7,6 +7,7 @@ const sidebars = {
     'intro',
     'how-it-works',
     'installation',
+    'repackaging',
     'angularlynx',
     'roadmap',
     'contributing',

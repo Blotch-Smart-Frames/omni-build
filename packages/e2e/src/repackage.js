@@ -12,6 +12,8 @@ const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
  */
 const APP_CONFIG = fileURLToPath(new URL('../app/app.json', import.meta.url));
 const APP = JSON.parse(readFileSync(APP_CONFIG, 'utf8'));
+/** The colour of every pixel of the app's icon, `app/icon.png`. */
+const APP_ICON = '#E8590C';
 
 /** The OS a repackaged app's file name says it was repackaged on. */
 const OS_NAMES = { darwin: 'macos', linux: 'linux', win32: 'windows' };
@@ -83,6 +85,11 @@ export const expected = (platform) =>
         name: APP.name,
         version: APP.version,
         build: String(APP.build),
+        payload: readFileSync(
+          path.join(path.dirname(APP_CONFIG), APP.payload, 'payload.txt'),
+          'utf8',
+        ),
+        icon: APP_ICON,
         // The debug key omni-build creates and signs with when it's given
         // no key: only it could have signed the app with this.
         signer: 'CN=OmniBuild Debug, O=OmniBuild',

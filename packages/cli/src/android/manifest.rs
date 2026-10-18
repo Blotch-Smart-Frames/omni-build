@@ -28,6 +28,7 @@ const TYPE_INT_HEX: u8 = 0x11;
 // The android: attributes OmniBuild reads or rewrites, by resource ID, as
 // Android itself identifies them (android.R.attr).
 const LABEL: u32 = 0x0101_0001;
+const ICON: u32 = 0x0101_0002;
 const NAME: u32 = 0x0101_0003;
 const MANAGE_SPACE_ACTIVITY: u32 = 0x0101_0004;
 const PERMISSION: u32 = 0x0101_0006;
@@ -40,6 +41,7 @@ const VERSION_CODE: u32 = 0x0101_021b;
 const VERSION_NAME: u32 = 0x0101_021c;
 const BACKUP_AGENT: u32 = 0x0101_027f;
 const PARENT_ACTIVITY_NAME: u32 = 0x0101_03a7;
+const ROUND_ICON: u32 = 0x0101_052c;
 
 /// Android 7.0, the first to verify APK Signature Scheme v2. Earlier
 /// versions only verify a v1 (JAR) signature, which OmniBuild doesn't write.
@@ -54,6 +56,9 @@ pub struct Rewritten {
     /// The string resource the app's name goes in, when the shell's label
     /// is one rather than text in the manifest.
     pub name_resource: Option<u32>,
+    /// The resources the app's icon goes in: the application's icon, and
+    /// its round icon, which some launchers show instead.
+    pub icon_resources: Vec<u32>,
 }
 
 /// Gives the manifest the app's ID, name, version and build number.
@@ -100,9 +105,23 @@ pub fn rewrite(data: &[u8], app: &App) -> Result<Rewritten> {
             _ => manifest.set_string(attribute, name),
         }
     }
+    let mut icon_resources = Vec::new();
+    if app.icon.is_some() {
+        icon_resources = [ICON, ROUND_ICON]
+            .into_iter()
+            .filter_map(|icon| manifest.find("application", icon))
+            .map(|attribute| manifest.typed(attribute))
+            .filter(|&(data_type, _)| data_type == TYPE_REFERENCE)
+            .map(|(_, id)| id)
+            .collect();
+        if icon_resources.is_empty() {
+            bail!("it has no android:icon to change");
+        }
+    }
     Ok(Rewritten {
         manifest: manifest.to_bytes(),
         name_resource,
+        icon_resources,
     })
 }
 
@@ -369,8 +388,9 @@ mod tests {
     enum Value<'a> {
         Str(&'a str),
         Int(u32),
+        Ref(u32),
     }
-    use Value::{Int, Str};
+    use Value::{Int, Ref, Str};
 
     type Element<'a> = (&'a str, Vec<(&'a str, Option<u32>, Value<'a>)>);
 
@@ -414,6 +434,7 @@ mod tests {
                         (index, TYPE_STRING, index)
                     }
                     Int(value) => (NO_STRING, TYPE_INT_DEC, *value),
+                    Ref(id) => (NO_STRING, super::TYPE_REFERENCE, *id),
                 };
                 records.extend(NO_STRING.to_le_bytes());
                 records.extend(attribute_name.to_le_bytes());
@@ -728,6 +749,37 @@ mod tests {
     }
 
     #[test]
+    fn finds_the_icon_and_round_icon() {
+        let with_icon = App {
+            icon: Some("icon.png".into()),
+            ..App::default()
+        };
+        let both = binary_xml(&[
+            (
+                "uses-sdk",
+                vec![("minSdkVersion", Some(super::MIN_SDK_VERSION), Int(24))],
+            ),
+            (
+                "application",
+                vec![
+                    ("icon", Some(super::ICON), Ref(0x7f01_0000)),
+                    ("roundIcon", Some(super::ROUND_ICON), Ref(0x7f01_0001)),
+                    // Not a reference: a launcher couldn't load it.
+                    ("label", Some(super::LABEL), Str("Shell")),
+                ],
+            ),
+        ]);
+
+        let shell = rewrite(&shell_manifest(), &with_icon).unwrap();
+        let both = rewrite(&both, &with_icon).unwrap();
+        let without = rewrite(&shell_manifest(), &App::default()).unwrap();
+
+        assert_eq!(shell.icon_resources, [0x7f01_0000]);
+        assert_eq!(both.icon_resources, [0x7f01_0000, 0x7f01_0001]);
+        assert_eq!(without.icon_resources, Vec::<u32>::new());
+    }
+
+    #[test]
     fn reports_a_manifest_without_what_it_changes() {
         let manifest = binary_xml(&[(
             "uses-sdk",
@@ -747,6 +799,13 @@ mod tests {
                 "it has no android:versionCode to change",
             ),
             (named("App"), "it has no android:label to change"),
+            (
+                App {
+                    icon: Some("icon.png".into()),
+                    ..App::default()
+                },
+                "it has no android:icon to change",
+            ),
         ] {
             assert_eq!(rewrite(&manifest, &app).unwrap_err().to_string(), message);
         }
