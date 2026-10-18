@@ -99,8 +99,11 @@ jobs:
           args: -color
 
   # Every test, with the 100% coverage gate: cargo-llvm-cov for Rust and
-  # vitest's thresholds for the launcher both fail below 100% of lines,
-  # functions and regions or branches.
+  # vitest's thresholds for the npm packages both fail below 100% of lines,
+  # functions and regions or branches. Then coverage-guard fails it wherever
+  # 100% would pass over untested code: a module without a test of its own,
+  # one only other modules' tests cover, a coverage-ignore comment, or a file
+  # the report leaves out.
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 20
