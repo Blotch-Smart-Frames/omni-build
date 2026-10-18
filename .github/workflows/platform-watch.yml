@@ -42,9 +42,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          # The watch uses only Node's built-in modules, so there's no
-          # `npm ci` and nothing to cache. setup-node would otherwise restore
-          # npm's cache because of package.json's packageManager field.
+          # The watch uses only Node's built-in modules, and Node runs its
+          # TypeScript by stripping the types, so there's no `npm ci` and
+          # nothing to cache. setup-node would otherwise restore npm's cache
+          # because of package.json's packageManager field.
           package-manager-cache: false
       # The watch finds its issues by this label. Made here rather than
       # implicitly with the first issue, so it has a description; --force
@@ -55,6 +56,6 @@ jobs:
           --description "Opened by the platform watch: the app shells need a newer Xcode or Android API level"
         env:
           GH_TOKEN: ${{ github.token }}
-      - run: node packages/platform-watch/src/cli.js
+      - run: node packages/platform-watch/src/cli.ts
         env:
           GITHUB_TOKEN: ${{ github.token }}

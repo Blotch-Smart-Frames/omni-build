@@ -25,7 +25,7 @@ GITHUB_REPOSITORY=Blotch-Smart-Frames/omni-build npm run check -w @omni-build/pl
 - **With an issue:** read all of it, comments included (`gh issue view <number> --comments`).
 - **Without one** (the user asked directly, or the watch hasn't run yet): the dry run's `open an issue: ...` line is the issue you're doing. Its readings say what's out and what's required.
 - **Urgency:** a **Required** reason with a date is a store deadline, so do it first. **Released** on its own means there's time.
-- **Read `packages/platform-watch/src/sources.js`.** Its `SOURCES` list says which files hold the shells' toolchain today. Use those paths rather than any you remember: they move when the release shells arrive.
+- **Read `packages/platform-watch/src/sources.ts`.** Its `SOURCES` list says which files hold the shells' toolchain today. Use those paths rather than any you remember: they move when the release shells arrive.
 - **Branch from the branch the watch is on** (`master` once it's merged), e.g. `git switch -c platform/xcode-27`.
 
 When looking for other mentions of the old version, leave out `packages/platform-watch` and `.claude`. Their mentions are test data, examples and quotes of the vendors' wording, not the toolchain.
@@ -101,17 +101,18 @@ When looking for other mentions of the old version, leave out `packages/platform
 
 ## Fix the watch
 
-The issue quotes the error and names the source by its `id` in `packages/platform-watch/src/sources.js`.
+The issue quotes the error and names the source by its `id` in `packages/platform-watch/src/sources.ts`.
 
-1. **See what changed.** Download the source into the scratchpad and look for the value the parser wants. The source's `looksFor` describes it. The page may have moved (a new URL), been reworded (the regex no longer matches), or changed shape. A file source in this repository may have had its line moved or rewritten. If it reads fine locally but failed on GitHub, the server is sending different pages to different requests: fetch it several times, with the headers `read.js` sends, and compare. Google's developer site once answered a vague `Accept-Language` with a random translation.
+1. **See what changed.** Download the source into the scratchpad and look for the value the parser wants. The source's `looksFor` describes it. The page may have moved (a new URL), been reworded (the regex no longer matches), or changed shape. A file source in this repository may have had its line moved or rewritten. If it reads fine locally but failed on GitHub, the server is sending different pages to different requests: fetch it several times, with the headers `read.ts` sends, and compare. Google's developer site once answered a vague `Accept-Language` with a random translation.
 2. **Fix the parser or the `location`.** Keep it strict: it should find the number in the sentence that states it, or throw. A loose match that quietly returns an old number is worse than an issue.
-3. **Replace that source's excerpt** in `src/sources.test.js` with the new real markup, trimmed to the relevant part. Keep the case that throws when the sentence is missing.
+3. **Replace that source's excerpt** in `src/sources.test.ts` with the new real markup, trimmed to the relevant part. Keep the case that throws when the sentence is missing.
 4. **If the vendor stopped publishing the value** at all, find another official source and add it. Don't scrape an unofficial mirror.
 
 ## 2. Check it
 
 ```bash
 npm run test:coverage -w @omni-build/platform-watch   # only if the watch changed; 100% coverage is required
+npm run typecheck -w @omni-build/platform-watch       # likewise
 npm run lint
 npm run format:check
 GITHUB_REPOSITORY=Blotch-Smart-Frames/omni-build npm run check -w @omni-build/platform-watch -- --dry-run

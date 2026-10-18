@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-Docusaurus 3 (classic preset) in `packages/docs`, an npm workspace of the OmniBuild monorepo. Plain JavaScript and JSX, as the repository's other npm packages are. Landing-page motion comes from React Bits (https://reactbits.dev), copied into the package as source, which is how React Bits is distributed. Hosted on GitHub Pages at `blotch-smart-frames.github.io/omni-build`, deployed from `master` by a workflow.
+Docusaurus 3 (classic preset) in `packages/docs`, an npm workspace of the OmniBuild monorepo. TypeScript and TSX, as the repository's other npm packages are. Landing-page motion comes from React Bits (https://reactbits.dev), copied into the package as source, which is how React Bits is distributed. Hosted on GitHub Pages at `blotch-smart-frames.github.io/omni-build`, deployed from `master` by a workflow.
 
 ## Users
 

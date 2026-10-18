@@ -15,7 +15,7 @@ Opens a GitHub issue when the app shells need a newer Xcode or Android API level
 | [Google Play's target API level page](https://developer.android.com/google/play/requirements/target-sdk) | The API level Play requires apps to target, and from when     |
 | [The Android SDK repository](https://dl.google.com/android/repository/repository2-3.xml)                 | New stable API levels, previews left out                      |
 
-The shells' two files are the E2E fixtures for now, the only shells there are. When the release shells arrive (Phase 2 of [#1](https://github.com/Blotch-Smart-Frames/omni-build/issues/1)), point those sources in `src/sources.js` at theirs.
+The shells' two files are the E2E fixtures for now, the only shells there are. When the release shells arrive (Phase 2 of [#1](https://github.com/Blotch-Smart-Frames/omni-build/issues/1)), point those sources in `src/sources.ts` at theirs.
 
 ## The issues it opens
 
@@ -41,7 +41,8 @@ GITHUB_REPOSITORY=Blotch-Smart-Frames/omni-build npm run check -w @omni-build/pl
 
 ## Things to know
 
-- **The tests hold excerpts of the real pages** (`src/sources.test.js`). When a page changes and the watch opens an issue about it, replace the excerpt with the new markup and fix the parser to match.
+- **The tests hold excerpts of the real pages** (`src/sources.test.ts`). When a page changes and the watch opens an issue about it, replace the excerpt with the new markup and fix the parser to match.
 - **GitHub turns off scheduled workflows** in a public repository after 60 days without activity. The Actions tab has the button to turn it back on.
 - **Issues opened with the workflow's `GITHUB_TOKEN` don't trigger other workflows**, as GitHub stops tokens from chaining runs. For an agent workflow to start on them (on `issues: opened` or the label), the watch has to open them with a GitHub App's token or a personal access token instead.
-- Like the launcher, `cli.js` only wires `run.js` to the process, and the tests reach everything else in-process.
+- Like the launcher, `cli.ts` only wires `run.ts` to the process, and the tests reach everything else in-process.
+- **Node runs the TypeScript as it is**, stripping the types (Node 22.18 or later), so CI runs the watch without `npm ci` or a build. `npm run typecheck` is what checks the types.

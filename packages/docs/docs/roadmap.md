@@ -23,7 +23,7 @@ The full plan, with its reasoning, is [issue #1](https://github.com/Blotch-Smart
 The repository already gates every pull request on what OmniBuild will need:
 
 - **Release builds for all six targets**, each run on a runner of its own OS and CPU.
-- **100% test coverage** of the Rust and JavaScript code.
+- **100% test coverage** of the Rust and TypeScript code.
 - **End-to-end tests on real platforms.** Real Swift and Kotlin shells are built with Xcode and Gradle, run through the `omni-build` binary on Linux, Windows and macOS with no `PATH` and no toolchain variables, then launched on the iOS Simulator and an Android emulator, where each app reports its own ID, name, version, payload and icon. `omni-build repackage` gives the Android APK and app bundle shells an app's ID, name, version, build number, icon and payload and signs them, then Google's tools check the results (`apksigner` and `zipalign` for the APK, `bundletool` and `jarsigner` for the bundle, which is installed as the APK bundletool makes from it, as Google Play would); the iOS shell is copied unchanged until the iOS spike.
 
 ## Risks
