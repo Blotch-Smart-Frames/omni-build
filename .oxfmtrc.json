@@ -14,7 +14,7 @@
     "**/.claude/**",
     "**/.agents/**",
     "target/**",
-    "packages/omni-build/dist/**",
+    "**/dist/**",
     "packages/e2e/fixtures/**",
     "packages/docs/build/**",
     "packages/docs/.docusaurus/**",
