@@ -1,5 +1,8 @@
 {
   "$schema": "https://turborepo.com/schema.json",
+  // Every package's TypeScript settings extend it, so a change can change any
+  // build's output.
+  "globalDependencies": ["tsconfig.base.json"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"]
@@ -12,6 +15,9 @@
       "outputs": ["coverage/**"]
     },
     "lint": {
+      "cache": false
+    },
+    "typecheck": {
       "cache": false
     },
     "lint:fix": {

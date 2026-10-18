@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["unicorn", "oxc"],
+  "plugins": ["typescript", "unicorn", "oxc"],
   "categories": {
     "correctness": "error"
   },
@@ -13,12 +13,16 @@
   "overrides": [
     {
       // React Bits components are copied in from https://reactbits.dev as
-      // they're published. Keeping them as close to upstream as the rest of
-      // the rules allow makes a later update a plain copy, so only the style
-      // rules they break are off; correctness still applies.
+      // they're published, in their TypeScript + CSS variant. Keeping them as
+      // close to upstream as the rest of the rules allow makes a later update
+      // a plain copy, so only the style rules they break are off; correctness
+      // still applies.
       "files": ["packages/docs/src/components/react-bits/**"],
       "rules": {
         "eslint/func-style": "off",
+        // DecryptedText imports motion/react's types in a statement of
+        // their own.
+        "eslint/no-duplicate-imports": "off",
         "unicorn/no-new-array": "off"
       }
     }

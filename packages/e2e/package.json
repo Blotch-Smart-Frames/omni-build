@@ -6,8 +6,15 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "e2e": "node src/run.js",
+    "e2e": "node src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "oxlint .",
-    "lint:fix": "oxlint --fix ."
+    "lint:fix": "oxlint --fix .",
+    "typecheck": "tsc"
+  },
+  "engines": {
+    "node": ">=22.18"
   }
 }

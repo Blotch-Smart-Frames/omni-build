@@ -7,7 +7,7 @@ The Android E2E shell (`packages/e2e/fixtures/android`), as Gradle builds it, wi
 To make it again after changing the E2E shell (with the Android SDK's build tools on the `PATH`):
 
 ```sh
-node packages/e2e/src/run.js build --platform android
+node packages/e2e/src/cli.ts build --platform android
 cp packages/e2e/build/shells/android/OmniBuildShell.apk trimmed.apk
 zip -d trimmed.apk classes.dex 'kotlin/*' META-INF/version-control-info.textproto
 zipalign -f -P 16 4 trimmed.apk aligned.apk

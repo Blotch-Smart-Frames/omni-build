@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // The Node packages' shared settings. Node runs the private packages' .ts
+  // files as they are, by stripping the types, and the launcher is compiled
+  // for npm, because Node won't strip types under node_modules. The settings
+  // keep the code to what both can run.
+  "compilerOptions": {
+    // Node 22.12, the launcher's oldest supported version, has all of ES2024.
+    "target": "es2024",
+    "lib": ["es2024"],
+    "module": "nodenext",
+    "types": ["node"],
+    "strict": true,
+    // Type stripping replaces the types with whitespace and does nothing
+    // else, so no syntax that needs compiling (enums, namespaces, parameter
+    // properties), and type-only imports marked as such so it can drop them.
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    // Relative imports name the .ts file, as Node needs to run it. Compiling
+    // the launcher rewrites them to .js.
+    "rewriteRelativeImportExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  }
+}

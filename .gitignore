@@ -5,6 +5,9 @@
 node_modules/
 *.tgz
 
+# TypeScript, compiled for npm
+dist/
+
 # Turbo
 .turbo
 

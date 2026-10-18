@@ -22,9 +22,10 @@ You need Node 24 and [rustup](https://rustup.rs), which installs the Rust versio
 ```sh
 npm install
 npm run build          # cargo build --release, and this site
-npm test               # cargo test, and the launcher's tests with vitest
+npm test               # cargo test, and every package's vitest tests
 npm run test:coverage  # the same, failing below 100% coverage (needs cargo-llvm-cov)
 npm run lint           # clippy and oxlint
+npm run typecheck      # tsc over the TypeScript packages
 npm run format         # rustfmt and oxfmt; CI runs format:check
 npm run e2e -- --platform ios  # build, repackage and run a real app on the iOS Simulator, or android
 ```
@@ -35,4 +36,4 @@ To work on this site:
 npm start -w @omni-build/docs
 ```
 
-Pull requests must pass CI: formatting, lint (warnings are errors), 100% test coverage, tests on Linux, macOS and Windows, a release build on each of the six targets, the end-to-end tests on the iOS Simulator and an Android emulator, and a build of this site.
+Pull requests must pass CI: formatting, lint (warnings are errors), type checks, 100% test coverage, tests on Linux, macOS and Windows, a release build on each of the six targets, the end-to-end tests on the iOS Simulator and an Android emulator, and a build of this site.

@@ -10,18 +10,20 @@ An npm workspaces + turbo monorepo with the Rust inside `packages/` (see the REA
 
 - **Each Rust crate is listed by path** in the root `Cargo.toml`'s `members`. A `packages/*` glob would also match the npm packages, which have no `Cargo.toml`, and Cargo would fail.
 - **A Rust crate that turbo should run has a private `package.json`** whose scripts call Cargo (see `packages/cli`). Its turbo `build` and `test` aren't cached: Cargo caches them in the shared `target/`.
-- **Platform packages aren't in the repository**, and the launcher's `package.json` doesn't list them. As workspaces, npm fails `npm install` with EBADPLATFORM on every machine but one. As `optionalDependencies` of an unpublished version, npm can't lock them and `npm ci` fails. `packages/omni-build/src/platforms.js` is the list. The release tooling (Phase 2) will generate the packages from it and write the `optionalDependencies` when it publishes.
+- **Platform packages aren't in the repository**, and the launcher's `package.json` doesn't list them. As workspaces, npm fails `npm install` with EBADPLATFORM on every machine but one. As `optionalDependencies` of an unpublished version, npm can't lock them and `npm ci` fails. `packages/omni-build/src/platforms.ts` is the list. The release tooling (Phase 2) will generate the packages from it and write the `optionalDependencies` when it publishes.
 - **Versions move in lockstep:** `[workspace.package] version` in `Cargo.toml` and every `package.json`. The launcher's tests fail if `omni-build --version` differs from its `package.json`.
 
-- **CI requires 100% test coverage** of lines, functions and regions or branches, in Rust (cargo-llvm-cov) and JavaScript (vitest thresholds). Code that can only run in a child process gets an in-process seam rather than an exclusion: `cli.js` is a few lines wiring `run.js` to the process, and a `tests/` integration test running the binary covers `main()`.
+- **The npm packages are TypeScript, run without a build** wherever Node can: it strips the types from the private packages' `.ts` files (CI runs the e2e harness and the platform watch with no `npm ci`). So imports name the `.ts` file and only erasable syntax is allowed (`erasableSyntaxOnly` in `tsconfig.base.json`: no enums, namespaces or parameter properties). The launcher is compiled to `dist/`, because Node won't strip types under `node_modules`, and its tests run the compiled `dist/cli.js`. Node, vitest and Docusaurus all strip types without checking them, so `npm run typecheck` (CI's `typecheck` job) is the only type check.
+- **Every `.ts` module has a `.test.ts` beside it** (tool configs such as `vitest.config.ts` aside), the e2e harness and the docs site's included: the harness's tests stand in for Xcode, Gradle, adb and simctl, and the docs' run in jsdom. A new module gets its test in the same change.
+- **CI requires 100% test coverage** of lines, functions and regions or branches, in Rust (cargo-llvm-cov) and TypeScript (vitest thresholds). Code that can only run in a child process gets an in-process seam rather than an exclusion: in each npm package with a command, `cli.ts` is a few lines wiring `run.ts` to the process, and a `tests/` integration test running the binary covers `main()`.
 - **The PR gate is the "CI passed" job** in `.github/workflows/ci.yml`, which needs every other job. Add new jobs to its `needs`.
 - **E2E tests run in three stages** (`packages/e2e`): Xcode and Gradle build real Swift and Kotlin shells (only in our CI, never for users), omni-build repackages them on Linux, Windows and macOS with no `PATH` or toolchain variables, and the iOS Simulator and an Android emulator run every result. The fixture apps report their own ID, name, version, payload and icon on launch, so no UI driver is needed. A value OmniBuild learns to rewrite gets a field in both fixtures' reports.
-- **The platform watch** (`packages/platform-watch`) runs daily and opens an issue when the shells need a newer Xcode or Android API level, or when it can't download or parse one of Apple's or Google's pages. It reads the shells' toolchain from `DEVELOPER_DIR` in `ci.yml` and the Android fixture's `build.gradle.kts`, so moving either means updating `src/sources.js`.
+- **The platform watch** (`packages/platform-watch`) runs daily and opens an issue when the shells need a newer Xcode or Android API level, or when it can't download or parse one of Apple's or Google's pages. It reads the shells' toolchain from `DEVELOPER_DIR` in `ci.yml` and the Android fixture's `build.gradle.kts`, so moving either means updating `src/sources.ts`.
 
 ```sh
-npm run build | test | lint | format | format:check   # all packages, through turbo
-npm run test:coverage                                  # needs cargo-llvm-cov installed
-cargo run -- --help                                    # the binary, straight from Cargo
+npm run build | test | lint | typecheck | format | format:check   # all packages, through turbo
+npm run test:coverage                                             # needs cargo-llvm-cov installed
+cargo run -- --help                                               # the binary, straight from Cargo
 ```
 
 ## Code Style

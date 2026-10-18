@@ -1,0 +1,12 @@
+{
+  // The launcher as npm ships it: plain JavaScript in dist/, because Node
+  // won't run TypeScript from node_modules.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}

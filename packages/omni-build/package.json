@@ -22,19 +22,21 @@
     "directory": "packages/omni-build"
   },
   "bin": {
-    "omni-build": "./src/cli.js"
+    "omni-build": "./dist/cli.js"
   },
   "files": [
-    "src",
-    "!src/**/*.test.js"
+    "dist"
   ],
   "type": "module",
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "oxlint .",
-    "lint:fix": "oxlint --fix ."
+    "lint:fix": "oxlint --fix .",
+    "typecheck": "tsc"
   },
   "engines": {
     "node": ">=22.12"

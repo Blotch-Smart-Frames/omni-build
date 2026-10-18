@@ -58,6 +58,20 @@ jobs:
       # clippy with warnings as errors, and oxlint.
       - run: npm run lint
 
+  # tsc over every TypeScript package. Node, vitest and the docs build all
+  # strip the types without checking them, so a type error fails only here.
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
   # The workflows are code too: a typo in an expression or a matrix key
   # otherwise only shows when that job runs, or silently never does.
   actionlint:
@@ -115,7 +129,7 @@ jobs:
       - run: npm test
 
   # A release build for every target OmniBuild publishes (the list in
-  # packages/omni-build/src/platforms.js), each on a runner of that OS and
+  # packages/omni-build/src/platforms.ts), each on a runner of that OS and
   # CPU, so the binary is also run, not just compiled. A target that stops
   # building fails the pull request that broke it rather than the release.
   build:
@@ -157,7 +171,7 @@ jobs:
       - name: Run the binary
         run: '"$BINARY" --version'
       # The launcher ships one Linux binary per CPU for glibc and musl
-      # distributions alike (see platforms.js), which holds only if it's
+      # distributions alike (see platforms.ts), which holds only if it's
       # statically linked.
       - name: Check the binary is statically linked
         if: runner.os == 'Linux'
@@ -185,7 +199,8 @@ jobs:
   #    values it reports. An Android app bundle is installed as the APK
   #    bundletool makes from it.
   #
-  # The harness uses only Node's built-in modules, so these jobs skip `npm ci`.
+  # The harness uses only Node's built-in modules, and Node runs its TypeScript
+  # by stripping the types, so these jobs skip `npm ci`.
   e2e-shell-ios:
     runs-on: macos-latest
     timeout-minutes: 30
@@ -204,7 +219,7 @@ jobs:
           # Nothing to cache without `npm ci`. setup-node would otherwise
           # restore npm's cache because of package.json's packageManager field.
           package-manager-cache: false
-      - run: node packages/e2e/src/run.js build --platform ios --out e2e/shells
+      - run: node packages/e2e/src/cli.ts build --platform ios --out e2e/shells
       - uses: actions/upload-artifact@v7
         with:
           name: e2e-shell-ios
@@ -235,7 +250,7 @@ jobs:
       # Caches Gradle's downloads (AGP and its dependencies), saving only on
       # master, and checks that the committed gradle-wrapper.jar is Gradle's.
       - uses: gradle/actions/setup-gradle@v6
-      - run: node packages/e2e/src/run.js build --platform android --out e2e/shells
+      - run: node packages/e2e/src/cli.ts build --platform android --out e2e/shells
       - uses: actions/upload-artifact@v7
         with:
           name: e2e-shell-android
@@ -292,8 +307,8 @@ jobs:
           pattern: e2e-shell-*
           path: e2e/shells
           merge-multiple: true
-      - run: node packages/e2e/src/run.js repackage --platform ios --shell e2e/shells/OmniBuildShell.zip --out e2e/repackaged
-      - run: node packages/e2e/src/run.js repackage --platform android --shell e2e/shells/OmniBuildShell.apk --shell e2e/shells/OmniBuildShell.aab --out e2e/repackaged
+      - run: node packages/e2e/src/cli.ts repackage --platform ios --shell e2e/shells/OmniBuildShell.zip --out e2e/repackaged
+      - run: node packages/e2e/src/cli.ts repackage --platform android --shell e2e/shells/OmniBuildShell.apk --shell e2e/shells/OmniBuildShell.aab --out e2e/repackaged
       - uses: actions/upload-artifact@v7
         with:
           name: e2e-repackaged-${{ matrix.os }}
@@ -323,7 +338,7 @@ jobs:
           pattern: e2e-repackaged-*
           path: e2e/repackaged
           merge-multiple: true
-      - run: node packages/e2e/src/run.js test --platform ios e2e/repackaged/*.zip
+      - run: node packages/e2e/src/cli.ts test --platform ios e2e/repackaged/*.zip
       # Each app's report and a screenshot, and on a failure its logs.
       - uses: actions/upload-artifact@v7
         if: always()
@@ -369,7 +384,7 @@ jobs:
           api-level: 34
           arch: x86_64
           target: google_apis
-          script: node packages/e2e/src/run.js test --platform android e2e/repackaged/*.apk e2e/repackaged/*.aab
+          script: node packages/e2e/src/cli.ts test --platform android e2e/repackaged/*.apk e2e/repackaged/*.aab
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -397,6 +412,7 @@ jobs:
     needs:
       - format
       - lint
+      - typecheck
       - actionlint
       - coverage
       - test

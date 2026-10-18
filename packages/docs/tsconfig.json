@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Type checking only: Docusaurus compiles the site with SWC and ignores
+  // this file. It holds @docusaurus/tsconfig's options rather than extending
+  // it, because that sets `baseUrl`, which TypeScript 7 removed; `paths`
+  // resolves from this file without it.
+  "compilerOptions": {
+    "jsx": "preserve",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "paths": {
+      "@site/*": ["./*"]
+    },
+    // The modules Docusaurus provides at build time (@theme/*,
+    // @docusaurus/Link, *.module.css, ...), which have no package of their
+    // own to find types in.
+    "types": ["@docusaurus/module-type-aliases", "@docusaurus/theme-classic"]
+  },
+  "include": ["docusaurus.config.ts", "sidebars.ts", "vitest.config.mts", "src"]
+}
