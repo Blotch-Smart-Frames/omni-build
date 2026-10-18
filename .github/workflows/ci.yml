@@ -58,6 +58,21 @@ jobs:
       # clippy with warnings as errors, and oxlint.
       - run: npm run lint
 
+  # Spelling, in the code and the prose alike: cspell over the files outside
+  # packages/, then each package's. A new word goes in the root cspell.json
+  # when the whole repository uses it, or in the package's own otherwise.
+  cspell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run cspell
+
   # tsc over every TypeScript package. Node, vitest and the docs build all
   # strip the types without checking them, so a type error fails only here.
   typecheck:
@@ -412,6 +427,7 @@ jobs:
     needs:
       - format
       - lint
+      - cspell
       - typecheck
       - actionlint
       - coverage

@@ -1,0 +1,52 @@
+{
+  "$schema": "../../node_modules/@cspell/cspell-types/cspell.schema.json",
+  "version": "0.2",
+  "import": ["../../cspell.json"],
+  "overrides": [
+    {
+      // React Bits components are copied in from https://reactbits.dev as
+      // they're published (see .oxlintrc.json), so their spelling is
+      // upstream's. Our tests beside them are checked.
+      "filename": "src/components/react-bits/**",
+      "enabled": false
+    },
+    {
+      "filename": "src/components/react-bits/*.test.tsx",
+      "enabled": true
+    }
+  ],
+  // JSX spells the apostrophe as &rsquo;, which splits a contraction such as
+  // doesn&rsquo;t into a word no dictionary has.
+  "ignoreRegExpList": ["/\\b\\w+n&rsquo;t\\b/g"],
+  "words": [
+    "angularlynx",
+    "apktool",
+    "atrule",
+    "Cascadia",
+    "Consolas",
+    "donts",
+    "Hyperlegible",
+    "Infima",
+    "lede",
+    "lerp",
+    "libimobiledevice",
+    "nowrap",
+    "progressbar",
+    "pymobiledevice",
+    "rcodesign",
+    "resizers",
+    "rsquo",
+    "Segoe",
+    "undescribed",
+    "unshade",
+    "usbmux",
+    "valuemax",
+    "valuemin",
+    "valuenow",
+    "wordmark",
+    "xbuild",
+    "xcframework",
+    "yume",
+    "zsign"
+  ]
+}

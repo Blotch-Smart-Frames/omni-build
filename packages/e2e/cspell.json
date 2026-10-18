@@ -1,0 +1,35 @@
+{
+  "$schema": "../../node_modules/@cspell/cspell-types/cspell.schema.json",
+  "version": "0.2",
+  "import": ["../../cspell.json"],
+  // The Gradle wrapper and the Xcode project, as Gradle and Xcode generate them.
+  "ignorePaths": [
+    "fixtures/android/gradlew",
+    "fixtures/android/gradlew.bat",
+    "fixtures/android/gradle/wrapper",
+    "fixtures/ios/OmniBuildShell.xcodeproj"
+  ],
+  "words": [
+    "actool",
+    "androidx",
+    "apks",
+    "ARGB",
+    "avds",
+    "bootstatus",
+    "Dfile",
+    "genkeypair",
+    "getprop",
+    "iphonesimulator",
+    "jvmargs",
+    "keyalg",
+    "keysize",
+    "keytool",
+    "logcat",
+    "RRGGBB",
+    "screencap",
+    "UDID",
+    "xcodeproj",
+    "xcrun",
+    "xcuserdata"
+  ]
+}

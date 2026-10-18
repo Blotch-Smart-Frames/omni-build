@@ -1,0 +1,37 @@
+{
+  "$schema": "../../node_modules/@cspell/cspell-types/cspell.schema.json",
+  "version": "0.2",
+  "import": ["../../cspell.json"],
+  // Rust identifiers can't hold an apostrophe, so test names spell "isn't" and
+  // "don't" without one.
+  "words": [
+    "ANDROIDD",
+    "androiddebugkey",
+    "apksigning",
+    "crls",
+    "digestalg",
+    "dont",
+    "econtent",
+    "encap",
+    "extn",
+    "fileprovider",
+    "flate",
+    "getrandom",
+    "imageops",
+    "isnt",
+    "Lanczos",
+    "libshell",
+    "MIIE",
+    "pkix",
+    "PPTTEEEE",
+    "RSASSA",
+    "serde",
+    "sigalg",
+    "signedjar",
+    "spki",
+    "textproto",
+    "unrewritable",
+    "varint",
+    "xxxhdpi"
+  ]
+}
