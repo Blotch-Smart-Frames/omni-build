@@ -2,7 +2,7 @@
 
 Build, sign, install and ship iOS and Android apps with no native toolchain: no Xcode, no JDK, no Android SDK. One standalone binary that repackages a prebuilt app shell with your app's config and assets, then signs it.
 
-**Status:** Phase 0 of [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1). `omni-build repackage` gives an Android APK or app bundle (AAB) shell an app's ID, name, version, build number, icon and payload, and signs it, with nothing else installed. Nothing is published yet.
+**Status:** Phase 0 of [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1). `omni-build repackage` gives an Android APK or app bundle (AAB) shell an app's ID, name, version, build number, icon and payload, and signs it, with nothing else installed. It gives an iOS shell built for the Simulator the same values but the icon, and doesn't sign it yet. Nothing is published yet.
 
 OmniBuild started as an investigation in [AngularLynx](https://github.com/Blotch-Smart-Frames/AngularLynx), which will be its first user.
 

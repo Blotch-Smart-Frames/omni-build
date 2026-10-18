@@ -14,13 +14,12 @@ mod resources;
 mod signing;
 mod string_pool;
 
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 
 use crate::config::App;
+use crate::payload;
 use crate::zip::{self, Entry, Method};
 use binary_xml::BinaryXml;
 use key::SigningKey;
@@ -32,7 +31,7 @@ use resources::{ResourceTable, Resources};
 /// Where a package keeps what OmniBuild rewrites. An APK keeps it at its
 /// root, compiled for a device; an AAB keeps it in its base module, in
 /// protobuf, for bundletool to compile for each device.
-struct Layout {
+pub struct Layout {
     manifest: &'static str,
     resources: &'static str,
     /// What the resource table's file paths, and `assets/`, are under.
@@ -54,21 +53,28 @@ const AAB: Layout = Layout {
     bundle: true,
 };
 
-/// Repackages an APK or AAB shell into the app `app` describes, and signs
-/// it with `key`: an APK with schemes v2 and v3, for devices, and an AAB
-/// with a JAR signature, as Google Play checks an upload.
-pub fn repackage(shell: &[u8], app: &App, key: &SigningKey) -> Result<Vec<u8>> {
-    let entries = zip::read(shell).context("the shell isn't an APK or an AAB")?;
+/// The layout of a shell's entries, if it's an APK or an AAB.
+pub fn layout(entries: &[Entry]) -> Option<&'static Layout> {
     let has = |name: &str| entries.iter().any(|entry| entry.name == name);
-    let layout = if has("BundleConfig.pb") {
-        &AAB
+    if has("BundleConfig.pb") {
+        Some(&AAB)
     } else if has("AndroidManifest.xml") {
-        &APK
+        Some(&APK)
     } else {
-        bail!(
-            "the shell isn't an APK or an AAB: it has neither an AndroidManifest.xml nor a BundleConfig.pb"
-        );
-    };
+        None
+    }
+}
+
+/// Repackages an APK or AAB shell, given its entries and their layout, into
+/// the app `app` describes, and signs it with `key`: an APK with schemes v2
+/// and v3, for devices, and an AAB with a JAR signature, as Google Play
+/// checks an upload.
+pub fn repackage(
+    entries: Vec<Entry>,
+    layout: &Layout,
+    app: &App,
+    key: &SigningKey,
+) -> Result<Vec<u8>> {
     // The shell's own JAR signature, if it has one, describes the shell's
     // contents, not the app's.
     let mut entries: Vec<_> = entries
@@ -170,9 +176,7 @@ fn set_resources(
 /// Adds the payload's files to the package's `assets/`, replacing the
 /// shell's own files of the same name.
 fn add_payload(entries: &mut Vec<Entry>, layout: &Layout, folder: &Path) -> Result<()> {
-    for (name, path) in payload_files(folder)? {
-        let contents =
-            fs::read(&path).with_context(|| format!("couldn't read {}", path.display()))?;
+    for (name, contents) in payload::read(folder)? {
         let name = format!("{}assets/{name}", layout.base);
         match entries.iter().position(|entry| entry.name == name) {
             Some(index) => entries[index] = entries[index].with_contents(&contents),
@@ -180,33 +184,6 @@ fn add_payload(entries: &mut Vec<Entry>, layout: &Layout, folder: &Path) -> Resu
         }
     }
     Ok(())
-}
-
-/// The files in a payload folder and its subfolders: each one's path
-/// relative to it, with `/` between folders, and its path on disk. Hidden
-/// files (`.DS_Store`, `.gitkeep`) are left out, as aapt2 leaves them out
-/// of assets.
-fn payload_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
-    let mut files = Vec::new();
-    let mut folders = vec![(root.to_path_buf(), String::new())];
-    while let Some((folder, prefix)) = folders.pop() {
-        let children = fs::read_dir(&folder)
-            .and_then(Iterator::collect::<io::Result<Vec<_>>>)
-            .with_context(|| format!("couldn't read the payload folder {}", folder.display()))?;
-        for child in children {
-            let name = child.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') {
-                continue;
-            }
-            if child.path().is_dir() {
-                folders.push((child.path(), format!("{prefix}{name}/")));
-            } else {
-                files.push((format!("{prefix}{name}"), child.path()));
-            }
-        }
-    }
-    files.sort();
-    Ok(files)
 }
 
 /// Whether an entry is part of a JAR signature (an APK's v1 signature, or
@@ -227,13 +204,32 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use super::{ProtoResources, ProtoXml, Resources, is_jar_signature, repackage};
+    use anyhow::Result;
+
+    use super::{ProtoResources, ProtoXml, Resources, SigningKey, is_jar_signature, layout};
     use crate::android::icon::tests::solid_png;
     use crate::android::key::tests::KEY;
     use crate::android::manifest::{Document, Value};
     use crate::android::proto_xml::tests::SHELL_AAB;
     use crate::config::App;
     use crate::zip::{self, Entry, Method, tests::SHELL, tests::entry};
+
+    /// Repackages an APK or AAB from its bytes, as `omni-build repackage`
+    /// does.
+    fn repackage(shell: &[u8], app: &App, key: &SigningKey) -> Result<Vec<u8>> {
+        let entries = zip::read(shell).unwrap();
+        let layout = layout(&entries).unwrap();
+        super::repackage(entries, layout, app, key)
+    }
+
+    #[test]
+    fn tells_an_apk_from_an_aab() {
+        let manifest = |shell: &[u8]| layout(&zip::read(shell).unwrap()).unwrap().manifest;
+
+        assert_eq!(manifest(SHELL), "AndroidManifest.xml");
+        assert_eq!(manifest(SHELL_AAB), "base/manifest/AndroidManifest.xml");
+        assert!(layout(&[entry("classes.dex", Method::Deflated, b"dex")]).is_none());
+    }
 
     #[test]
     fn signs_the_shell_with_the_key() {
@@ -319,14 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_what_isnt_an_apk() {
-        let not_zip = repackage(b"not a zip", &App::default(), &KEY).unwrap_err();
-        let no_manifest = repackage(
-            &zip::write(&[entry("classes.dex", Method::Deflated, b"dex")]).bytes,
-            &App::default(),
-            &KEY,
-        )
-        .unwrap_err();
+    fn rejects_an_apk_it_cant_rewrite() {
         let bad_manifest = repackage(
             &zip::write(&[entry("AndroidManifest.xml", Method::Stored, b"<manifest/>")]).bytes,
             &App::default(),
@@ -345,14 +334,6 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(
-            format!("{not_zip:#}"),
-            "the shell isn't an APK or an AAB: it isn't a zip archive"
-        );
-        assert_eq!(
-            no_manifest.to_string(),
-            "the shell isn't an APK or an AAB: it has neither an AndroidManifest.xml nor a BundleConfig.pb"
-        );
         assert_eq!(
             format!("{bad_manifest:#}"),
             "couldn't rewrite the shell's AndroidManifest.xml: it isn't binary XML"
@@ -493,24 +474,6 @@ mod tests {
                 .to_string()
                 .starts_with("couldn't read the payload folder ")
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn reports_a_payload_file_it_cant_read() {
-        let dir = tempfile::tempdir().unwrap();
-        // A link to nothing looks like a file, but can't be read.
-        std::os::unix::fs::symlink(dir.path().join("nowhere"), dir.path().join("payload.txt"))
-            .unwrap();
-        let app = App {
-            payload: Some(dir.path().to_owned()),
-            ..App::default()
-        };
-
-        let error = repackage(SHELL, &app, &KEY).unwrap_err();
-
-        assert!(error.to_string().starts_with("couldn't read "));
-        assert!(error.to_string().ends_with("payload.txt"));
     }
 
     #[test]

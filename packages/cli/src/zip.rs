@@ -32,6 +32,11 @@ const UTF8_NAME: u16 = 1 << 11;
 /// then zeros. A field of its own keeps the padding readable as a
 /// well-formed extra field.
 const ALIGNMENT_FIELD: u16 = 0xd935;
+/// Unix, as the system byte of "version made by" names it. A Unix entry's
+/// external attributes hold the file's mode in their high 16 bits.
+const UNIX: u8 = 3;
+/// A regular file that everyone can read and only its owner can write.
+const FILE_MODE: u32 = 0o100_644;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
@@ -52,12 +57,19 @@ pub struct Entry {
     /// The MS-DOS time and date the entry was last modified.
     pub time: u16,
     pub date: u16,
+    /// The system the entry was made on (the high byte of "version made
+    /// by"), and its file attributes there. They're kept as they were read,
+    /// because on Unix the attributes hold the file's mode, and an iOS
+    /// app's executable won't run without its execute bit.
+    pub system: u8,
+    pub attributes: u32,
 }
 
 impl Entry {
     /// A new entry holding `contents`. It's dated as the Android Gradle
     /// plugin dates every entry, 1981-01-01 01:01:02, so the same files
-    /// make the same archive.
+    /// make the same archive. It's a regular file that everyone can read,
+    /// as Xcode leaves an app's resources.
     pub fn new(name: &str, method: Method, contents: &[u8]) -> Self {
         Self {
             name: name.to_owned(),
@@ -67,6 +79,8 @@ impl Entry {
             data: Vec::new(),
             time: 0x0821,
             date: 0x0221,
+            system: UNIX,
+            attributes: FILE_MODE << 16,
         }
         .with_contents(contents)
     }
@@ -107,6 +121,8 @@ impl Entry {
             data,
             time: self.time,
             date: self.date,
+            system: self.system,
+            attributes: self.attributes,
         }
     }
 }
@@ -137,7 +153,10 @@ pub fn read(archive: &[u8]) -> Result<Vec<Entry>> {
 /// data from its local header.
 fn read_entry(archive: &[u8], central: &mut Reader, index: u16) -> Result<Entry> {
     let signature = central.u32();
-    central.skip(4);
+    // "Version made by" is the zip version, then the system.
+    central.skip(1);
+    let system = central.u8();
+    central.skip(2);
     let flags = central.u16();
     let method = central.u16();
     let time = central.u16();
@@ -148,7 +167,9 @@ fn read_entry(archive: &[u8], central: &mut Reader, index: u16) -> Result<Entry>
     let name_len = usize::from(central.u16());
     let extra_len = usize::from(central.u16());
     let comment_len = usize::from(central.u16());
-    central.skip(8);
+    // The disk number and internal attributes.
+    central.skip(4);
+    let attributes = central.u32();
     let local_offset = offset(central.u32());
     let name = String::from_utf8(central.bytes(name_len).to_vec()).unwrap_or_default();
     central.skip(extra_len + comment_len);
@@ -186,6 +207,8 @@ fn read_entry(archive: &[u8], central: &mut Reader, index: u16) -> Result<Entry>
         data: stored,
         time,
         date,
+        system,
+        attributes,
     })
 }
 
@@ -246,10 +269,11 @@ pub fn write(entries: &[Entry]) -> Written {
 
         central.extend(CENTRAL_HEADER.to_le_bytes());
         // Version made by, then the shared fields. No extra field, comment,
-        // disk number or attributes.
-        central.extend(VERSION.to_le_bytes());
+        // disk number or internal attributes.
+        central.extend((u16::from(entry.system) << 8 | VERSION).to_le_bytes());
         central.extend(&fields);
-        central.extend([0; 12]);
+        central.extend([0; 8]);
+        central.extend(entry.attributes.to_le_bytes());
         central.extend(u32_of(local_offset).to_le_bytes());
         central.extend(name);
     }
@@ -313,6 +337,8 @@ pub mod tests {
             data: data.to_vec(),
             time: 0x0821,
             date: 0x0221,
+            system: 0,
+            attributes: 0,
         }
     }
 
@@ -348,6 +374,13 @@ pub mod tests {
         assert_eq!(manifest.method, Method::Deflated);
         assert_eq!((manifest.size, manifest.data.len()), (1976, 720));
         assert_eq!((manifest.time, manifest.date), (0x0821, 0x0221));
+        // Gradle makes some entries as Unix files, with a mode, and others
+        // as MS-DOS ones.
+        assert_eq!(
+            (entries[1].system, entries[1].attributes),
+            (3, 0o100_644 << 16)
+        );
+        assert_eq!(manifest.system, 0);
     }
 
     #[test]
@@ -408,13 +441,30 @@ pub mod tests {
     }
 
     #[test]
-    fn makes_new_entries_dated_as_the_shells_are() {
+    fn makes_new_entries_as_the_shells_are() {
         let shell = &read(SHELL).unwrap()[1];
 
         let new = Entry::new("assets/payload.txt", Method::Deflated, b"payload");
 
         assert_eq!(new.contents().unwrap(), b"payload");
         assert_eq!((new.time, new.date), (shell.time, shell.date));
+        assert_eq!(
+            (new.system, new.attributes),
+            (shell.system, shell.attributes)
+        );
+    }
+
+    #[test]
+    fn keeps_the_system_and_attributes_of_each_entry() {
+        let mut executable = entry("Shell.app/Shell", Method::Stored, b"\xcf\xfa\xed\xfe");
+        (executable.system, executable.attributes) = (3, 0o100_755 << 16);
+        let mut folder = entry("Shell.app/", Method::Stored, b"");
+        // MS-DOS's directory attribute.
+        folder.attributes = 0x10;
+
+        let entries = read(&write(&[executable.clone(), folder.clone()]).bytes).unwrap();
+
+        assert_eq!(entries, [executable, folder]);
     }
 
     #[test]

@@ -10,7 +10,7 @@ OmniBuild builds, signs, installs and ships iOS and Android apps with no native 
 
 :::warning[Phase 0]
 
-OmniBuild is in its first phase, the spikes. `omni-build repackage` gives an Android APK or app bundle (AAB) shell an app's ID, name, version, build number, icon and payload, and signs it. The npm package isn't published. These pages describe the design in [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1), and will turn into a manual as each phase lands.
+OmniBuild is in its first phase, the spikes. `omni-build repackage` gives an Android APK or app bundle (AAB) shell an app's ID, name, version, build number, icon and payload, and signs it. It gives an iOS shell built for the Simulator the same values but the icon, and doesn't sign it yet. The npm package isn't published. These pages describe the design in [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1), and will turn into a manual as each phase lands.
 
 :::
 

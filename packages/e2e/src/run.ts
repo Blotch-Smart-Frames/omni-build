@@ -188,7 +188,6 @@ export const run = async (
     for (const shell of shells) {
       const app = await repackage({
         ...artifacts,
-        platform: platformId,
         shell,
         outDir,
       });

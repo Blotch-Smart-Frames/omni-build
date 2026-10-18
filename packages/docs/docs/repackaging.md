@@ -1,22 +1,23 @@
 ---
 title: Repackaging an app
-description: Turn an Android app shell, an APK or an app bundle, into your app with omni-build repackage, and what the app config changes.
+description: Turn an app shell, an Android APK or app bundle or an iOS app for the Simulator, into your app with omni-build repackage, and what the app config changes.
 ---
 
 # Repackaging an app
 
 :::warning[Phase 0]
 
-Only Android shells so far, APKs and app bundles, signed with a debug key. OmniBuild isn't published yet: build the binary from the [repository](https://github.com/Blotch-Smart-Frames/omni-build) with `cargo build --release`.
+Android shells, APKs and app bundles, signed with a debug key. iOS shells only when they're built for the iOS Simulator, and without the icon or a signature yet. OmniBuild isn't published yet: build the binary from the [repository](https://github.com/Blotch-Smart-Frames/omni-build) with `cargo build --release`.
 
 :::
 
 ```sh
 omni-build repackage shell.apk --config app.json --out app.apk
 omni-build repackage shell.aab --config app.json --out app.aab
+omni-build repackage shell.zip --config app.json --out app.zip   # a zipped iOS .app
 ```
 
-`repackage` reads a prebuilt app shell, gives it your app's values, and signs it. The shell is an APK, which installs on a device, or an Android App Bundle (AAB), which you upload to Google Play; OmniBuild tells which from its contents. Nothing else is installed or run: no JDK, no Android SDK, no Gradle.
+`repackage` reads a prebuilt app shell, gives it your app's values, and signs it. The shell is an APK, which installs on a device, an Android App Bundle (AAB), which you upload to Google Play, or a zipped iOS app (`.app`); OmniBuild tells which from its contents, and writes the app in the same form. Nothing else is installed or run: no JDK, no Android SDK, no Gradle, no Xcode.
 
 ## The app config
 
@@ -31,23 +32,39 @@ omni-build repackage shell.aab --config app.json --out app.aab
 }
 ```
 
-| Field     | What it changes in the shell                                                                                                                                                                                                    |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`      | The manifest's `package`, and what the Android Gradle plugin derives from the application ID: content provider authorities and the permissions the app declares for itself, so two apps from one shell don't clash on a device. |
-| `name`    | The application's label, the name under the icon: in `resources.arsc`, in every language, when the label is a string resource, or in the manifest when it's text there.                                                         |
-| `version` | `android:versionName`, the version people see.                                                                                                                                                                                  |
-| `build`   | `android:versionCode`, which Google Play compares between uploads: from 1 to 2,100,000,000.                                                                                                                                     |
-| `icon`    | A square PNG, resized to each size the shell has its icon in, for the icon and the round icon.                                                                                                                                  |
-| `payload` | A folder whose files go in the app's `assets/`, such as a Lynx bundle, replacing the shell's own files of the same name. Hidden files (`.DS_Store`) are left out.                                                               |
+| Field     | Android                                                                                                                                                                                                                         | iOS, in `Info.plist`                                                                                                                                |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`      | The manifest's `package`, and what the Android Gradle plugin derives from the application ID: content provider authorities and the permissions the app declares for itself, so two apps from one shell don't clash on a device. | `CFBundleIdentifier`: letters, digits, hyphens and dots.                                                                                            |
+| `name`    | The application's label, the name under the icon: in `resources.arsc`, in every language, when the label is a string resource, or in the manifest when it's text there.                                                         | `CFBundleDisplayName`, the name under the icon.                                                                                                     |
+| `version` | `android:versionName`, the version people see.                                                                                                                                                                                  | `CFBundleShortVersionString`, the version people see: one to three numbers separated by dots, as the App Store requires.                            |
+| `build`   | `android:versionCode`, which Google Play compares between uploads: from 1 to 2,100,000,000.                                                                                                                                     | `CFBundleVersion`, which App Store Connect compares between uploads.                                                                                |
+| `icon`    | A square PNG, resized to each size the shell has its icon in, for the icon and the round icon.                                                                                                                                  | Not yet: the app keeps the shell's icon, with a warning. iOS reads it from a compiled asset catalog, `Assets.car`, which OmniBuild can't write yet. |
+| `payload` | Its files go in the app's `assets/`.                                                                                                                                                                                            | Its files go in the `.app`, beside `Info.plist`, where `Bundle.main` finds them.                                                                    |
 
-Paths are relative to the config file. A field you leave out keeps the shell's value, and a field OmniBuild doesn't know is an error, so a typo doesn't pass unnoticed.
+The payload is a folder of files the app reads at run time, such as a Lynx bundle. Its files replace the shell's own files of the same name, and hidden files (`.DS_Store`) are left out.
+
+Paths are relative to the config file. A field you leave out keeps the shell's value, and a field OmniBuild doesn't know is an error, so a typo doesn't pass unnoticed. On iOS, every other key in `Info.plist` stays as Xcode wrote it, the `DT*` keys among them: they record the Xcode and SDK that built the shell, which App Store validation checks.
 
 ## Signing
 
 An APK is signed with APK Signature Schemes v2 and v3, which Android 7.0 and later verify. An app bundle gets a JAR signature, which is how Google Play checks an upload before it signs the APKs it makes from the bundle with the app's own key. With no key given, OmniBuild uses a debug key it creates the first time, in `~/.omni-build/android-debug-key.pem`, the way the Android SDK keeps its own in `~/.android`. APKs signed with it install on devices and emulators. Signing with your own upload key, for Google Play, comes with [Phase 2](./roadmap.md).
 
+iOS apps aren't signed yet. Changing an app's files breaks the signature Xcode gave the shell, which the iOS Simulator doesn't check but a device does, so OmniBuild only repackages Simulator builds for now. To run one, unzip it and install the `.app`:
+
+```sh
+ditto -x -k app.zip app && xcrun simctl install booted app/*.app
+```
+
 ## What a shell needs
+
+On Android:
 
 - A `minSdkVersion` of 24 (Android 7.0) or later. Earlier versions need a v1 signature, which OmniBuild doesn't write.
 - An application label and icon in its manifest, with the icon as PNGs. Adaptive icons aren't supported yet.
 - No label of its own on the launcher activity, which would show instead of the app's name.
+
+On iOS:
+
+- A build for the iOS Simulator: `iPhoneSimulator` in its `Info.plist`'s `CFBundleSupportedPlatforms`.
+- The `.app` zipped with its files' modes, so that its executable can still run: `ditto -c -k --keepParent Shell.app shell.zip` keeps them.
+- No localized display name (`CFBundleDisplayName` in an `InfoPlist.strings`), which would show instead of the app's name.

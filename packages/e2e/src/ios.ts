@@ -253,7 +253,8 @@ export const ios: Platform<string, string> = {
   name: 'iOS',
   toolchain: 'Xcode',
   build,
-  // Nothing yet: the shell is copied, still signed as Xcode built it.
+  // Nothing yet: omni-build doesn't sign iOS apps, and the Simulator runs
+  // them with the shell's signature, which no longer matches their files.
   verify: async () => ({}),
   // Booting is the slowest part, so it starts first and goes on while the
   // other stages work.

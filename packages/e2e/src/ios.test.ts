@@ -376,7 +376,7 @@ describe('runApp', () => {
 });
 
 describe('verify', () => {
-  it('checks nothing yet: the shell is still signed as Xcode built it', async () => {
+  it("checks nothing yet: omni-build doesn't sign iOS apps", async () => {
     expect(await ios.verify({ ...artifacts, app: 'app.zip' })).toEqual({});
   });
 });

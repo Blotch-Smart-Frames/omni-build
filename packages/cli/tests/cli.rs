@@ -7,6 +7,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 const SHELL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/shell.apk");
+const SHELL_APP: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/shell.app.zip");
 
 fn omni_build(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_omni-build"))
@@ -108,11 +109,58 @@ fn repackage_gives_the_shell_the_apps_values() {
 }
 
 #[test]
+fn repackage_gives_an_ios_app_its_values_but_not_yet_its_icon() {
+    let home = tempfile::tempdir().unwrap();
+    let config = home.path().join("app.json");
+    fs::write(
+        &config,
+        r#"{ "id": "dev.example.app", "version": "2.5.0", "build": 42, "icon": "icon.png" }"#,
+    )
+    .unwrap();
+    let app = home.path().join("app.zip");
+
+    let output = omni_build_at_home(
+        home.path(),
+        &[
+            "repackage",
+            SHELL_APP,
+            "--config",
+            config.to_str().unwrap(),
+            "--out",
+            app.to_str().unwrap(),
+        ],
+    );
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        stderr(&output),
+        "warning: the app keeps the shell's icon: OmniBuild can't write an iOS app's asset catalog (Assets.car) yet\n"
+    );
+    // Info.plist is compressed, so this checks it changed at all; the unit
+    // tests check what it says.
+    assert_ne!(fs::read(app).unwrap(), fs::read(SHELL_APP).unwrap());
+    // iOS apps aren't signed with the Android debug key.
+    assert!(!home.path().join(".omni-build").exists());
+}
+
+#[test]
 fn repackage_reports_what_went_wrong() {
     let home = tempfile::tempdir().unwrap();
     let not_apk = home.path().join("not.apk");
     fs::write(&not_apk, "not a zip").unwrap();
+    // An empty zip archive, only its end record: neither platform's app.
+    let empty_zip = home.path().join("empty.zip");
+    fs::write(
+        &empty_zip,
+        b"PK\x05\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+    )
+    .unwrap();
     let nowhere = home.path().join("missing/app.apk");
+    // An ID neither platform takes: Android's need two parts, and iOS's
+    // can't have underscores.
+    let bad_id = home.path().join("bad-id.json");
+    fs::write(&bad_id, r#"{ "id": "my_app" }"#).unwrap();
+    let bad_id = bad_id.to_str().unwrap();
     let cases = [
         (
             vec!["repackage", "missing.apk", "--out", "app.apk"],
@@ -120,7 +168,11 @@ fn repackage_reports_what_went_wrong() {
         ),
         (
             vec!["repackage", not_apk.to_str().unwrap(), "--out", "app.apk"],
-            "error: the shell isn't an APK or an AAB: it isn't a zip archive\n",
+            "error: the shell isn't an APK, an AAB or an iOS app: it isn't a zip archive\n",
+        ),
+        (
+            vec!["repackage", empty_zip.to_str().unwrap(), "--out", "app.apk"],
+            "error: the shell isn't an APK, an AAB or an iOS app: it has no AndroidManifest.xml or BundleConfig.pb, and no .app with an Info.plist\n",
         ),
         (
             vec!["repackage", SHELL, "--out", nowhere.to_str().unwrap()],
@@ -136,6 +188,21 @@ fn repackage_reports_what_went_wrong() {
                 "app.apk",
             ],
             "error: couldn't read the app config missing.json: ",
+        ),
+        (
+            vec!["repackage", SHELL, "--config", bad_id, "--out", "app.apk"],
+            "error: couldn't rewrite the shell's AndroidManifest.xml: \"my_app\" isn't a valid Android application ID: ",
+        ),
+        (
+            vec![
+                "repackage",
+                SHELL_APP,
+                "--config",
+                bad_id,
+                "--out",
+                "app.zip",
+            ],
+            "error: couldn't rewrite the shell's OmniBuildShell.app/Info.plist: \"my_app\" isn't a valid iOS bundle ID: ",
         ),
     ];
 

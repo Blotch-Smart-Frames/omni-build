@@ -15,16 +15,19 @@ pub struct App {
     pub id: Option<String>,
     /// The name under the app's icon.
     pub name: Option<String>,
-    /// The version people see: `versionName` on Android.
+    /// The version people see: `versionName` on Android,
+    /// `CFBundleShortVersionString` on iOS.
     pub version: Option<String>,
-    /// The build number stores compare: `versionCode` on Android.
+    /// The build number stores compare: `versionCode` on Android,
+    /// `CFBundleVersion` on iOS.
     pub build: Option<u32>,
     /// The app's icon: a square PNG, which OmniBuild resizes to each size
-    /// the shell has its icon in.
+    /// the shell has its icon in. Android only, so far: an iOS app keeps
+    /// the shell's.
     pub icon: Option<PathBuf>,
     /// A folder of files the app reads at run time, such as its Lynx
-    /// bundle: they go in the APK's `assets/`, replacing the shell's files
-    /// of the same name.
+    /// bundle: they go in the APK's `assets/`, or in the iOS app's bundle,
+    /// replacing the shell's files of the same name.
     pub payload: Option<PathBuf>,
 }
 

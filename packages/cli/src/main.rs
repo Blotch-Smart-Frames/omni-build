@@ -3,17 +3,23 @@
 mod android;
 mod bytes;
 mod config;
+mod ios;
+mod payload;
 mod zip;
 
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 
 use android::key::{SigningKey, debug_key_path};
 use config::App;
+
+/// How the error for a file that's none of the shells OmniBuild knows
+/// starts.
+const NOT_A_SHELL: &str = "the shell isn't an APK, an AAB or an iOS app";
 
 /// Build, sign, install and ship iOS and Android apps with no native toolchain.
 #[derive(Debug, Parser)]
@@ -31,15 +37,17 @@ enum Command {
 /// Turn a prebuilt app shell into an app, and sign it.
 #[derive(Debug, Args)]
 struct Repackage {
-    /// The app shell: an Android APK or App Bundle (AAB).
+    /// The app shell: an Android APK or App Bundle (AAB), or a zipped iOS
+    /// app (`.app`) built for the iOS Simulator.
     shell: PathBuf,
-    /// Where to write the app.
+    /// Where to write the app: an APK, an AAB or a zipped `.app`, as the
+    /// shell is.
     #[arg(long, short)]
     out: PathBuf,
     /// The app config, a JSON file: the app's `id`, `name`, `version`,
-    /// `build` number, `icon` (a square PNG) and `payload` (a folder of
-    /// files for the app's assets). What it leaves out stays as the shell
-    /// has it.
+    /// `build` number, `icon` (a square PNG; Android only, so far) and
+    /// `payload` (a folder of files for the app's assets). What it leaves
+    /// out stays as the shell has it.
     #[arg(long, short)]
     config: Option<PathBuf>,
 }
@@ -67,17 +75,37 @@ fn repackage(args: &Repackage) -> Result<()> {
         Some(path) => App::read(path)?,
         None => App::default(),
     };
-    let key_path = debug_key_path();
-    let (key, created) = SigningKey::debug(&key_path)?;
+    let entries = zip::read(&shell).context(NOT_A_SHELL)?;
+    let repackaged = if let Some(bundle) = ios::bundle(&entries) {
+        if app.icon.is_some() {
+            eprintln!(
+                "warning: the app keeps the shell's icon: OmniBuild can't write an iOS app's asset catalog (Assets.car) yet"
+            );
+        }
+        ios::repackage(entries, &bundle, &app)?
+    } else if let Some(layout) = android::layout(&entries) {
+        android::repackage(entries, layout, &app, &android_debug_key()?)?
+    } else {
+        bail!(
+            "{NOT_A_SHELL}: it has no AndroidManifest.xml or BundleConfig.pb, and no .app with an Info.plist"
+        );
+    };
+    fs::write(&args.out, repackaged)
+        .with_context(|| format!("couldn't write the app to {}", args.out.display()))
+}
+
+/// The key OmniBuild signs Android apps with when it's given none, which
+/// it creates the first time.
+fn android_debug_key() -> Result<SigningKey> {
+    let path = debug_key_path();
+    let (key, created) = SigningKey::debug(&path)?;
     if created {
         eprintln!(
             "Created a debug key for signing Android apps: {}",
-            key_path.display()
+            path.display()
         );
     }
-    let apk = android::repackage(&shell, &app, &key)?;
-    fs::write(&args.out, apk)
-        .with_context(|| format!("couldn't write the app to {}", args.out.display()))
+    Ok(key)
 }
 
 #[cfg(test)]
