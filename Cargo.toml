@@ -24,3 +24,8 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 # Lowest priority so a crate can still override a single pedantic lint.
 pedantic = { level = "warn", priority = -1 }
+
+# RSA key generation runs its prime search in num-bigint-dig, which takes
+# tens of seconds unoptimised. Tests and debug builds generate keys too.
+[profile.dev.package.num-bigint-dig]
+opt-level = 3

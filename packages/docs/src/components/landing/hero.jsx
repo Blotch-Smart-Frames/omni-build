@@ -268,7 +268,7 @@ const Hero = () => {
           {/* First, so it's read before the run: a demonstration must never
               pass for a release. */}
           <p className={styles.notice}>
-            Demonstration: OmniBuild has no repackaging command yet.
+            Demonstration: OmniBuild can only sign an Android shell so far.
           </p>
           <PixelTransition
             className={styles.phone}

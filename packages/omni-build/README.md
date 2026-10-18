@@ -2,7 +2,7 @@
 
 Build, sign, install and ship iOS and Android apps with no native toolchain: no Xcode, no JDK, no Android SDK.
 
-**Status:** planning, and not published yet. See the plan in [#1](https://github.com/Blotch-Smart-Frames/omni-build/issues/1).
+**Status:** Phase 0 of [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1), and not published yet.
 
 ```sh
 npm install --save-dev omni-build

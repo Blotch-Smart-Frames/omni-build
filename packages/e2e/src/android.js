@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
@@ -48,6 +49,42 @@ const androidSdk = () => {
 
 const adb = (args, options) =>
   run(path.join(androidSdk(), 'platform-tools/adb'), args, options);
+
+/** The newest build tools in the SDK, where apksigner and zipalign are. */
+const buildTools = () => {
+  const dir = path.join(androidSdk(), 'build-tools');
+  const [newest] = (existsSync(dir) ? readdirSync(dir) : []).toSorted((a, b) =>
+    b.localeCompare(a, 'en', { numeric: true }),
+  );
+  if (!newest) {
+    throw new Error(
+      `No build tools in ${dir}. Install them with \`sdkmanager 'build-tools;36.0.0'\`.`,
+    );
+  }
+  return path.join(dir, newest);
+};
+
+/**
+ * Checks an APK with the Android SDK's own tools, which OmniBuild's users
+ * never need, as Google Play would: every stored entry aligned for the
+ * device to map it (zipalign), and every signature valid (apksigner, which
+ * needs Java). Returns the name on the signing certificate.
+ */
+const verify = async ({ app, log }) => {
+  await run(path.join(buildTools(), 'zipalign'), ['-c', '-P', '16', '4', app], {
+    log,
+  });
+  const verified = await run(
+    path.join(buildTools(), 'apksigner'),
+    ['verify', '--verbose', '--print-certs', app],
+    { log },
+  );
+  // The first signer's line: "Signer #1 certificate DN: ..." up to build
+  // tools 36, "V3.0 Signer: certificate DN: ..." from 37.
+  return {
+    signer: verified.stdout.match(/^.*Signer\b.*certificate DN: (.*)$/m)?.[1],
+  };
+};
 
 /**
  * Builds the shell's release APK with Gradle, copies it into `outDir`, and
@@ -251,6 +288,7 @@ export const android = {
   name: 'Android',
   toolchain: 'Gradle',
   build,
+  verify,
   startDevice,
   waitForDevice,
   runApp,

@@ -57,24 +57,34 @@ const omniBuildBinary = () => {
 };
 
 /**
- * What every app must report after the repackage stage: for now the shell's
- * own values, since repackage() passes the shell through unchanged. They
- * become an app's own values when omni-build repackages the shell with them.
+ * The platforms whose shells omni-build repackages. It can't repackage an
+ * iOS shell until Phase 0's iOS spike (#1), so the stage copies those.
  */
-export const EXPECTED = SHELL;
+const REPACKAGED = new Set(['android']);
+
+/**
+ * What each platform's apps must report after the repackage stage, and
+ * what signed them. The values are the shell's own until omni-build gives
+ * the app its own.
+ *
+ * @param {string} platform `ios` or `android`.
+ */
+export const expected = (platform) =>
+  platform === 'android'
+    ? // The debug key omni-build creates and signs with when it's given
+      // no key: only it could have signed the app with this.
+      { ...SHELL, signer: 'CN=OmniBuild Debug, O=OmniBuild' }
+    : SHELL;
 
 /**
  * The repackage stage: what OmniBuild users do, on any OS, with nothing but
  * the omni-build binary. Writes the result into `outDir`, named for the OS
  * it ran on, and returns its path.
  *
- * omni-build has no repackaging command yet, so for now this only checks
- * that the binary runs in the toolchain-free environment, and copies the
- * shell. Phase 0's first command (#1) replaces the copy.
+ * For a platform omni-build can't repackage yet, this only checks that the
+ * binary runs in the toolchain-free environment, and copies the shell.
  */
-export const repackage = async ({ shell, outDir, log }) => {
-  await run(omniBuildBinary(), ['--version'], { log, env: toolchainFree() });
-
+export const repackage = async ({ platform, shell, outDir, log }) => {
   mkdirSync(outDir, { recursive: true });
   const extension = path.extname(shell);
   // CI repackages on three OSes and tests every result, so the name says
@@ -83,6 +93,14 @@ export const repackage = async ({ shell, outDir, log }) => {
     outDir,
     `${path.basename(shell, extension)}-${OS_NAMES[process.platform] ?? process.platform}${extension}`,
   );
-  copyFileSync(shell, output);
+  if (REPACKAGED.has(platform)) {
+    await run(omniBuildBinary(), ['repackage', shell, '--out', output], {
+      log,
+      env: toolchainFree(),
+    });
+  } else {
+    await run(omniBuildBinary(), ['--version'], { log, env: toolchainFree() });
+    copyFileSync(shell, output);
+  }
   return output;
 };

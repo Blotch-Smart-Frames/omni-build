@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 import { android } from './android.js';
 import { ios } from './ios.js';
 import { step } from './process.js';
-import { EXPECTED, repackage } from './repackage.js';
+import { expected, repackage } from './repackage.js';
 import { differences } from './shell.js';
 
 const PACKAGE_DIR = fileURLToPath(new URL('..', import.meta.url));
@@ -109,7 +109,12 @@ const buildStage = async (outDir) => {
 
 const repackageStage = async (shell, outDir) => {
   step('Repackaging it with omni-build, with no toolchain in reach');
-  const app = await repackage({ ...artifactsFor('repackage'), shell, outDir });
+  const app = await repackage({
+    ...artifactsFor('repackage'),
+    platform: values.platform,
+    shell,
+    outDir,
+  });
   console.log(app);
   return app;
 };
@@ -121,6 +126,7 @@ const repackageStage = async (shell, outDir) => {
 const testStage = async (appFiles, artifacts, started) => {
   step(`Running ${appFiles.length} app(s) on ${platform.name}`);
   const options = { ...artifacts, avd: values.avd };
+  const want = expected(values.platform);
   const device = await platform.waitForDevice(started, options);
   const failures = [];
   try {
@@ -129,18 +135,24 @@ const testStage = async (appFiles, artifacts, started) => {
       const artifactsDir = path.join(artifacts.artifactsDir, name);
       mkdirSync(artifactsDir);
       try {
-        const report = await platform.runApp({
-          ...options,
-          artifactsDir,
-          device,
-          app,
-          appId: EXPECTED.id,
-        });
+        // The platform's own tools check the package before it's
+        // installed, and report what signed it.
+        const verified = await platform.verify({ ...options, app });
+        const report = {
+          ...(await platform.runApp({
+            ...options,
+            artifactsDir,
+            device,
+            app,
+            appId: want.id,
+          })),
+          ...verified,
+        };
         writeFileSync(
           path.join(artifactsDir, 'report.json'),
           `${JSON.stringify(report, undefined, 2)}\n`,
         );
-        const problems = differences(EXPECTED, report);
+        const problems = differences(want, report);
         if (problems.length > 0) {
           throw new Error(
             `it didn't report what it was built with:\n  ${problems.join('\n  ')}`,
