@@ -79,6 +79,35 @@ fn repackage_signs_the_shell_with_a_debug_key_it_creates_once() {
 }
 
 #[test]
+fn repackage_gives_the_shell_the_apps_values() {
+    let home = tempfile::tempdir().unwrap();
+    let config = home.path().join("app.json");
+    fs::write(
+        &config,
+        r#"{ "id": "dev.example.app", "version": "2.5.0", "build": 42 }"#,
+    )
+    .unwrap();
+    let app = home.path().join("app.apk");
+
+    let output = omni_build_at_home(
+        home.path(),
+        &[
+            "repackage",
+            SHELL,
+            "--config",
+            config.to_str().unwrap(),
+            "--out",
+            app.to_str().unwrap(),
+        ],
+    );
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    // The manifest is compressed, so this checks it changed at all; the unit
+    // tests check what it says.
+    assert_ne!(fs::read(app).unwrap().len(), fs::read(SHELL).unwrap().len());
+}
+
+#[test]
 fn repackage_reports_what_went_wrong() {
     let home = tempfile::tempdir().unwrap();
     let not_apk = home.path().join("not.apk");
@@ -96,6 +125,17 @@ fn repackage_reports_what_went_wrong() {
         (
             vec!["repackage", SHELL, "--out", nowhere.to_str().unwrap()],
             "error: couldn't write the app to ",
+        ),
+        (
+            vec![
+                "repackage",
+                SHELL,
+                "--config",
+                "missing.json",
+                "--out",
+                "app.apk",
+            ],
+            "error: couldn't read the app config missing.json: ",
         ),
     ];
 

@@ -44,6 +44,10 @@ impl<'a> Reader<'a> {
         self.bytes(N).try_into().unwrap_or([0; N])
     }
 
+    pub fn u8(&mut self) -> u8 {
+        u8::from_le_bytes(self.array())
+    }
+
     pub fn u16(&mut self) -> u16 {
         u16::from_le_bytes(self.array())
     }
@@ -64,10 +68,11 @@ mod tests {
 
     #[test]
     fn reads_little_endian_integers_in_order() {
-        let mut reader = Reader::at(&[0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06], 1);
+        let mut reader = Reader::at(&[0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07], 1);
 
-        assert_eq!(reader.u16(), 0x0201);
-        assert_eq!(reader.u32(), 0x0605_0403);
+        assert_eq!(reader.u8(), 0x01);
+        assert_eq!(reader.u16(), 0x0302);
+        assert_eq!(reader.u32(), 0x0706_0504);
         assert!(!reader.overrun());
     }
 

@@ -7,9 +7,13 @@
 //! writer reports where that is.
 
 use std::ffi::OsStr;
+use std::io::{Read, Write};
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
+use flate2::Compression;
+use flate2::read::DeflateDecoder;
+use flate2::write::DeflateEncoder;
 
 use crate::bytes::Reader;
 
@@ -48,6 +52,47 @@ pub struct Entry {
     /// The MS-DOS time and date the entry was last modified.
     pub time: u16,
     pub date: u16,
+}
+
+impl Entry {
+    /// The entry's contents, decompressed.
+    pub fn contents(&self) -> Result<Vec<u8>> {
+        match self.method {
+            Method::Stored => Ok(self.data.clone()),
+            Method::Deflated => {
+                let mut contents = Vec::new();
+                DeflateDecoder::new(&self.data[..])
+                    .read_to_end(&mut contents)
+                    .with_context(|| format!("{} is corrupt", self.name))?;
+                Ok(contents)
+            }
+        }
+    }
+
+    /// The entry with other contents, compressed as it was.
+    pub fn with_contents(&self, contents: &[u8]) -> Self {
+        let data = match self.method {
+            Method::Stored => contents.to_vec(),
+            Method::Deflated => {
+                let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+                encoder
+                    .write_all(contents)
+                    .expect("compressing into memory can't fail");
+                encoder
+                    .finish()
+                    .expect("compressing into memory can't fail")
+            }
+        };
+        Self {
+            name: self.name.clone(),
+            method: self.method,
+            crc32: crc32fast::hash(contents),
+            size: u32_of(contents.len()),
+            data,
+            time: self.time,
+            date: self.date,
+        }
+    }
 }
 
 /// Reads every entry of a zip archive. Only what APKs and AABs use is
@@ -320,6 +365,40 @@ pub mod tests {
         assert_eq!(data_offset(&archive, b"table") % 4, 0);
         assert_eq!(data_offset(&archive, b"\x7fELF library") % 16384, 0);
         assert_eq!(read(&archive).unwrap(), entries);
+    }
+
+    #[test]
+    fn decompresses_and_recompresses_entries() {
+        let entries = read(SHELL).unwrap();
+        let manifest = &entries[2];
+        let contents = manifest.contents().unwrap();
+
+        let rewritten = manifest.with_contents(b"other contents");
+        let stored = entries[4].with_contents(b"table");
+
+        assert_eq!(contents.len(), 1976);
+        assert_eq!(&contents[..4], b"\x03\x00\x08\x00");
+        assert_eq!(
+            manifest.with_contents(&contents).contents().unwrap(),
+            contents
+        );
+        assert_eq!(rewritten.contents().unwrap(), b"other contents");
+        assert_eq!(rewritten.crc32, crc32(b"other contents"));
+        assert_eq!((rewritten.size, rewritten.time), (14, manifest.time));
+        assert_eq!(
+            (stored.method, stored.data.as_slice()),
+            (Method::Stored, &b"table"[..])
+        );
+    }
+
+    #[test]
+    fn reports_a_corrupt_deflated_entry() {
+        let corrupt = entry("AndroidManifest.xml", Method::Deflated, &[0xff; 8]);
+
+        assert_eq!(
+            corrupt.contents().unwrap_err().to_string(),
+            "AndroidManifest.xml is corrupt"
+        );
     }
 
     #[test]
