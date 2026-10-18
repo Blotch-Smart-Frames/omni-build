@@ -79,8 +79,10 @@ const verify = async ({ app, log }) => {
     ['verify', '--verbose', '--print-certs', app],
     { log },
   );
+  // The first signer's line: "Signer #1 certificate DN: ..." up to build
+  // tools 36, "V3.0 Signer: certificate DN: ..." from 37.
   return {
-    signer: verified.stdout.match(/^Signer #1 certificate DN: (.*)$/m)?.[1],
+    signer: verified.stdout.match(/^.*Signer\b.*certificate DN: (.*)$/m)?.[1],
   };
 };
 
