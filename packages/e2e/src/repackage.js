@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -6,6 +6,12 @@ import { run } from './process.js';
 import { SHELL } from './shell.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
+/**
+ * The app the tests make from each shell. Each of its values differs from
+ * the shell's, so an app that reports them got them from omni-build.
+ */
+const APP_CONFIG = fileURLToPath(new URL('../app/app.json', import.meta.url));
+const APP = JSON.parse(readFileSync(APP_CONFIG, 'utf8'));
 
 /** The OS a repackaged app's file name says it was repackaged on. */
 const OS_NAMES = { darwin: 'macos', linux: 'linux', win32: 'windows' };
@@ -64,16 +70,22 @@ const REPACKAGED = new Set(['android']);
 
 /**
  * What each platform's apps must report after the repackage stage, and
- * what signed them. The values are the shell's own until omni-build gives
- * the app its own.
+ * what signed them: the app config's values where omni-build rewrites
+ * them, and the shell's own elsewhere.
  *
  * @param {string} platform `ios` or `android`.
  */
 export const expected = (platform) =>
   platform === 'android'
-    ? // The debug key omni-build creates and signs with when it's given
-      // no key: only it could have signed the app with this.
-      { ...SHELL, signer: 'CN=OmniBuild Debug, O=OmniBuild' }
+    ? {
+        ...SHELL,
+        id: APP.id,
+        version: APP.version,
+        build: String(APP.build),
+        // The debug key omni-build creates and signs with when it's given
+        // no key: only it could have signed the app with this.
+        signer: 'CN=OmniBuild Debug, O=OmniBuild',
+      }
     : SHELL;
 
 /**
@@ -94,10 +106,11 @@ export const repackage = async ({ platform, shell, outDir, log }) => {
     `${path.basename(shell, extension)}-${OS_NAMES[process.platform] ?? process.platform}${extension}`,
   );
   if (REPACKAGED.has(platform)) {
-    await run(omniBuildBinary(), ['repackage', shell, '--out', output], {
-      log,
-      env: toolchainFree(),
-    });
+    await run(
+      omniBuildBinary(),
+      ['repackage', shell, '--config', APP_CONFIG, '--out', output],
+      { log, env: toolchainFree() },
+    );
   } else {
     await run(omniBuildBinary(), ['--version'], { log, env: toolchainFree() });
     copyFileSync(shell, output);

@@ -2,6 +2,7 @@
 
 mod android;
 mod bytes;
+mod config;
 mod zip;
 
 use std::fs;
@@ -12,6 +13,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 use android::key::{SigningKey, debug_key_path};
+use config::App;
 
 /// Build, sign, install and ship iOS and Android apps with no native toolchain.
 #[derive(Debug, Parser)]
@@ -34,6 +36,10 @@ struct Repackage {
     /// Where to write the app.
     #[arg(long, short)]
     out: PathBuf,
+    /// The app config, a JSON file: the app's `id`, `version` and `build`
+    /// number. What it leaves out stays as the shell has it.
+    #[arg(long, short)]
+    config: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -55,6 +61,10 @@ fn run(cli: Cli) -> Result<()> {
 fn repackage(args: &Repackage) -> Result<()> {
     let shell = fs::read(&args.shell)
         .with_context(|| format!("couldn't read the shell {}", args.shell.display()))?;
+    let app = match &args.config {
+        Some(path) => App::read(path)?,
+        None => App::default(),
+    };
     let key_path = debug_key_path();
     let (key, created) = SigningKey::debug(&key_path)?;
     if created {
@@ -63,8 +73,8 @@ fn repackage(args: &Repackage) -> Result<()> {
             key_path.display()
         );
     }
-    let app = android::repackage(&shell, &key)?;
-    fs::write(&args.out, app)
+    let apk = android::repackage(&shell, &app, &key)?;
+    fs::write(&args.out, apk)
         .with_context(|| format!("couldn't write the app to {}", args.out.display()))
 }
 

@@ -1,21 +1,32 @@
 //! Repackaging Android app shells.
 
 pub mod key;
+mod manifest;
 mod signing;
+mod string_pool;
 
 use anyhow::{Context, Result, bail};
 
+use crate::config::App;
 use crate::zip;
 use key::SigningKey;
 
-/// Repackages an APK shell and signs it with `key`.
-pub fn repackage(shell: &[u8], key: &SigningKey) -> Result<Vec<u8>> {
-    let entries = zip::read(shell).context("the shell isn't an APK")?;
-    if !entries
-        .iter()
-        .any(|entry| entry.name == "AndroidManifest.xml")
-    {
+/// Repackages an APK shell into the app `app` describes, and signs it with
+/// `key`.
+pub fn repackage(shell: &[u8], app: &App, key: &SigningKey) -> Result<Vec<u8>> {
+    let mut entries = zip::read(shell).context("the shell isn't an APK")?;
+    let Some(manifest) = entries
+        .iter_mut()
+        .find(|entry| entry.name == "AndroidManifest.xml")
+    else {
         bail!("the shell isn't an APK: it has no AndroidManifest.xml");
+    };
+    let contents = manifest.contents()?;
+    let rewritten = manifest::rewrite(&contents, app)
+        .context("couldn't rewrite the shell's AndroidManifest.xml")?;
+    // Left as it was when nothing changed, rather than compressed again.
+    if rewritten != contents {
+        *manifest = manifest.with_contents(&rewritten);
     }
     // The shell's own v1 signature, if it has one, describes the shell's
     // contents, not the app's. The new v2 and v3 signatures replace any it
@@ -43,11 +54,12 @@ fn is_jar_signature(name: &str) -> bool {
 mod tests {
     use super::{is_jar_signature, repackage};
     use crate::android::key::tests::KEY;
+    use crate::config::App;
     use crate::zip::{self, Method, tests::SHELL, tests::entry};
 
     #[test]
     fn signs_the_shell_with_the_key() {
-        let app = repackage(SHELL, &KEY).unwrap();
+        let app = repackage(SHELL, &App::default(), &KEY).unwrap();
 
         assert_eq!(zip::read(&app).unwrap(), zip::read(SHELL).unwrap());
         assert!(
@@ -71,9 +83,35 @@ mod tests {
         ));
         let shell = zip::write(&entries).bytes;
 
-        let app = repackage(&shell, &KEY).unwrap();
+        let app = repackage(&shell, &App::default(), &KEY).unwrap();
 
         assert_eq!(zip::read(&app).unwrap(), zip::read(SHELL).unwrap());
+    }
+
+    #[test]
+    fn gives_the_shell_the_apps_values() {
+        let app = App {
+            id: Some("dev.example.app".to_owned()),
+            ..App::default()
+        };
+
+        let apk = repackage(SHELL, &app, &KEY).unwrap();
+
+        let (shell, apk) = (zip::read(SHELL).unwrap(), zip::read(&apk).unwrap());
+        let manifest = apk[2].contents().unwrap();
+        assert_eq!(apk[2].name, "AndroidManifest.xml");
+        assert!(manifest.windows(30).any(|window| {
+            window
+                == "dev.example.app"
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes)
+                    .collect::<Vec<_>>()
+        }));
+        // Every other entry is as it was.
+        assert_eq!(
+            [&apk[..2], &apk[3..]].concat(),
+            [&shell[..2], &shell[3..]].concat()
+        );
     }
 
     #[test]
@@ -99,9 +137,22 @@ mod tests {
 
     #[test]
     fn rejects_what_isnt_an_apk() {
-        let not_zip = repackage(b"not a zip", &KEY).unwrap_err();
+        let not_zip = repackage(b"not a zip", &App::default(), &KEY).unwrap_err();
         let no_manifest = repackage(
             &zip::write(&[entry("classes.dex", Method::Deflated, b"dex")]).bytes,
+            &App::default(),
+            &KEY,
+        )
+        .unwrap_err();
+        let bad_manifest = repackage(
+            &zip::write(&[entry("AndroidManifest.xml", Method::Stored, b"<manifest/>")]).bytes,
+            &App::default(),
+            &KEY,
+        )
+        .unwrap_err();
+        let corrupt_entry = repackage(
+            &zip::write(&[entry("AndroidManifest.xml", Method::Deflated, &[0xff; 8])]).bytes,
+            &App::default(),
             &KEY,
         )
         .unwrap_err();
@@ -114,5 +165,10 @@ mod tests {
             no_manifest.to_string(),
             "the shell isn't an APK: it has no AndroidManifest.xml"
         );
+        assert_eq!(
+            format!("{bad_manifest:#}"),
+            "couldn't rewrite the shell's AndroidManifest.xml: it isn't binary XML"
+        );
+        assert_eq!(corrupt_entry.to_string(), "AndroidManifest.xml is corrupt");
     }
 }
