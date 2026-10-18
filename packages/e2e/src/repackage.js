@@ -80,6 +80,7 @@ export const expected = (platform) =>
     ? {
         ...SHELL,
         id: APP.id,
+        name: APP.name,
         version: APP.version,
         build: String(APP.build),
         // The debug key omni-build creates and signs with when it's given
