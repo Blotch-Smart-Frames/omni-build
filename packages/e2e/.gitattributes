@@ -1,0 +1,4 @@
+# The E2E app's files are compared byte for byte with what the app reports,
+# from a shell repackaged on Windows too, where Git would otherwise check
+# text files out with CRLF line endings.
+/app/** -text
