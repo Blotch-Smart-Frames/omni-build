@@ -30,10 +30,11 @@ Each command is one stage. CI runs each on different machines; with no
 command, all three run here in turn.
 
 Commands:
-  build      Build the shell with Xcode or Gradle: the only stage that uses
-             them. Writes it to --out (default: build/shells/<platform>).
-  repackage  Run the shell (--shell) through omni-build, which gets no PATH
-             and no toolchain variables. Writes to --out (default:
+  build      Build the shells with Xcode or Gradle (an Android APK and app
+             bundle, an iOS app): the only stage that uses them. Writes them
+             to --out (default: build/shells/<platform>).
+  repackage  Run each shell (--shell) through omni-build, which gets no
+             PATH and no toolchain variables. Writes to --out (default:
              build/repackaged/<platform>).
   test [app...]
              Install and launch each app (default: every file in
@@ -41,7 +42,8 @@ Commands:
 
 Options:
   --platform <ios|android>  Required.
-  --shell <file>            repackage: the shell. Default: the one build wrote.
+  --shell <file>            repackage: a shell, as often as there are
+                            shells. Default: the ones build wrote.
   --out <dir>               build, repackage: where to write.
   --avd <name>              test, Android: boot this emulator unless it's
                             already running (\`emulator -list-avds\` lists
@@ -56,7 +58,7 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     platform: { type: 'string' },
-    shell: { type: 'string' },
+    shell: { type: 'string', multiple: true },
     out: { type: 'string' },
     avd: { type: 'string' },
     'artifacts-dir': { type: 'string' },
@@ -98,25 +100,30 @@ const artifactsFor = (stage) => {
 
 const buildStage = async (outDir) => {
   step(`Building the ${platform.name} shell with ${platform.toolchain}`);
-  const shell = await platform.build({
+  const shells = await platform.build({
     ...artifactsFor('build'),
     buildDir: BUILD_DIR,
     outDir,
   });
-  console.log(shell);
-  return shell;
+  shells.forEach((shell) => console.log(shell));
+  return shells;
 };
 
-const repackageStage = async (shell, outDir) => {
+const repackageStage = async (shells, outDir) => {
   step('Repackaging it with omni-build, with no toolchain in reach');
-  const app = await repackage({
-    ...artifactsFor('repackage'),
-    platform: values.platform,
-    shell,
-    outDir,
-  });
-  console.log(app);
-  return app;
+  const artifacts = artifactsFor('repackage');
+  const apps = [];
+  for (const shell of shells) {
+    const app = await repackage({
+      ...artifacts,
+      platform: values.platform,
+      shell,
+      outDir,
+    });
+    console.log(app);
+    apps.push(app);
+  }
+  return apps;
 };
 
 /**
@@ -131,19 +138,25 @@ const testStage = async (appFiles, artifacts, started) => {
   const failures = [];
   try {
     for (const app of appFiles) {
-      const name = path.basename(app, path.extname(app));
+      // With its extension: an APK and an app bundle come from each OS.
+      const name = path.basename(app);
       const artifactsDir = path.join(artifacts.artifactsDir, name);
       mkdirSync(artifactsDir);
       try {
         // The platform's own tools check the package before it's
-        // installed, and report what signed it.
-        const verified = await platform.verify({ ...options, app });
+        // installed, and report what signed it. An app bundle is turned
+        // into an APK to install, as an app store would.
+        const { installable = app, ...verified } = await platform.verify({
+          ...options,
+          artifactsDir,
+          app,
+        });
         const report = {
           ...(await platform.runApp({
             ...options,
             artifactsDir,
             device,
-            app,
+            app: installable,
             appId: want.id,
           })),
           ...verified,
@@ -200,8 +213,8 @@ try {
     case 'repackage':
       await repackageStage(
         values.shell
-          ? path.resolve(values.shell)
-          : filesFrom(shellsDir, 'build')[0],
+          ? values.shell.map((shell) => path.resolve(shell))
+          : filesFrom(shellsDir, 'build'),
         path.resolve(values.out ?? repackagedDir),
       );
       break;
@@ -216,9 +229,9 @@ try {
     }
     default: {
       const { artifacts, started } = await startTest();
-      let app;
+      let apps;
       try {
-        app = await repackageStage(await buildStage(shellsDir), repackagedDir);
+        apps = await repackageStage(await buildStage(shellsDir), repackagedDir);
       } catch (error) {
         // The device started booting first; don't leave it running for a
         // test stage that won't come.
@@ -227,7 +240,7 @@ try {
         }
         throw error;
       }
-      await testStage([app], artifacts, started);
+      await testStage(apps, artifacts, started);
     }
   }
 } catch (error) {

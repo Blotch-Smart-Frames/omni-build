@@ -8,6 +8,7 @@ import {
   readdirSync,
   writeFileSync,
 } from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +17,16 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { poll, run } from './process.js';
 
 const PROJECT = fileURLToPath(new URL('../fixtures/android/', import.meta.url));
+const BUILD_DIR = fileURLToPath(new URL('../build/', import.meta.url));
+/**
+ * bundletool turns an app bundle into the APKs a device installs, as Google
+ * Play does. A release's jar, pinned by its SHA-256 (github.com/google/
+ * bundletool/releases).
+ */
+const BUNDLETOOL = {
+  version: '1.18.3',
+  sha256: 'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29',
+};
 /** The tag the app logs its report under (ShellReport.kt). */
 const LOG_TAG = 'OmniBuildE2E';
 /**
@@ -64,13 +75,124 @@ const buildTools = () => {
   return path.join(dir, newest);
 };
 
+/** A JDK tool: from JAVA_HOME when it's set, as on GitHub's runners. */
+const javaTool = (name) =>
+  process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', name) : name;
+
+/** bundletool's jar, downloaded once into the build folder and checked. */
+const bundletool = async () => {
+  const jar = path.join(BUILD_DIR, `bundletool-${BUNDLETOOL.version}.jar`);
+  if (!existsSync(jar)) {
+    const url = `https://github.com/google/bundletool/releases/download/${BUNDLETOOL.version}/bundletool-all-${BUNDLETOOL.version}.jar`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Couldn't download ${url}: ${response.status}`);
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    if (sha256 !== BUNDLETOOL.sha256) {
+      throw new Error(
+        `${url} has SHA-256 ${sha256}, not ${BUNDLETOOL.sha256}.`,
+      );
+    }
+    mkdirSync(BUILD_DIR, { recursive: true });
+    writeFileSync(jar, bytes);
+  }
+  return jar;
+};
+
+/**
+ * The key bundletool signs the APKs it makes with: the app signing key
+ * Google Play would use, made once with keytool.
+ */
+const playSigningKey = async (log) => {
+  const keystore = path.join(BUILD_DIR, 'play-signing.keystore');
+  if (!existsSync(keystore)) {
+    mkdirSync(BUILD_DIR, { recursive: true });
+    await run(
+      javaTool('keytool'),
+      [
+        '-genkeypair',
+        '-keystore',
+        keystore,
+        '-storepass',
+        'android',
+        '-alias',
+        'play',
+        '-keyalg',
+        'RSA',
+        '-keysize',
+        '2048',
+        '-validity',
+        '10000',
+        '-dname',
+        'CN=Play signing stand-in',
+      ],
+      { log },
+    );
+  }
+  return keystore;
+};
+
+/**
+ * Checks an app bundle as Google Play would take an upload: its JAR
+ * signature (jarsigner, from the JDK) and its contents (bundletool's
+ * validate). Then turns it into the universal APK bundletool makes for
+ * any device, which the test installs. Returns that APK and the name on the
+ * bundle's signing certificate.
+ */
+const verifyBundle = async ({ app, artifactsDir, log }) => {
+  const jar = await bundletool();
+  const signed = await run(
+    javaTool('jarsigner'),
+    ['-verify', '-verbose', '-certs', app],
+    { log },
+  );
+  // Without -strict, jarsigner exits with 0 even when it found the bundle
+  // unsigned, so its verdict is read instead.
+  if (!signed.stdout.includes('jar verified.')) {
+    throw new Error(`jarsigner didn't verify ${app}'s signature.`);
+  }
+  await run(javaTool('java'), ['-jar', jar, 'validate', `--bundle=${app}`], {
+    log,
+  });
+  const apks = path.join(artifactsDir, 'universal.apks');
+  await run(
+    javaTool('java'),
+    [
+      '-jar',
+      jar,
+      'build-apks',
+      `--bundle=${app}`,
+      `--output=${apks}`,
+      '--mode=universal',
+      '--overwrite',
+      `--ks=${await playSigningKey(log)}`,
+      '--ks-pass=pass:android',
+      '--ks-key-alias=play',
+    ],
+    { log },
+  );
+  await run('unzip', ['-o', apks, 'universal.apk', '-d', artifactsDir], {
+    log,
+  });
+  return {
+    installable: path.join(artifactsDir, 'universal.apk'),
+    signer: signed.stdout.match(/- Signed by "(.*)"/)?.[1],
+  };
+};
+
 /**
  * Checks an APK with the Android SDK's own tools, which OmniBuild's users
  * never need, as Google Play would: every stored entry aligned for the
  * device to map it (zipalign), and every signature valid (apksigner, which
- * needs Java). Returns the name on the signing certificate.
+ * needs Java). Returns the name on the signing certificate. An app bundle
+ * goes to verifyBundle.
  */
-const verify = async ({ app, log }) => {
+const verify = async ({ app, artifactsDir, log }) => {
+  if (app.endsWith('.aab')) {
+    return verifyBundle({ app, artifactsDir, log });
+  }
   await run(path.join(buildTools(), 'zipalign'), ['-c', '-P', '16', '4', app], {
     log,
   });
@@ -87,13 +209,13 @@ const verify = async ({ app, log }) => {
 };
 
 /**
- * Builds the shell's release APK with Gradle, copies it into `outDir`, and
- * returns the copy's path.
+ * Builds the shell with Gradle as a release APK and app bundle, copies them
+ * into `outDir`, and returns the copies' paths.
  */
 const build = async ({ outDir, log }) => {
   await run(
     path.join(PROJECT, 'gradlew'),
-    ['assembleRelease', '--console=plain'],
+    ['assembleRelease', 'bundleRelease', '--console=plain'],
     {
       cwd: PROJECT,
       env: { ...process.env, ANDROID_HOME: androidSdk() },
@@ -101,12 +223,19 @@ const build = async ({ outDir, log }) => {
     },
   );
   mkdirSync(outDir, { recursive: true });
-  const shell = path.join(outDir, 'OmniBuildShell.apk');
-  copyFileSync(
-    path.join(PROJECT, 'app/build/outputs/apk/release/app-release.apk'),
-    shell,
-  );
-  return shell;
+  const outputs = path.join(PROJECT, 'app/build/outputs');
+  const shells = [
+    [path.join(outputs, 'apk/release/app-release.apk'), 'OmniBuildShell.apk'],
+    [
+      path.join(outputs, 'bundle/release/app-release.aab'),
+      'OmniBuildShell.aab',
+    ],
+  ];
+  return shells.map(([built, name]) => {
+    const shell = path.join(outDir, name);
+    copyFileSync(built, shell);
+    return shell;
+  });
 };
 
 /** The serials of the devices adb sees, booted or not. */

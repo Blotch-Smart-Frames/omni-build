@@ -57,13 +57,21 @@ impl SigningKey {
     pub fn generate(subject: &str, validity: Duration) -> Self {
         let key = RsaPrivateKey::new(&mut OsRng, 2048).expect("the system's random source works");
         let signer = pkcs1v15::SigningKey::<Sha256>::new(key.clone());
+        let subject = subject
+            .parse::<Name>()
+            .expect("the subject is a valid name");
         let certificate = CertificateBuilder::new(
-            Profile::Root,
+            // An end entity whose key usage is digital signatures, issued by
+            // itself. A CA's certificate is for signing certificates only,
+            // and Java's JAR verifier, which checks an AAB, refuses it.
+            Profile::Leaf {
+                issuer: subject.clone(),
+                enable_key_agreement: false,
+                enable_key_encipherment: false,
+            },
             SerialNumber::from(OsRng.next_u64()),
             Validity::from_now(validity).expect("the validity fits a certificate"),
-            subject
-                .parse::<Name>()
-                .expect("the subject is a valid name"),
+            subject,
             SubjectPublicKeyInfoOwned::from_key(signer.verifying_key())
                 .expect("an RSA public key encodes"),
             &signer,
@@ -120,6 +128,10 @@ impl SigningKey {
         &self.certificate_der
     }
 
+    pub fn x509(&self) -> &Certificate {
+        &self.certificate
+    }
+
     pub fn public_key(&self) -> &[u8] {
         &self.public_key
     }
@@ -169,12 +181,14 @@ pub mod tests {
     use std::sync::LazyLock;
     use std::time::Duration;
 
+    use const_oid::db::rfc5280::ID_CE_KEY_USAGE;
     use rsa::pkcs1v15::{Signature, VerifyingKey};
     use rsa::pkcs8::DecodePublicKey;
     use rsa::sha2::Sha256;
     use rsa::signature::Verifier;
     use x509_cert::Certificate;
     use x509_cert::der::Decode;
+    use x509_cert::ext::pkix::KeyUsage;
 
     use super::{SigningKey, debug_key_path};
 
@@ -195,6 +209,16 @@ pub mod tests {
 
         assert_eq!(certificate.tbs_certificate.subject.to_string(), "CN=Test");
         assert_eq!(certificate.tbs_certificate.issuer.to_string(), "CN=Test");
+        let key_usage = certificate
+            .tbs_certificate
+            .extensions
+            .unwrap()
+            .into_iter()
+            .find(|extension| extension.extn_id == ID_CE_KEY_USAGE)
+            .unwrap();
+        let key_usage = KeyUsage::from_der(key_usage.extn_value.as_bytes()).unwrap();
+        assert!(key_usage.digital_signature());
+        assert!(!key_usage.key_cert_sign());
         assert!(verifies(KEY.public_key(), b"data", &KEY.sign(b"data")));
         assert!(!verifies(
             KEY.public_key(),
