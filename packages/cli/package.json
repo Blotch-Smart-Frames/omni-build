@@ -10,6 +10,7 @@
     "test:coverage": "cargo llvm-cov --locked --fail-under-lines 100 --fail-under-functions 100 --fail-under-regions 100",
     "lint": "cargo clippy --all-targets --locked -- -D warnings",
     "lint:fix": "cargo clippy --all-targets --fix --allow-dirty --allow-staged",
+    "cspell": "cspell --no-progress .",
     "format": "cargo fmt",
     "format:check": "cargo fmt --check"
   }

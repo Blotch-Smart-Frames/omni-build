@@ -1,0 +1,67 @@
+{
+  "$schema": "./node_modules/@cspell/cspell-types/cspell.schema.json",
+  "version": "0.2",
+  // The prose is British English ("behaviour", "colour"), but code and the
+  // platforms' own names are American ("color" in CSS, "initialize" in
+  // Swift), so both spellings pass.
+  "language": "en,en-GB",
+  // Build output, coverage reports and dependencies are already in
+  // .gitignore, so it doubles as the list of files that aren't ours to check.
+  "useGitignore": true,
+  // .github/workflows and .claude/skills are ours too.
+  "enableGlobDot": true,
+  "ignorePaths": [
+    ".git",
+    // Skills vendored from other repositories (skills-lock.json records where
+    // from). .claude/skills links to the same ones.
+    ".agents",
+    ".claude/skills/rust-*",
+    "skills-lock.json"
+  ],
+  "overrides": [
+    {
+      // Actions are named for their owners' GitHub accounts, which no
+      // dictionary has, so each new action would otherwise need its owner
+      // added as a word.
+      "filename": ".github/workflows/*.yml",
+      "ignoreRegExpList": ["/uses: .*/g"]
+    }
+  ],
+  // Words for the whole repository: the tools, formats and platforms
+  // OmniBuild works with, named across the packages and their docs, and the
+  // words of the files outside packages/. A word only one package uses goes
+  // in that package's cspell.json.
+  "words": [
+    "aapt",
+    "AOSP",
+    "apksigner",
+    "arsc",
+    "assetutil",
+    "avdmanager",
+    "bundletool",
+    "clippy",
+    "cmdline",
+    "codesign",
+    "Dolan",
+    "EBADPLATFORM",
+    "gradlew",
+    "idents",
+    "jarsigner",
+    "msvc",
+    "omnibuild",
+    "rspack",
+    "rustup",
+    "sdkmanager",
+    "simctl",
+    "storepass",
+    "temurin",
+    "toplevel",
+    "udevadm",
+    "unstub",
+    "USERPROFILE",
+    "vitest",
+    "worktrees",
+    "Xcodes",
+    "zipalign"
+  ]
+}

@@ -22,7 +22,7 @@ An npm workspaces + turbo monorepo with the Rust inside `packages/` (see the REA
 - **The platform watch** (`packages/platform-watch`) runs daily and opens an issue when the shells need a newer Xcode or Android API level, or when it can't download or parse one of Apple's or Google's pages. It reads the shells' toolchain from `DEVELOPER_DIR` in `ci.yml` and the Android fixture's `build.gradle.kts`, so moving either means updating `src/sources.ts`.
 
 ```sh
-npm run build | test | lint | typecheck | format | format:check   # all packages, through turbo
+npm run build | test | lint | cspell | typecheck | format | format:check   # all packages, through turbo
 npm run test:coverage                                             # then coverage-guard; needs cargo-llvm-cov installed
 cargo run -- --help                                               # the binary, straight from Cargo
 ```

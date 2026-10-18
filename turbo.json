@@ -23,6 +23,9 @@
     "lint:fix": {
       "cache": false
     },
+    "cspell": {
+      "cache": false
+    },
     "format": {
       "cache": false
     },

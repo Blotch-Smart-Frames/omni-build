@@ -33,11 +33,12 @@ npm run build          # cargo build --release, and the docs site
 npm test               # cargo test, and every package's vitest tests
 npm run test:coverage  # the same, failing below 100% coverage, then coverage-guard (needs cargo-llvm-cov)
 npm run lint           # clippy and oxlint
+npm run cspell         # spelling, with the words in cspell.json and each package's own
 npm run typecheck      # tsc over the TypeScript packages
 npm run format         # rustfmt and oxfmt; CI runs format:check
 npm run e2e -- --platform ios  # build, repackage and run a real app on the iOS Simulator, or android (see packages/e2e)
 ```
 
-Pull requests must pass CI: formatting, lint (warnings are errors), type checks, 100% test coverage, tests on Linux, macOS and Windows, a release build on each of the six targets OmniBuild ships for, the end-to-end tests on the iOS Simulator and an Android emulator, and a build of the docs site.
+Pull requests must pass CI: formatting, lint (warnings are errors), spelling, type checks, 100% test coverage, tests on Linux, macOS and Windows, a release build on each of the six targets OmniBuild ships for, the end-to-end tests on the iOS Simulator and an Android emulator, and a build of the docs site.
 
 Cargo also works on its own from the repository root, for example `cargo run -- --help`.

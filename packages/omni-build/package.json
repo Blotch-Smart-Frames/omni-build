@@ -36,6 +36,7 @@
     "test:coverage": "vitest run --coverage",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
+    "cspell": "cspell --no-progress .",
     "typecheck": "tsc"
   },
   "engines": {
