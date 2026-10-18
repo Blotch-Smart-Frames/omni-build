@@ -55,6 +55,22 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// A new entry holding `contents`. It's dated as the Android Gradle
+    /// plugin dates every entry, 1981-01-01 01:01:02, so the same files
+    /// make the same archive.
+    pub fn new(name: &str, method: Method, contents: &[u8]) -> Self {
+        Self {
+            name: name.to_owned(),
+            method,
+            crc32: 0,
+            size: 0,
+            data: Vec::new(),
+            time: 0x0821,
+            date: 0x0221,
+        }
+        .with_contents(contents)
+    }
+
     /// The entry's contents, decompressed.
     pub fn contents(&self) -> Result<Vec<u8>> {
         match self.method {
@@ -389,6 +405,16 @@ pub mod tests {
             (stored.method, stored.data.as_slice()),
             (Method::Stored, &b"table"[..])
         );
+    }
+
+    #[test]
+    fn makes_new_entries_dated_as_the_shells_are() {
+        let shell = &read(SHELL).unwrap()[1];
+
+        let new = Entry::new("assets/payload.txt", Method::Deflated, b"payload");
+
+        assert_eq!(new.contents().unwrap(), b"payload");
+        assert_eq!((new.time, new.date), (shell.time, shell.date));
     }
 
     #[test]

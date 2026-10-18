@@ -11,6 +11,8 @@ anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 crc32fast = "1.5.2"
 flate2 = "1.1.10"
+# PNG only: app icons are PNGs, and resizing them is all OmniBuild does.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 # The RustCrypto crates of one generation, which share der, spki and pkcs8.
 # rsa 0.10 is still a release candidate.
 rsa = { version = "0.9.10", features = ["getrandom", "sha2"] }

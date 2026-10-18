@@ -2,5 +2,7 @@
   "id": "dev.omnibuild.e2e.app",
   "name": "OmniBuild E2E",
   "version": "2.5.0",
-  "build": 42
+  "build": 42,
+  "icon": "icon.png",
+  "payload": "payload"
 }
