@@ -182,7 +182,8 @@ jobs:
   #    variables that lead to a JDK, the Android SDK or Xcode.
   # 3. e2e-ios, e2e-android: every repackaged app installed and launched on
   #    the iOS Simulator and an Android emulator, each checked against the
-  #    values it reports.
+  #    values it reports. An Android app bundle is installed as the APK
+  #    bundletool makes from it.
   #
   # The harness uses only Node's built-in modules, so these jobs skip `npm ci`.
   e2e-shell-ios:
@@ -292,7 +293,7 @@ jobs:
           path: e2e/shells
           merge-multiple: true
       - run: node packages/e2e/src/run.js repackage --platform ios --shell e2e/shells/OmniBuildShell.zip --out e2e/repackaged
-      - run: node packages/e2e/src/run.js repackage --platform android --shell e2e/shells/OmniBuildShell.apk --out e2e/repackaged
+      - run: node packages/e2e/src/run.js repackage --platform android --shell e2e/shells/OmniBuildShell.apk --shell e2e/shells/OmniBuildShell.aab --out e2e/repackaged
       - uses: actions/upload-artifact@v7
         with:
           name: e2e-repackaged-${{ matrix.os }}
@@ -341,6 +342,13 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+      # For apksigner, and for the app bundles: jarsigner checks their
+      # signature, and bundletool makes the APK to install from each, as
+      # Google Play does.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
       - uses: actions/download-artifact@v8
         with:
           pattern: e2e-repackaged-*
@@ -361,7 +369,7 @@ jobs:
           api-level: 34
           arch: x86_64
           target: google_apis
-          script: node packages/e2e/src/run.js test --platform android e2e/repackaged/*.apk
+          script: node packages/e2e/src/run.js test --platform android e2e/repackaged/*.apk e2e/repackaged/*.aab
       - uses: actions/upload-artifact@v7
         if: always()
         with:

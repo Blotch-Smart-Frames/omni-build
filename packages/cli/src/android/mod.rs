@@ -1,9 +1,15 @@
-//! Repackaging Android app shells.
+//! Repackaging Android app shells: APKs, which install on a device, and
+//! Android App Bundles (AABs), which Google Play turns into APKs.
 
+mod binary_xml;
 mod chunk;
 mod icon;
+mod jar_signing;
 pub mod key;
 mod manifest;
+mod proto_resources;
+mod proto_xml;
+mod protobuf;
 mod resources;
 mod signing;
 mod string_pool;
@@ -16,57 +22,121 @@ use anyhow::{Context, Result, bail};
 
 use crate::config::App;
 use crate::zip::{self, Entry, Method};
+use binary_xml::BinaryXml;
 use key::SigningKey;
-use manifest::Rewritten;
-use resources::ResourceTable;
+use manifest::{Changes, Document};
+use proto_resources::ProtoResources;
+use proto_xml::ProtoXml;
+use resources::{ResourceTable, Resources};
 
-/// Repackages an APK shell into the app `app` describes, and signs it with
-/// `key`.
+/// Where a package keeps what OmniBuild rewrites. An APK keeps it at its
+/// root, compiled for a device; an AAB keeps it in its base module, in
+/// protobuf, for bundletool to compile for each device.
+struct Layout {
+    manifest: &'static str,
+    resources: &'static str,
+    /// What the resource table's file paths, and `assets/`, are under.
+    base: &'static str,
+    bundle: bool,
+}
+
+const APK: Layout = Layout {
+    manifest: "AndroidManifest.xml",
+    resources: "resources.arsc",
+    base: "",
+    bundle: false,
+};
+
+const AAB: Layout = Layout {
+    manifest: "base/manifest/AndroidManifest.xml",
+    resources: "base/resources.pb",
+    base: "base/",
+    bundle: true,
+};
+
+/// Repackages an APK or AAB shell into the app `app` describes, and signs
+/// it with `key`: an APK with schemes v2 and v3, for devices, and an AAB
+/// with a JAR signature, as Google Play checks an upload.
 pub fn repackage(shell: &[u8], app: &App, key: &SigningKey) -> Result<Vec<u8>> {
-    let mut entries = zip::read(shell).context("the shell isn't an APK")?;
-    let Some(manifest) = entries
-        .iter_mut()
-        .find(|entry| entry.name == "AndroidManifest.xml")
-    else {
-        bail!("the shell isn't an APK: it has no AndroidManifest.xml");
+    let entries = zip::read(shell).context("the shell isn't an APK or an AAB")?;
+    let has = |name: &str| entries.iter().any(|entry| entry.name == name);
+    let layout = if has("BundleConfig.pb") {
+        &AAB
+    } else if has("AndroidManifest.xml") {
+        &APK
+    } else {
+        bail!(
+            "the shell isn't an APK or an AAB: it has neither an AndroidManifest.xml nor a BundleConfig.pb"
+        );
     };
-    let contents = manifest.contents()?;
-    let rewritten = manifest::rewrite(&contents, app)
-        .context("couldn't rewrite the shell's AndroidManifest.xml")?;
-    // Left as it was when nothing changed, rather than compressed again.
-    if rewritten.manifest != contents {
-        *manifest = manifest.with_contents(&rewritten.manifest);
-    }
-    if rewritten.name_resource.is_some() || !rewritten.icon_resources.is_empty() {
-        set_resources(&mut entries, app, &rewritten)?;
-    }
-    if let Some(payload) = &app.payload {
-        add_payload(&mut entries, payload)?;
-    }
-    // The shell's own v1 signature, if it has one, describes the shell's
-    // contents, not the app's. The new v2 and v3 signatures replace any it
-    // had, since they cover the whole file.
-    let entries: Vec<_> = entries
+    // The shell's own JAR signature, if it has one, describes the shell's
+    // contents, not the app's.
+    let mut entries: Vec<_> = entries
         .into_iter()
         .filter(|entry| !is_jar_signature(&entry.name))
         .collect();
-    Ok(signing::sign(&zip::write(&entries), key))
+
+    let index = entries
+        .iter()
+        .position(|entry| entry.name == layout.manifest)
+        .with_context(|| format!("the shell has no {}", layout.manifest))?;
+    let contents = entries[index].contents()?;
+    let (manifest, changes) = rewrite_manifest(&contents, layout, app)
+        .with_context(|| format!("couldn't rewrite the shell's {}", layout.manifest))?;
+    // Left as it was when nothing changed, rather than compressed again.
+    if manifest != contents {
+        entries[index] = entries[index].with_contents(&manifest);
+    }
+    if changes.name_resource.is_some() || !changes.icon_resources.is_empty() {
+        set_resources(&mut entries, layout, app, &changes)?;
+    }
+    if let Some(payload) = &app.payload {
+        add_payload(&mut entries, layout, payload)?;
+    }
+    if layout.bundle {
+        Ok(zip::write(&jar_signing::sign(entries, key)?).bytes)
+    } else {
+        Ok(signing::sign(&zip::write(&entries), key))
+    }
+}
+
+fn rewrite_manifest(contents: &[u8], layout: &Layout, app: &App) -> Result<(Vec<u8>, Changes)> {
+    let mut document: Box<dyn Document> = if layout.bundle {
+        Box::new(ProtoXml::parse(contents)?)
+    } else {
+        Box::new(BinaryXml::parse(contents)?)
+    };
+    let changes = manifest::rewrite(document.as_mut(), app)?;
+    Ok((document.to_bytes(), changes))
+}
+
+fn read_resources(contents: &[u8], layout: &Layout) -> Result<Box<dyn Resources>> {
+    Ok(if layout.bundle {
+        Box::new(ProtoResources::parse(contents)?)
+    } else {
+        Box::new(ResourceTable::parse(contents)?)
+    })
 }
 
 /// Gives the app its name and icon through the shell's resource table.
-fn set_resources(entries: &mut [Entry], app: &App, rewritten: &Rewritten) -> Result<()> {
+fn set_resources(
+    entries: &mut [Entry],
+    layout: &Layout,
+    app: &App,
+    changes: &Changes,
+) -> Result<()> {
     let table = entries
         .iter()
-        .position(|entry| entry.name == "resources.arsc")
-        .context("the shell has no resources.arsc")?;
+        .position(|entry| entry.name == layout.resources)
+        .with_context(|| format!("the shell has no {}", layout.resources))?;
     let mut resources = entries[table]
         .contents()
-        .and_then(|contents| ResourceTable::parse(&contents))
-        .context("couldn't read the shell's resources.arsc")?;
-    if let (Some(name), Some(resource)) = (&app.name, rewritten.name_resource) {
+        .and_then(|contents| read_resources(&contents, layout))
+        .with_context(|| format!("couldn't read the shell's {}", layout.resources))?;
+    if let (Some(name), Some(resource)) = (&app.name, changes.name_resource) {
         resources
             .set_string(resource, name)
-            .context("couldn't give the app its name in resources.arsc")?;
+            .with_context(|| format!("couldn't give the app its name in {}", layout.resources))?;
         entries[table] = entries[table].with_contents(&resources.to_bytes());
     }
     if let Some(path) = &app.icon {
@@ -74,37 +144,36 @@ fn set_resources(entries: &mut [Entry], app: &App, rewritten: &Rewritten) -> Res
         // Each density's PNG, for the icon and the round icon, which may
         // share them.
         let mut files = Vec::new();
-        for &resource in &rewritten.icon_resources {
-            files.extend(
-                resources
-                    .strings(resource)
-                    .context("couldn't find the shell's icon in resources.arsc")?,
-            );
+        for &resource in &changes.icon_resources {
+            files.extend(resources.strings(resource).with_context(|| {
+                format!("couldn't find the shell's icon in {}", layout.resources)
+            })?);
         }
         files.sort();
         files.dedup();
         for file in files {
+            let name = format!("{}{file}", layout.base);
             let entry = entries
                 .iter_mut()
-                .find(|entry| entry.name == file)
-                .with_context(|| format!("the shell has no {file}, which its icon names"))?;
+                .find(|entry| entry.name == name)
+                .with_context(|| format!("the shell has no {name}, which its icon names"))?;
             let png = entry
                 .contents()
                 .and_then(|shell_icon| icon::resized(&icon, &shell_icon))
-                .with_context(|| format!("couldn't replace the shell's icon {file}"))?;
+                .with_context(|| format!("couldn't replace the shell's icon {name}"))?;
             *entry = entry.with_contents(&png);
         }
     }
     Ok(())
 }
 
-/// Adds the payload's files to the APK's `assets/`, replacing the shell's
-/// own files of the same name.
-fn add_payload(entries: &mut Vec<Entry>, folder: &Path) -> Result<()> {
+/// Adds the payload's files to the package's `assets/`, replacing the
+/// shell's own files of the same name.
+fn add_payload(entries: &mut Vec<Entry>, layout: &Layout, folder: &Path) -> Result<()> {
     for (name, path) in payload_files(folder)? {
         let contents =
             fs::read(&path).with_context(|| format!("couldn't read {}", path.display()))?;
-        let name = format!("assets/{name}");
+        let name = format!("{}assets/{name}", layout.base);
         match entries.iter().position(|entry| entry.name == name) {
             Some(index) => entries[index] = entries[index].with_contents(&contents),
             None => entries.push(Entry::new(&name, Method::Deflated, &contents)),
@@ -140,8 +209,9 @@ fn payload_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     Ok(files)
 }
 
-/// Whether an entry is part of a v1 (JAR) signature: `META-INF/MANIFEST.MF`,
-/// and each signer's signature file and signature block.
+/// Whether an entry is part of a JAR signature (an APK's v1 signature, or
+/// an AAB's): `META-INF/MANIFEST.MF`, and each signer's signature file and
+/// signature block.
 fn is_jar_signature(name: &str) -> bool {
     name.strip_prefix("META-INF/").is_some_and(|file| {
         !file.contains('/')
@@ -157,9 +227,11 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use super::{is_jar_signature, repackage};
+    use super::{ProtoResources, ProtoXml, Resources, is_jar_signature, repackage};
     use crate::android::icon::tests::solid_png;
     use crate::android::key::tests::KEY;
+    use crate::android::manifest::{Document, Value};
+    use crate::android::proto_xml::tests::SHELL_AAB;
     use crate::config::App;
     use crate::zip::{self, Entry, Method, tests::SHELL, tests::entry};
 
@@ -261,6 +333,11 @@ mod tests {
             &KEY,
         )
         .unwrap_err();
+        let bad_id = App {
+            id: Some("app".to_owned()),
+            ..App::default()
+        };
+        let unrewritable = repackage(SHELL, &bad_id, &KEY).unwrap_err();
         let corrupt_entry = repackage(
             &zip::write(&[entry("AndroidManifest.xml", Method::Deflated, &[0xff; 8])]).bytes,
             &App::default(),
@@ -270,17 +347,22 @@ mod tests {
 
         assert_eq!(
             format!("{not_zip:#}"),
-            "the shell isn't an APK: it isn't a zip archive"
+            "the shell isn't an APK or an AAB: it isn't a zip archive"
         );
         assert_eq!(
             no_manifest.to_string(),
-            "the shell isn't an APK: it has no AndroidManifest.xml"
+            "the shell isn't an APK or an AAB: it has neither an AndroidManifest.xml nor a BundleConfig.pb"
         );
         assert_eq!(
             format!("{bad_manifest:#}"),
             "couldn't rewrite the shell's AndroidManifest.xml: it isn't binary XML"
         );
         assert_eq!(corrupt_entry.to_string(), "AndroidManifest.xml is corrupt");
+        assert!(
+            format!("{unrewritable:#}").starts_with(
+                "couldn't rewrite the shell's AndroidManifest.xml: \"app\" isn't a valid Android application ID"
+            )
+        );
     }
 
     /// A shell with only these of its files, and the other given ones.
@@ -457,5 +539,124 @@ mod tests {
             format!("{unnamed:#}"),
             "couldn't give the app its name in resources.arsc: it's corrupt or cut short"
         );
+    }
+
+    fn aab_with(others: Vec<Entry>) -> Vec<u8> {
+        let mut entries = zip::read(SHELL_AAB).unwrap();
+        entries.extend(others);
+        zip::write(&entries).bytes
+    }
+
+    #[test]
+    fn gives_a_bundle_the_apps_values_and_a_jar_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        let icon = dir.path().join("icon.png");
+        fs::write(&icon, solid_png(512, 512, [0xe8, 0x59, 0x0c, 0xff])).unwrap();
+        let payload = dir.path().join("payload");
+        fs::create_dir_all(&payload).unwrap();
+        fs::write(payload.join("payload.txt"), "the app's payload").unwrap();
+        let app = App {
+            id: Some("dev.example.app".to_owned()),
+            name: Some("Repackaged".to_owned()),
+            version: Some("2.5.0".to_owned()),
+            build: Some(42),
+            icon: Some(icon),
+            payload: Some(payload),
+        };
+
+        let aab = zip::read(&repackage(SHELL_AAB, &app, &KEY).unwrap()).unwrap();
+
+        let file = |name: &str| {
+            aab.iter()
+                .find(|entry| entry.name == name)
+                .unwrap()
+                .contents()
+                .unwrap()
+        };
+        // OmniBuild's signature replaces the shell's.
+        let names: Vec<&str> = aab.iter().map(|entry| entry.name.as_str()).collect();
+        assert_eq!(
+            names[..3],
+            [
+                "META-INF/MANIFEST.MF",
+                "META-INF/CERT.SF",
+                "META-INF/CERT.RSA"
+            ]
+        );
+        assert!(
+            !names
+                .iter()
+                .any(|name| name.starts_with("META-INF/ANDROIDD"))
+        );
+        let manifest = ProtoXml::parse(&file("base/manifest/AndroidManifest.xml")).unwrap();
+        let value = |name: &str| {
+            manifest
+                .attributes()
+                .iter()
+                .find(|attribute| attribute.name == name)
+                .unwrap()
+                .value
+                .clone()
+        };
+        assert_eq!(
+            value("package"),
+            Value::String("dev.example.app".to_owned())
+        );
+        assert_eq!(value("versionName"), Value::String("2.5.0".to_owned()));
+        assert_eq!(value("versionCode"), Value::Int(42));
+        let resources = ProtoResources::parse(&file("base/resources.pb")).unwrap();
+        assert_eq!(resources.strings(0x7f02_0000).unwrap(), ["Repackaged"]);
+        let icon = image::load_from_memory(&file("base/res/mipmap-xxxhdpi-v4/ic_launcher.png"))
+            .unwrap()
+            .into_rgba8();
+        assert_eq!(icon.get_pixel(96, 96).0, [0xe8, 0x59, 0x0c, 0xff]);
+        assert_eq!(file("base/assets/payload.txt"), b"the app's payload");
+    }
+
+    #[test]
+    fn reports_a_bundle_it_cant_repackage() {
+        let without_manifest = zip::write(&[entry("BundleConfig.pb", Method::Stored, b"")]).bytes;
+        let corrupt_manifest = zip::write(&[
+            entry("BundleConfig.pb", Method::Stored, b""),
+            entry("base/manifest/AndroidManifest.xml", Method::Stored, &[0xff]),
+        ])
+        .bytes;
+        let mut corrupt_table = zip::read(SHELL_AAB).unwrap();
+        corrupt_table[11] = Entry::new("base/resources.pb", Method::Stored, &[0xff]);
+        let corrupt_table = zip::write(&corrupt_table).bytes;
+        let mut corrupt_entry = Entry::new("base/dex/classes.dex", Method::Deflated, b"dex");
+        corrupt_entry.data = vec![0xff; 8];
+        let named = App {
+            name: Some("Repackaged".to_owned()),
+            ..App::default()
+        };
+
+        for (shell, app, message) in [
+            (
+                without_manifest,
+                App::default(),
+                "the shell has no base/manifest/AndroidManifest.xml",
+            ),
+            (
+                corrupt_manifest,
+                App::default(),
+                "couldn't rewrite the shell's base/manifest/AndroidManifest.xml: it's corrupt or cut short",
+            ),
+            (
+                corrupt_table,
+                named,
+                "couldn't read the shell's base/resources.pb: it's corrupt or cut short",
+            ),
+            (
+                aab_with(vec![corrupt_entry]),
+                App::default(),
+                "base/dex/classes.dex is corrupt: corrupt deflate stream",
+            ),
+        ] {
+            assert_eq!(
+                format!("{:#}", repackage(&shell, &app, &KEY).unwrap_err()),
+                message
+            );
+        }
     }
 }

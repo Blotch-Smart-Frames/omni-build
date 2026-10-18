@@ -31,6 +31,17 @@ const COMPACT: u16 = 0x0008;
 const NO_ENTRY: u32 = u32::MAX;
 const TYPE_STRING: u8 = 0x03;
 
+/// A resource table whose string and file values can be read and changed,
+/// in either format: an APK's `resources.arsc` or an AAB's `resources.pb`.
+pub trait Resources {
+    /// The resource's string values, one for each configuration it has a
+    /// string in. A file resource's value is its path in the package.
+    fn strings(&self, id: u32) -> Result<Vec<String>>;
+    /// Makes a resource a string in every configuration it has a value in.
+    fn set_string(&mut self, id: u32, value: &str) -> Result<()>;
+    fn to_bytes(&self) -> Vec<u8>;
+}
+
 pub struct ResourceTable {
     package_count: u32,
     pool: StringPool,
@@ -60,34 +71,6 @@ impl ResourceTable {
             pool,
             packages: data[12 + pool_size..].to_vec(),
         })
-    }
-
-    /// The resource's string values, one for each configuration it has a
-    /// string in. A file resource's value is its path in the APK.
-    pub fn strings(&self, id: u32) -> Result<Vec<String>> {
-        Ok(self
-            .slots(id)?
-            .into_iter()
-            .filter(|slot| self.packages[slot.data_type] == TYPE_STRING)
-            .filter_map(|slot| {
-                let index = Reader::at(&self.packages, slot.data).u32();
-                self.pool.get(index)
-            })
-            .collect())
-    }
-
-    /// Makes a resource a string in every configuration it has a value in.
-    pub fn set_string(&mut self, id: u32, value: &str) -> Result<()> {
-        let slots = self.slots(id)?;
-        if slots.is_empty() {
-            bail!("it has no resource {id:#010x}");
-        }
-        let index = self.pool.add(value);
-        for slot in slots {
-            self.packages[slot.data_type] = TYPE_STRING;
-            self.packages[slot.data..slot.data + 4].copy_from_slice(&index.to_le_bytes());
-        }
-        Ok(())
     }
 
     /// Where the resource's value is in each configuration it has one in.
@@ -172,8 +155,38 @@ impl ResourceTable {
         }
         Ok(Some(slot))
     }
+}
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+impl Resources for ResourceTable {
+    /// The resource's string values, one for each configuration it has a
+    /// string in. A file resource's value is its path in the APK.
+    fn strings(&self, id: u32) -> Result<Vec<String>> {
+        Ok(self
+            .slots(id)?
+            .into_iter()
+            .filter(|slot| self.packages[slot.data_type] == TYPE_STRING)
+            .filter_map(|slot| {
+                let index = Reader::at(&self.packages, slot.data).u32();
+                self.pool.get(index)
+            })
+            .collect())
+    }
+
+    /// Makes a resource a string in every configuration it has a value in.
+    fn set_string(&mut self, id: u32, value: &str) -> Result<()> {
+        let slots = self.slots(id)?;
+        if slots.is_empty() {
+            bail!("it has no resource {id:#010x}");
+        }
+        let index = self.pool.add(value);
+        for slot in slots {
+            self.packages[slot.data_type] = TYPE_STRING;
+            self.packages[slot.data..slot.data + 4].copy_from_slice(&index.to_le_bytes());
+        }
+        Ok(())
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
         let pool = self.pool.to_bytes();
         let size = u32::try_from(12 + pool.len() + self.packages.len())
             .expect("resource tables are under 4 GiB");
@@ -195,7 +208,7 @@ fn offset(value: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{COMPACT, COMPLEX, OFFSET16, ResourceTable, SPARSE, TYPE_STRING};
+    use super::{COMPACT, COMPLEX, OFFSET16, ResourceTable, Resources, SPARSE, TYPE_STRING};
     use crate::android::string_pool::tests::empty;
     use crate::zip::{self, tests::SHELL};
 

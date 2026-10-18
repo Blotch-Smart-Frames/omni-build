@@ -35,7 +35,7 @@ Its mechanism: it doesn't compile anything. It takes a shell that OmniBuild's ow
 
 ## Capabilities and Constraints
 
-- **Status: Phase 0, the spikes.** `omni-build repackage` gives an Android APK shell an app's ID, name, version, build number, icon and payload, and signs it; nothing else is built. The plan is issue #1 (https://github.com/Blotch-Smart-Frames/omni-build/issues/1). The npm package is not published.
+- **Status: Phase 0, the spikes.** `omni-build repackage` gives an Android APK or app bundle (AAB) shell an app's ID, name, version, build number, icon and payload, and signs it; nothing else is built. The plan is issue #1 (https://github.com/Blotch-Smart-Frames/omni-build/issues/1). The npm package is not published.
 - What exists today: the repository, the npm launcher, CI gating 100% coverage and release builds on six targets, and an end-to-end pipeline that builds real Swift and Kotlin shells, runs them through the binary on Linux, Windows and macOS with no `PATH` or toolchain variables, and launches them on the iOS Simulator and an Android emulator. The binary repackages the Android shell; the iOS shell is copied unchanged.
 - Planned phases: 0 spikes, 1 dev client (AngularLynx), 2 Android, 3 iOS, 4 `ng deploy`, 5 prebuilt native modules. Android goes first.
 - Out of scope: compiling source code (Swift, Kotlin, C++). Custom native code still means Xcode or Gradle.

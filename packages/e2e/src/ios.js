@@ -30,7 +30,7 @@ const simctl = (args, options) => run('xcrun', ['simctl', ...args], options);
 
 /**
  * Builds the shell for the simulator with Xcode, zips it into `outDir`, and
- * returns the zip's path.
+ * returns the zip's path, the only shell.
  */
 const build = async ({ buildDir, outDir, log }) => {
   const derivedData = path.join(buildDir, 'ios');
@@ -67,7 +67,7 @@ const build = async ({ buildDir, outDir, log }) => {
   const shell = path.join(outDir, `${SHELL}.zip`);
   rmSync(shell, { force: true });
   await run('ditto', ['-c', '-k', '--keepParent', app, shell], { log });
-  return shell;
+  return [shell];
 };
 
 /**

@@ -31,7 +31,7 @@ enum Command {
 /// Turn a prebuilt app shell into an app, and sign it.
 #[derive(Debug, Args)]
 struct Repackage {
-    /// The app shell: an Android APK.
+    /// The app shell: an Android APK or App Bundle (AAB).
     shell: PathBuf,
     /// Where to write the app.
     #[arg(long, short)]

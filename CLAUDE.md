@@ -1,6 +1,6 @@
 # OmniBuild
 
-Build, sign, install and ship iOS and Android apps with no native toolchain (no Xcode, no JDK, no Android SDK). A standalone Rust binary that repackages a prebuilt app shell with an app's config and assets, then signs it. Distributed through npm (one package per OS and CPU, as rspack and oxlint do), `cargo install`, Homebrew and GitHub releases. **Phase 0** (the spikes) of the plan in [issue #1](https://github.com/Blotch-Smart-Frames/omni-build/issues/1): `omni-build repackage` handles Android APK shells.
+Build, sign, install and ship iOS and Android apps with no native toolchain (no Xcode, no JDK, no Android SDK). A standalone Rust binary that repackages a prebuilt app shell with an app's config and assets, then signs it. Distributed through npm (one package per OS and CPU, as rspack and oxlint do), `cargo install`, Homebrew and GitHub releases. **Phase 0** (the spikes) of the plan in [issue #1](https://github.com/Blotch-Smart-Frames/omni-build/issues/1): `omni-build repackage` handles Android APK and AAB shells.
 
 [AngularLynx](https://github.com/Blotch-Smart-Frames/AngularLynx) is its first user: its `@blotch/angular-lynx-build` builder will run OmniBuild for `ng build --platform ios|android`.
 

@@ -120,7 +120,7 @@ fn repackage_reports_what_went_wrong() {
         ),
         (
             vec!["repackage", not_apk.to_str().unwrap(), "--out", "app.apk"],
-            "error: the shell isn't an APK: it isn't a zip archive\n",
+            "error: the shell isn't an APK or an AAB: it isn't a zip archive\n",
         ),
         (
             vec!["repackage", SHELL, "--out", nowhere.to_str().unwrap()],

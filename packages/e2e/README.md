@@ -14,7 +14,7 @@ They follow how OmniBuild is meant to be used ([#1](https://github.com/Blotch-Sm
 | `repackage` | Linux, Windows and macOS            | Runs each shell through the omni-build release binary, which gets no `PATH` and no toolchain variables (below)            |
 | `test`      | macOS (Simulator), Linux (emulator) | Installs and launches every repackaged app, one per OS it was repackaged on, and checks what each reports                 |
 
-**Android shells go through `omni-build repackage`**, which gives the APK the ID, name, version, build number, icon and payload in `app/` and signs it with the debug key omni-build creates in the home folder. Each value differs from the shell's, so an app that reports it got it from omni-build. The `test` stage checks the result with Google's own tools first: `zipalign` for the alignment Android needs to map stored entries, and `apksigner` for every signature scheme. **iOS shells are copied unchanged** until Phase 0's iOS spike: for them, the stage only checks that the binary runs in that environment. `expected()` in `src/repackage.js` says what each platform's apps must report: the app's values where omni-build rewrites them, and the shell's elsewhere.
+**Android shells go through `omni-build repackage`**: Gradle builds an APK and an app bundle (AAB), and omni-build gives each the ID, name, version, build number, icon and payload in `app/`, and signs it with the debug key it creates in the home folder. Each value differs from the shell's, so an app that reports it got it from omni-build. The `test` stage checks the results with Google's own tools first. For an APK, that's `zipalign` for the alignment Android needs to map stored entries, and `apksigner` for every signature scheme. An app bundle gets what Google Play does with an upload: `jarsigner` checks its signature and `bundletool validate` its contents, then `bundletool build-apks` makes the universal APK that's installed. bundletool is downloaded once, pinned by its SHA-256, and signs that APK with a key of its own, as Play signs with the app's. **iOS shells are copied unchanged** until Phase 0's iOS spike: for them, the stage only checks that the binary runs in that environment. `expected()` in `src/repackage.js` says what each platform's apps must report: the app's values where omni-build rewrites them, and the shell's elsewhere.
 
 **No toolchain in reach.** GitHub's Linux and Windows runners come with a JDK and the Android SDK, and its macOS runners with Xcode. So `repackage` runs omni-build with only `HOME`, `USERPROFILE`, the temporary folder variables and `SystemRoot`: no `PATH` (it can't start a program by name) and no `JAVA_HOME`, `ANDROID_HOME` or `DEVELOPER_DIR`. A step that quietly relied on a vendor tool fails in CI, not on a user's machine without one.
 
@@ -30,25 +30,25 @@ npm run e2e -- --help                            # Every option
 
 `npm run e2e` from the repository root builds the omni-build binary first. The harness runs `target/release/omni-build`, or the binary `OMNI_BUILD_BINARY` names.
 
-Android needs a JDK (17 or later) and the Android SDK with API 37 and build tools 35 or later (for `zipalign -P`), found through `ANDROID_HOME` or Android Studio's default location. The iOS tests create and reuse their own simulator, "OmniBuild E2E", so your own simulators stay untouched.
+Android needs a JDK (17 or later, for Gradle, apksigner, jarsigner and bundletool) and the Android SDK with API 37 and build tools 35 or later (for `zipalign -P`), found through `ANDROID_HOME` or Android Studio's default location. The iOS tests create and reuse their own simulator, "OmniBuild E2E", so your own simulators stay untouched.
 
 ## What it checks
 
-| Value     | iOS: where it comes from                                      | Android: where it comes from                      |
-| --------- | ------------------------------------------------------------- | ------------------------------------------------- |
-| `id`      | `CFBundleIdentifier`                                          | the package name in the binary manifest           |
-| `name`    | `CFBundleDisplayName`                                         | the application label, in `resources.arsc`        |
-| `version` | `CFBundleShortVersionString`                                  | `versionName`                                     |
-| `build`   | `CFBundleVersion`                                             | `versionCode`                                     |
-| `payload` | `payload.txt` in the `.app`                                   | `assets/payload.txt` in the APK                   |
-| `icon`    | the centre pixel of the icon PNG named in `CFBundleIconFiles` | the centre pixel of the manifest's `android:icon` |
-| `signer`  | not yet checked                                               | the signing certificate's name, from `apksigner`  |
+| Value     | iOS: where it comes from                                      | Android: where it comes from                                                        |
+| --------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `id`      | `CFBundleIdentifier`                                          | the package name in the binary manifest                                             |
+| `name`    | `CFBundleDisplayName`                                         | the application label, in `resources.arsc`                                          |
+| `version` | `CFBundleShortVersionString`                                  | `versionName`                                                                       |
+| `build`   | `CFBundleVersion`                                             | `versionCode`                                                                       |
+| `payload` | `payload.txt` in the `.app`                                   | `assets/payload.txt` in the APK                                                     |
+| `icon`    | the centre pixel of the icon PNG named in `CFBundleIconFiles` | the centre pixel of the manifest's `android:icon`                                   |
+| `signer`  | not yet checked                                               | the signing certificate's name, from `apksigner` or, for an app bundle, `jarsigner` |
 
 The app also has to install and launch at all, which checks the package's structure and signature. The shells' own values are in `src/shell.js`, and must match the fixtures.
 
 ## Debug a failure
 
-Each stage writes to `artifacts/<platform>/<stage>/` (in CI, the `e2e-logs-*` and `e2e-results-*` workflow artifacts). `commands.log` has every command and its output. The `test` stage adds a folder per app with `report.json`, what the app reported, and `screenshot.png`, the app on screen. When an app never reports, iOS adds `app.log` and any crash report, and Android's `logcat.log` has the crash, which the error also quotes.
+Each stage writes to `artifacts/<platform>/<stage>/` (in CI, the `e2e-logs-*` and `e2e-results-*` workflow artifacts). `commands.log` has every command and its output. The `test` stage adds a folder per app, named for its file, with `report.json`, what the app reported, and `screenshot.png`, the app on screen. When an app never reports, iOS adds `app.log` and any crash report, and Android's `logcat.log` has the crash, which the error also quotes.
 
 ## Things to know
 
