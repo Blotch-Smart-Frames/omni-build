@@ -17,7 +17,7 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
-    "test:coverage": "turbo run test:coverage",
+    "test:coverage": "turbo run test:coverage && npm run check -w @omni-build/coverage-guard",
     "e2e": "npm run build -w @omni-build/cli && npm run e2e -w @omni-build/e2e --",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",

@@ -1,0 +1,20 @@
+{
+  "name": "@omni-build/coverage-guard",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fails the coverage gate when 100% would pass over untested code: a module without its own test, one only other tests cover, an ignore comment, a file the report leaves out",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "check": "node src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "typecheck": "tsc"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}
