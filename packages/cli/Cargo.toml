@@ -29,6 +29,9 @@ plist = { version = "1.10.1", default-features = false }
 rsa = { version = "0.9.10", features = ["getrandom", "sha2"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+# Apple's code signatures still use SHA-1 in two places: the resource seal
+# for older iOS versions, and a non-Apple certificate in a requirement.
+sha1 = "0.10.7"
 sha2 = "0.10.9"
 x509-cert = { version = "0.2.5", features = ["builder", "pem"] }
 

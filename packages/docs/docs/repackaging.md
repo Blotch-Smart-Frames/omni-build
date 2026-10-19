@@ -1,23 +1,25 @@
 ---
 title: Repackaging an app
-description: Turn an app shell, an Android APK or app bundle or an iOS app for the Simulator, into your app with omni-build repackage, and what the app config changes.
+description: Turn an app shell, an Android APK or app bundle or an iOS app, into your app with omni-build repackage, and what the app config changes.
 ---
 
 # Repackaging an app
 
 :::warning[Phase 0]
 
-Android shells, APKs and app bundles, signed with a debug key. iOS shells only when they're built for the iOS Simulator, and without a signature yet. OmniBuild isn't published yet: build the binary from the [repository](https://github.com/Blotch-Smart-Frames/omni-build) with `cargo build --release`.
+Android shells, APKs and app bundles, and iOS shells, for the Simulator or for devices. No iOS build OmniBuild signed has been through TestFlight yet. OmniBuild isn't published yet: build the binary from the [repository](https://github.com/Blotch-Smart-Frames/omni-build) with `cargo build --release`.
 
 :::
 
 ```sh
 omni-build repackage shell.apk --config app.json --out app.apk
 omni-build repackage shell.aab --config app.json --out app.aab
-omni-build repackage shell.zip --config app.json --out app.zip   # a zipped iOS .app
+omni-build repackage shell.zip --config app.json --out app.zip   # a zipped iOS .app, for the Simulator
+omni-build repackage shell.ipa --config app.json --out app.ipa \
+  --signing-key key.pem --profile app.mobileprovision            # for devices
 ```
 
-`repackage` reads a prebuilt app shell, gives it your app's values, and signs it. The shell is an APK, which installs on a device, an Android App Bundle (AAB), which you upload to Google Play, or a zipped iOS app (`.app`); OmniBuild tells which from its contents, and writes the app in the same form. Nothing else is installed or run: no JDK, no Android SDK, no Gradle, no Xcode.
+`repackage` reads a prebuilt app shell, gives it your app's values, and signs it. The shell is an APK, which installs on a device, an Android App Bundle (AAB), which you upload to Google Play, or an iOS app: an `.ipa` for devices, or a zipped `.app` for the Simulator. OmniBuild tells which from its contents, and writes the app in the same form. Nothing else is installed or run: no JDK, no Android SDK, no Gradle, no Xcode.
 
 ## The app config
 
@@ -47,13 +49,17 @@ Paths are relative to the config file. A field you leave out keeps the shell's v
 
 ## Signing
 
-An APK is signed with APK Signature Schemes v2 and v3, which Android 7.0 and later verify. An app bundle gets a JAR signature, which is how Google Play checks an upload before it signs the APKs it makes from the bundle with the app's own key. With no key given, OmniBuild uses a debug key it creates the first time, in `~/.omni-build/android-debug-key.pem`, the way the Android SDK keeps its own in `~/.android`. APKs signed with it install on devices and emulators. Signing with your own upload key, for Google Play, comes with [Phase 1](./roadmap.md).
+An APK is signed with APK Signature Schemes v2 and v3, which Android 7.0 and later verify. An app bundle gets a JAR signature, which is how Google Play checks an upload before it signs the APKs it makes from the bundle with the app's own key. With no key given, OmniBuild uses a debug key it creates the first time, in `~/.omni-build/android-debug-key.pem`, the way the Android SDK keeps its own in `~/.android`. APKs signed with it install on devices and emulators. To sign with your own key instead, give it with `--signing-key`: a PEM file with the RSA private key (PKCS #8) and its certificate. Keystores (PKCS #12, Java's) come with [Phase 1](./roadmap.md).
 
-iOS apps aren't signed yet. Changing an app's files breaks the signature Xcode gave the shell, which the iOS Simulator doesn't check but a device does, so OmniBuild only repackages Simulator builds for now. To run one, unzip it and install the `.app`:
+An iOS app gets Apple's code signature, as `codesign` writes it: every file sealed in `_CodeSignature/CodeResources`, and the executable signed over the seal, `Info.plist` and the entitlements.
 
-```sh
-ditto -x -k app.zip app && xcrun simctl install booted app/*.app
-```
+- **For the Simulator**, it's signed ad hoc, with no certificate, as Xcode signs a Simulator build. To run one, unzip it and install the `.app`:
+
+  ```sh
+  ditto -x -k app.zip app && xcrun simctl install booted app/*.app
+  ```
+
+- **For devices**, it's signed with a key Apple issued a certificate for (`--signing-key`, a PEM file with the key, its certificate, and Apple's intermediate certificate that issued it), and a provisioning profile that allows the certificate and the app's ID (`--profile`). The profile goes in the app as `embedded.mobileprovision`, and its App ID, team and `get-task-allow` or `beta-reports-active` become the app's entitlements. Other capabilities, such as push notifications, come later. A key from Keychain Access exports as a `.p12`, which `openssl pkcs12 -in key.p12 -nodes` turns into PEM.
 
 ## What a shell needs
 
@@ -65,7 +71,9 @@ On Android:
 
 On iOS:
 
-- A build for the iOS Simulator: `iPhoneSimulator` in its `Info.plist`'s `CFBundleSupportedPlatforms`.
+- A build for the Simulator (`iPhoneSimulator` in its `Info.plist`'s `CFBundleSupportedPlatforms`), or for devices (`iPhoneOS`).
+- A signature in its executable, if only ad hoc, for OmniBuild to replace: Xcode signs a Simulator build, and the linker reserves one in a build for devices with `OTHER_LDFLAGS=-Wl,-adhoc_codesign`, even with `CODE_SIGNING_ALLOWED=NO`.
+- No code nested in its bundle (`Frameworks/`, `PlugIns/`), which OmniBuild can't sign yet.
 - An app icon of a single size, Xcode's default, in its asset catalog. When an icon set has every size, Xcode can pack the smaller ones in with other images, which OmniBuild can't rewrite yet.
-- The `.app` zipped with its files' modes, so that its executable can still run: `ditto -c -k --keepParent Shell.app shell.zip` keeps them.
+- The `.app` zipped with its files' modes, so that its executable can still run: `ditto -c -k --keepParent Shell.app shell.zip`, or `Payload/Shell.app` the same way for an `.ipa`, keeps them.
 - No localized display name (`CFBundleDisplayName` in an `InfoPlist.strings`), which would show instead of the app's name.

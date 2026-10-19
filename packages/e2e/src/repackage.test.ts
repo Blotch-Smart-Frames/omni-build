@@ -75,8 +75,8 @@ describe('expected', () => {
     });
   });
 
-  it("is the app's values for iOS, unsigned", () => {
-    expect(expected('ios')).toEqual({
+  it("is the app's values for an iOS simulator build, signed ad hoc", () => {
+    expect(expected('ios', 'OmniBuildShell-linux.zip')).toEqual({
       ...SHELL,
       id: 'dev.omnibuild.e2e.app',
       name: 'OmniBuild E2E',
@@ -84,6 +84,19 @@ describe('expected', () => {
       build: '42',
       payload: 'Payload from the OmniBuild E2E app\n',
       icon: '#E8590C',
+      signer: 'ad hoc',
+    });
+  });
+
+  it("is what an iOS build for devices' files say, signed with the test key", () => {
+    expect(expected('ios', 'OmniBuildShell-linux.ipa')).toEqual({
+      id: 'dev.omnibuild.e2e.app',
+      name: 'OmniBuild E2E',
+      version: '2.5.0',
+      build: '42',
+      payload: 'Payload from the OmniBuild E2E app\n',
+      signer: 'OmniBuild E2E',
+      applicationIdentifier: 'OMNIBUILD0.dev.omnibuild.e2e.app',
     });
   });
 });
@@ -117,6 +130,33 @@ describe('repackage', () => {
     expect(run).toHaveBeenCalledWith(
       binary,
       ['repackage', shell, '--config', APP_CONFIG, '--out', app],
+      { log: 'commands.log', env: { HOME: '/home/me', TMPDIR: '/tmp/me' } },
+    );
+  });
+
+  it('signs an iOS build for devices with the test key and profile', async () => {
+    const shell = path.join('shells', 'OmniBuildShell.ipa');
+    onPlatform('darwin');
+
+    const app = await repackage({ shell, outDir, log: 'commands.log' });
+
+    expect(app).toBe(path.join(outDir, 'OmniBuildShell-macos.ipa'));
+    expect(run).toHaveBeenCalledWith(
+      binary,
+      [
+        'repackage',
+        shell,
+        '--config',
+        APP_CONFIG,
+        '--signing-key',
+        fileURLToPath(new URL('../app/signing-key.pem', import.meta.url)),
+        '--profile',
+        fileURLToPath(
+          new URL('../app/OmniBuildE2E.mobileprovision', import.meta.url),
+        ),
+        '--out',
+        app,
+      ],
       { log: 'commands.log', env: { HOME: '/home/me', TMPDIR: '/tmp/me' } },
     );
   });

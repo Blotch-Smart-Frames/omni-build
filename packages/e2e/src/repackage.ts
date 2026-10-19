@@ -21,6 +21,21 @@ const APP: {
 } = JSON.parse(readFileSync(APP_CONFIG, 'utf8'));
 /** The colour of every pixel of the app's icon, `app/icon.png`. */
 const APP_ICON = '#E8590C';
+/**
+ * What a build for devices is signed with: a key with a self-signed
+ * certificate, and a provisioning profile allowing it and the app's ID, for
+ * a team that doesn't exist. Both were made for these tests, as README.md
+ * says: no device would install the app, but codesign checks the signature
+ * all the same.
+ */
+const SIGNING_KEY = fileURLToPath(
+  new URL('../app/signing-key.pem', import.meta.url),
+);
+const PROFILE = fileURLToPath(
+  new URL('../app/OmniBuildE2E.mobileprovision', import.meta.url),
+);
+const SIGNER = 'OmniBuild E2E';
+const TEAM = 'OMNIBUILD0';
 
 /** The OS a repackaged app's file name says it was repackaged on. */
 const OS_NAMES: Partial<Record<NodeJS.Platform, string>> = {
@@ -76,14 +91,15 @@ const omniBuildBinary = () => {
 };
 
 /**
- * What each platform's apps must report after the repackage stage, and
- * what signed them: the app config's values where omni-build rewrites
- * them, and the shell's own elsewhere.
+ * What an app must report after the repackage stage, and what signed it:
+ * the app config's values where omni-build rewrites them, and the shell's
+ * own elsewhere.
  */
 export const expected = (
   platform: 'ios' | 'android',
-): typeof SHELL & { signer?: string } => {
-  const app = {
+  app = '',
+): Record<string, string> => {
+  const values = {
     ...SHELL,
     id: APP.id,
     name: APP.name,
@@ -95,16 +111,30 @@ export const expected = (
     ),
     icon: APP_ICON,
   };
-  return platform === 'android'
-    ? {
-        ...app,
-        // The debug key omni-build creates and signs with when it's given
-        // no key: only it could have signed the app with this.
-        signer: 'CN=OmniBuild Debug, O=OmniBuild',
-      }
-    : // omni-build can't sign iOS apps yet, so the Simulator runs them
-      // with the signature Xcode gave the shell, which no longer matches.
-      app;
+  if (platform === 'android') {
+    return {
+      ...values,
+      // The debug key omni-build creates and signs with when it's given
+      // no key: only it could have signed the app with this.
+      signer: 'CN=OmniBuild Debug, O=OmniBuild',
+    };
+  }
+  if (app.endsWith('.ipa')) {
+    // A build for devices, which the simulator can't run: what its files
+    // say, but for the icon, which only iOS reads out of Assets.car, and
+    // what the profile allowed its signature.
+    return {
+      id: values.id,
+      name: values.name,
+      version: values.version,
+      build: values.build,
+      payload: values.payload,
+      signer: SIGNER,
+      applicationIdentifier: `${TEAM}.${APP.id}`,
+    };
+  }
+  // Signed ad hoc, as Xcode signs a simulator build.
+  return { ...values, signer: 'ad hoc' };
 };
 
 /**
@@ -129,9 +159,13 @@ export const repackage = async ({
     outDir,
     `${path.basename(shell, extension)}-${OS_NAMES[process.platform] ?? process.platform}${extension}`,
   );
+  // A build for devices has to be signed with a key and a profile.
+  const signing = shell.endsWith('.ipa')
+    ? ['--signing-key', SIGNING_KEY, '--profile', PROFILE]
+    : [];
   await run(
     omniBuildBinary(),
-    ['repackage', shell, '--config', APP_CONFIG, '--out', output],
+    ['repackage', shell, '--config', APP_CONFIG, ...signing, '--out', output],
     { log, env: toolchainFree() },
   );
   return output;

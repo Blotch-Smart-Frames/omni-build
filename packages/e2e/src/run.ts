@@ -40,11 +40,15 @@ export interface Platform<Started = unknown, Device = unknown> {
   ): Promise<string[]>;
   /**
    * Checks an app with the platform's own tools, and returns what signed it
-   * and, when it isn't the app itself, the file to install.
+   * and, when it isn't the app itself, the file to install. For an app the
+   * device can't run, it returns what the app's files say (`report`),
+   * which is checked in place of what the app would report.
    */
-  verify(
-    options: DeviceOptions & { app: string },
-  ): Promise<{ installable?: string; signer?: string }>;
+  verify(options: DeviceOptions & { app: string }): Promise<{
+    installable?: string;
+    signer?: string;
+    report?: Record<string, unknown>;
+  }>;
   /** Starts the device booting, without waiting for it. */
   startDevice(options: DeviceOptions): Promise<Started>;
   waitForDevice(started: Started, options: DeviceOptions): Promise<Device>;
@@ -208,7 +212,6 @@ export const run = async (
   ) => {
     step(`Running ${appFiles.length} app(s) on ${platform.name}`);
     const options = { ...artifacts, avd: values.avd };
-    const want = expected(platformId);
     const device = await platform.waitForDevice(started, options);
     const failures: string[] = [];
     try {
@@ -218,22 +221,28 @@ export const run = async (
         const artifactsDir = path.join(artifacts.artifactsDir, name);
         mkdirSync(artifactsDir);
         try {
+          const want = expected(platformId, app);
           // The platform's own tools check the package before it's
           // installed, and report what signed it. An app bundle is turned
           // into an APK to install, as an app store would.
-          const { installable = app, ...verified } = await platform.verify({
+          const {
+            installable = app,
+            report: files,
+            ...verified
+          } = await platform.verify({
             ...options,
             artifactsDir,
             app,
           });
           const report = {
-            ...(await platform.runApp({
-              ...options,
-              artifactsDir,
-              device,
-              app: installable,
-              appId: want.id,
-            })),
+            ...(files ??
+              (await platform.runApp({
+                ...options,
+                artifactsDir,
+                device,
+                app: installable,
+                appId: want.id,
+              }))),
             ...verified,
           };
           writeFileSync(

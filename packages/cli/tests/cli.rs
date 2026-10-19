@@ -8,6 +8,14 @@ use std::process::{Command, Output};
 
 const SHELL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/shell.apk");
 const SHELL_APP: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/shell.app.zip");
+const SHELL_IPA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/shell.ipa");
+/// A key and certificate, and a provisioning profile allowing it: see
+/// tests/fixtures/README.md.
+const IDENTITY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/identity.pem");
+const PROFILE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/profile.mobileprovision"
+);
 
 fn omni_build(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_omni-build"))
@@ -144,6 +152,50 @@ fn repackage_gives_an_ios_app_its_values_and_icon() {
 }
 
 #[test]
+fn repackage_signs_with_the_key_it_is_given() {
+    let home = tempfile::tempdir().unwrap();
+    let (apk, ipa) = (home.path().join("app.apk"), home.path().join("app.ipa"));
+
+    let android = omni_build_at_home(
+        home.path(),
+        &[
+            "repackage",
+            SHELL,
+            "--signing-key",
+            IDENTITY,
+            "--out",
+            apk.to_str().unwrap(),
+        ],
+    );
+    let ios = omni_build_at_home(
+        home.path(),
+        &[
+            "repackage",
+            SHELL_IPA,
+            "--signing-key",
+            IDENTITY,
+            "--profile",
+            PROFILE,
+            "--out",
+            ipa.to_str().unwrap(),
+        ],
+    );
+
+    assert!(android.status.success(), "{}", stderr(&android));
+    assert!(ios.status.success(), "{}", stderr(&ios));
+    // No debug key: the APK's signature has the given key's certificate.
+    assert!(!home.path().join(".omni-build").exists());
+    let contains =
+        |bytes: &[u8], text: &[u8]| bytes.windows(text.len()).any(|window| window == text);
+    assert!(contains(&fs::read(apk).unwrap(), b"OmniBuild Test"));
+    // Zip entry names aren't compressed.
+    assert!(contains(
+        &fs::read(ipa).unwrap(),
+        b"Payload/OmniBuildShell.app/embedded.mobileprovision"
+    ));
+}
+
+#[test]
 fn repackage_reports_what_went_wrong() {
     let home = tempfile::tempdir().unwrap();
     let not_apk = home.path().join("not.apk");
@@ -203,6 +255,36 @@ fn repackage_reports_what_went_wrong() {
                 "app.zip",
             ],
             "error: couldn't rewrite the shell's OmniBuildShell.app/Info.plist: \"my_app\" isn't a valid iOS bundle ID: ",
+        ),
+        (
+            vec![
+                "repackage",
+                SHELL,
+                "--signing-key",
+                "missing.pem",
+                "--out",
+                "app.apk",
+            ],
+            "error: couldn't read the signing key missing.pem: ",
+        ),
+        (
+            vec![
+                "repackage",
+                SHELL,
+                "--profile",
+                "missing.mobileprovision",
+                "--out",
+                "app.apk",
+            ],
+            "error: couldn't read the provisioning profile missing.mobileprovision: ",
+        ),
+        (
+            vec!["repackage", SHELL, "--profile", PROFILE, "--out", "app.apk"],
+            "error: a provisioning profile is for iOS apps, and the shell is an Android app\n",
+        ),
+        (
+            vec!["repackage", SHELL_IPA, "--out", "app.ipa"],
+            "error: a build for devices has to be signed with a key Apple issued a certificate for, and a provisioning profile allowing it: give them with --signing-key and --profile\n",
         ),
     ];
 

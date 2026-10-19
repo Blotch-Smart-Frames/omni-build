@@ -14,7 +14,7 @@ They follow how OmniBuild is meant to be used ([#1](https://github.com/Blotch-Sm
 | `repackage` | Linux, Windows and macOS            | Runs each shell through the omni-build release binary, which gets no `PATH` and no toolchain variables (below)            |
 | `test`      | macOS (Simulator), Linux (emulator) | Installs and launches every repackaged app, one per OS it was repackaged on, and checks what each reports                 |
 
-**Every shell goes through `omni-build repackage`**, which tells an iOS app from an APK or an AAB by its contents. Gradle builds an APK and an app bundle (AAB), and omni-build gives each the ID, name, version, build number, icon and payload in `app/`, and signs it with the debug key it creates in the home folder. Each value differs from the shell's, so an app that reports it got it from omni-build. The `test` stage checks the results with Google's own tools first. For an APK, that's `zipalign` for the alignment Android needs to map stored entries, and `apksigner` for every signature scheme. An app bundle gets what Google Play does with an upload: `jarsigner` checks its signature and `bundletool validate` its contents, then `bundletool build-apks` makes the universal APK that's installed. bundletool is downloaded once, pinned by its SHA-256, and signs that APK with a key of its own, as Play signs with the app's. Xcode builds the iOS shell for the Simulator, and omni-build gives it the same values, the icon in its asset catalog (`Assets.car`) among them. It doesn't sign iOS apps yet: the Simulator runs them with the signature Xcode gave the shell, which no longer matches their files, so the `test` stage has no signature to check. `expected()` in `src/repackage.ts` says what each platform's apps must report: the app's values where omni-build rewrites them, and the shell's elsewhere.
+**Every shell goes through `omni-build repackage`**, which tells an iOS app from an APK or an AAB by its contents. Gradle builds an APK and an app bundle (AAB), and omni-build gives each the ID, name, version, build number, icon and payload in `app/`, and signs it with the debug key it creates in the home folder. Each value differs from the shell's, so an app that reports it got it from omni-build. The `test` stage checks the results with Google's own tools first. For an APK, that's `zipalign` for the alignment Android needs to map stored entries, and `apksigner` for every signature scheme. An app bundle gets what Google Play does with an upload: `jarsigner` checks its signature and `bundletool validate` its contents, then `bundletool build-apks` makes the universal APK that's installed. bundletool is downloaded once, pinned by its SHA-256, and signs that APK with a key of its own, as Play signs with the app's. Xcode builds the iOS shell for the Simulator, and for devices as an `.ipa`, unsigned but with room for a signature, and omni-build gives both the same values, the icon in its asset catalog (`Assets.car`) among them. It signs the Simulator build ad hoc, and the `.ipa` with a key and a provisioning profile made for these tests (`app/signing-key.pem` and `app/OmniBuildE2E.mobileprovision`, for a team that doesn't exist, made as below). The `test` stage checks each signature with `codesign --verify --strict --deep`. The Simulator can't run a build for devices, so for the `.ipa` it checks what the app's files say instead: `Info.plist`, the payload, and the entitlements in its signature. `expected()` in `src/repackage.ts` says what each platform's apps must report: the app's values where omni-build rewrites them, and the shell's elsewhere.
 
 **No toolchain in reach.** GitHub's Linux and Windows runners come with a JDK and the Android SDK, and its macOS runners with Xcode. So `repackage` runs omni-build with only `HOME`, `USERPROFILE`, the temporary folder variables and `SystemRoot`: no `PATH` (it can't start a program by name) and no `JAVA_HOME`, `ANDROID_HOME` or `DEVELOPER_DIR`. A step that quietly relied on a vendor tool fails in CI, not on a user's machine without one.
 
@@ -34,15 +34,16 @@ Android needs a JDK (17 or later, for Gradle, apksigner, jarsigner and bundletoo
 
 ## What it checks
 
-| Value     | iOS: where it comes from                                      | Android: where it comes from                                                        |
-| --------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `id`      | `CFBundleIdentifier`                                          | the package name in the binary manifest                                             |
-| `name`    | `CFBundleDisplayName`                                         | the application label, in `resources.arsc`                                          |
-| `version` | `CFBundleShortVersionString`                                  | `versionName`                                                                       |
-| `build`   | `CFBundleVersion`                                             | `versionCode`                                                                       |
-| `payload` | `payload.txt` in the `.app`                                   | `assets/payload.txt` in the APK                                                     |
-| `icon`    | the centre pixel of the icon PNG named in `CFBundleIconFiles` | the centre pixel of the manifest's `android:icon`                                   |
-| `signer`  | not yet checked: omni-build doesn't sign iOS apps yet         | the signing certificate's name, from `apksigner` or, for an app bundle, `jarsigner` |
+| Value                   | iOS: where it comes from                                                                           | Android: where it comes from                                                        |
+| ----------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `id`                    | `CFBundleIdentifier`                                                                               | the package name in the binary manifest                                             |
+| `name`                  | `CFBundleDisplayName`                                                                              | the application label, in `resources.arsc`                                          |
+| `version`               | `CFBundleShortVersionString`                                                                       | `versionName`                                                                       |
+| `build`                 | `CFBundleVersion`                                                                                  | `versionCode`                                                                       |
+| `payload`               | `payload.txt` in the `.app`                                                                        | `assets/payload.txt` in the APK                                                     |
+| `icon`                  | the centre pixel of the icon in `Assets.car` and of the PNGs beside it, one colour when they agree | the centre pixel of the manifest's `android:icon`                                   |
+| `signer`                | `ad hoc` for the Simulator, or the certificate's name for devices, from `codesign`                 | the signing certificate's name, from `apksigner` or, for an app bundle, `jarsigner` |
+| `applicationIdentifier` | for devices only: the App ID in the signature's entitlements                                       | not checked                                                                         |
 
 The app also has to install and launch at all, which checks the package's structure and signature. The shells' own values are in `src/shell.ts`, and must match the fixtures.
 
@@ -55,6 +56,33 @@ Each stage writes to `artifacts/<platform>/<stage>/` (in CI, the `e2e-logs-*` an
 - **No Maestro, on purpose.** The app reports what it found itself (a file in its data container on iOS, a logcat line on Android), so nothing has to drive the UI. That's faster and steadier, and needs nothing installed beyond the platforms' own tools. A test that has to interact with an app (tapping through a Lynx shell, accepting a permission) is where Maestro would come in.
 - **The iOS shell travels as a zip of the `.app`**, made with `ditto`, which keeps each file's mode. A `.app` is a folder, and its executable's mode wouldn't survive a workflow artifact or a Windows file system.
 - **The iOS icon check reads both copies of the icon:** the one in `Assets.car`, which the home screen draws, and the PNGs Xcode writes beside it for earlier versions of iOS. No public API reads the first (`actool` stores app icons as a kind of asset `UIImage(named:)` doesn't load), so the fixture calls CoreUI's `CUICatalog` by name, as the home screen does. The app reports one colour when the copies agree, and both when they don't.
+- **The iOS signing key and profile are made for these tests.** CI has no certificate Apple issued, so the key's certificate is self-signed, and the profile is signed with the same key instead of by Apple, for a team that doesn't exist (`OMNIBUILD0`). No device would install the `.ipa`, but `codesign` checks its signature all the same, and the profile has what OmniBuild reads of a real one. To make them again:
+
+```sh
+cd packages/e2e/app
+openssl req -x509 -newkey rsa:2048 -nodes -days 36500 -keyout key.pem -out cert.pem \\
+  -subj "/CN=OmniBuild E2E/OU=OMNIBUILD0/O=OmniBuild" \\
+  -addext "keyUsage=critical,digitalSignature" -addext "extendedKeyUsage=critical,codeSigning" \\
+  -addext "basicConstraints=critical,CA:FALSE"
+cat key.pem cert.pem > signing-key.pem
+python3 - <<'PLIST'
+import plistlib, datetime, subprocess
+cert = subprocess.run(['openssl', 'x509', '-in', 'cert.pem', '-outform', 'DER'], capture_output=True).stdout
+plistlib.dump({
+    'AppIDName': 'OmniBuild E2E', 'ApplicationIdentifierPrefix': ['OMNIBUILD0'], 'Platform': ['iOS'],
+    'CreationDate': datetime.datetime(2026, 10, 19), 'ExpirationDate': datetime.datetime(2126, 10, 19),
+    'DeveloperCertificates': [cert],
+    'Entitlements': {'application-identifier': 'OMNIBUILD0.dev.omnibuild.e2e.app', 'com.apple.developer.team-identifier': 'OMNIBUILD0',
+                     'get-task-allow': True, 'keychain-access-groups': ['OMNIBUILD0.*']},
+    'Name': 'OmniBuild E2E', 'ProvisionedDevices': [], 'TeamIdentifier': ['OMNIBUILD0'], 'TeamName': 'OmniBuild',
+    'TimeToLive': 36500, 'UUID': '0A1B2C3D-4E5F-4061-8273-94A5B6C7D8E9', 'Version': 1,
+}, open('profile.plist', 'wb'), sort_keys=False)
+PLIST
+openssl cms -sign -nodetach -binary -outform DER -md sha256 -signer cert.pem -inkey key.pem \\
+  -in profile.plist -out OmniBuildE2E.mobileprovision
+rm key.pem cert.pem profile.plist
+```
+
 - **The fixtures are native projects**, so they keep Xcode's and Android Studio's formatting: oxfmt skips `fixtures/`.
 - **The release APK is signed with the Android SDK's debug key**, so it installs without a keystore of its own. omni-build re-signs it with its own.
 - **The harness uses only Node's built-in modules**, and Node runs its TypeScript as it is, stripping the types (Node 22.18 or later), so CI runs it without `npm ci` or a build.

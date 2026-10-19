@@ -21,7 +21,7 @@ use x509_cert::der::asn1::{OctetString, SetOfVec};
 use x509_cert::der::{Any, Encode};
 use x509_cert::spki::AlgorithmIdentifierOwned;
 
-use super::key::SigningKey;
+use crate::key::SigningKey;
 use crate::zip::{Entry, Method};
 
 /// Lines in a JAR manifest are at most 72 bytes.
@@ -160,7 +160,7 @@ mod tests {
     use x509_cert::der::Decode;
 
     use super::{header, sign};
-    use crate::android::key::tests::{KEY, verifies};
+    use crate::key::tests::{KEY, verifies};
     use crate::zip::{Entry, Method};
 
     fn text(entry: &Entry) -> String {

@@ -215,7 +215,9 @@ jobs:
   # 3. e2e-ios, e2e-android: every repackaged app installed and launched on
   #    the iOS Simulator and an Android emulator, each checked against the
   #    values it reports. An Android app bundle is installed as the APK
-  #    bundletool makes from it.
+  #    bundletool makes from it. An iOS build for devices, which the
+  #    Simulator can't run, is checked with codesign and by what its files
+  #    say.
   #
   # The harness uses only Node's built-in modules, and Node runs its TypeScript
   # by stripping the types, so these jobs skip `npm ci`.
@@ -325,7 +327,7 @@ jobs:
           pattern: e2e-shell-*
           path: e2e/shells
           merge-multiple: true
-      - run: node packages/e2e/src/cli.ts repackage --platform ios --shell e2e/shells/OmniBuildShell.zip --out e2e/repackaged
+      - run: node packages/e2e/src/cli.ts repackage --platform ios --shell e2e/shells/OmniBuildShell.zip --shell e2e/shells/OmniBuildShell.ipa --out e2e/repackaged
       - run: node packages/e2e/src/cli.ts repackage --platform android --shell e2e/shells/OmniBuildShell.apk --shell e2e/shells/OmniBuildShell.aab --out e2e/repackaged
       - uses: actions/upload-artifact@v7
         with:
@@ -356,7 +358,7 @@ jobs:
           pattern: e2e-repackaged-*
           path: e2e/repackaged
           merge-multiple: true
-      - run: node packages/e2e/src/cli.ts test --platform ios e2e/repackaged/*.zip
+      - run: node packages/e2e/src/cli.ts test --platform ios e2e/repackaged/*.zip e2e/repackaged/*.ipa
       # Each app's report and a screenshot, and on a failure its logs.
       - uses: actions/upload-artifact@v7
         if: always()

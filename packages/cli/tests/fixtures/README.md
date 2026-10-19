@@ -34,11 +34,30 @@ The Rust tests find files in both Android shells by their place in the archive, 
 
 ## `shell.app.zip`
 
-The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. Its executable is emptied, keeping its mode: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, and its icon, in the asset catalog (`Assets.car`) and the PNGs beside it, but never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
+The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. Its executable is a tiny program instead of the shell's Swift, linked for the Simulator's two architectures and signed by the linker: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, its icon, in the asset catalog (`Assets.car`) and the PNGs beside it, and its signature, but never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
 
 ```sh
 node packages/e2e/src/cli.ts build --platform ios
 ditto -x -k packages/e2e/build/shells/ios/OmniBuildShell.zip trimmed
-: > trimmed/OmniBuildShell.app/OmniBuildShell
+printf 'int main(void) { return 0; }\n' > main.c
+xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-version-min=17.0 \\
+  -Wl,-adhoc_codesign main.c -o trimmed/OmniBuildShell.app/OmniBuildShell
 ditto -c -k --norsrc --keepParent trimmed/OmniBuildShell.app packages/cli/tests/fixtures/shell.app.zip
 ```
+
+## `shell.ipa`
+
+The same shell built for devices, as the E2E tests build it (unsigned, with room for a signature), in an `.ipa`, with a tiny program for its executable, linked for arm64 and signed by the linker. Its PNGs are Apple's variant, as Xcode writes them for devices.
+
+```sh
+ditto -x -k packages/e2e/build/shells/ios/OmniBuildShell.ipa trimmed-ipa
+xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -Wl,-adhoc_codesign main.c \\
+  -o trimmed-ipa/Payload/OmniBuildShell.app/OmniBuildShell
+cd trimmed-ipa && ditto -c -k --norsrc --keepParent Payload ../packages/cli/tests/fixtures/shell.ipa
+```
+
+The tests compare what OmniBuild signs with what `codesign` signs from the same files: ad hoc, with `codesign --sign - --force` on each unzipped shell, and with the identity below, from a keychain, with `codesign --sign "OmniBuild Test" --timestamp=none --entitlements` the entitlements the profile gives `dev.omnibuild.shell`, and the profile copied in as `embedded.mobileprovision`. A remade shell needs those values in the tests made again.
+
+## `identity.pem` and `profile.mobileprovision`
+
+A key with a self-signed certificate, "OmniBuild Test", for a team that doesn't exist (`ABCDE12345`), and a provisioning profile signed with the same key, which allows it and any bundle ID (`ABCDE12345.*`). Made as the E2E tests' are (see `packages/e2e/README.md`), with `OmniBuild Test`, `ABCDE12345` and `ABCDE12345.*`, and written to `identity.pem` and `profile.mobileprovision`.

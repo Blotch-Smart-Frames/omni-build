@@ -107,7 +107,7 @@ afterEach(() => {
 });
 
 describe('build', () => {
-  it('builds the shell for the simulator with Xcode, and zips it', async () => {
+  it('builds the shell for the simulator and for devices with Xcode, and zips each', async () => {
     const shells = await ios.build({
       ...artifacts,
       buildDir: 'build',
@@ -115,19 +115,35 @@ describe('build', () => {
     });
 
     const derivedData = path.join('build', 'ios');
-    const app = path.join(
+    const xcodebuild = `xcodebuild build -project ${PROJECT} -scheme OmniBuildShell -configuration Release`;
+    const simulator = path.join(
       derivedData,
       'Build/Products/Release-iphonesimulator',
       'OmniBuildShell.app',
     );
+    const device = path.join(
+      derivedData,
+      'Build/Products/Release-iphoneos',
+      'OmniBuildShell.app',
+    );
+    const payload = path.join('build', 'ios-ipa', 'Payload');
     const zip = path.join('out', 'OmniBuildShell.zip');
+    const ipa = path.join('out', 'OmniBuildShell.ipa');
     expect(commands()).toEqual([
-      `xcodebuild build -project ${PROJECT} -scheme OmniBuildShell -configuration Release -sdk iphonesimulator -destination generic/platform=iOS Simulator -derivedDataPath ${derivedData}`,
-      `ditto -c -k --keepParent ${app} ${zip}`,
+      `${xcodebuild} -sdk iphonesimulator -destination generic/platform=iOS Simulator -derivedDataPath ${derivedData}`,
+      `${xcodebuild} -sdk iphoneos -destination generic/platform=iOS -derivedDataPath ${derivedData} CODE_SIGNING_ALLOWED=NO OTHER_LDFLAGS=-Wl,-adhoc_codesign`,
+      `ditto -c -k --keepParent ${simulator} ${zip}`,
+      `ditto ${device} ${path.join(payload, 'OmniBuildShell.app')}`,
+      `ditto -c -k --keepParent ${payload} ${ipa}`,
     ]);
     expect(mkdirSync).toHaveBeenCalledWith('out', { recursive: true });
     expect(rmSync).toHaveBeenCalledWith(zip, { force: true });
-    expect(shells).toEqual([zip]);
+    expect(rmSync).toHaveBeenCalledWith(ipa, { force: true });
+    expect(rmSync).toHaveBeenCalledWith(payload, {
+      recursive: true,
+      force: true,
+    });
+    expect(shells).toEqual([zip, ipa]);
   });
 });
 
@@ -376,8 +392,110 @@ describe('runApp', () => {
 });
 
 describe('verify', () => {
-  it("checks nothing yet: omni-build doesn't sign iOS apps", async () => {
-    expect(await ios.verify({ ...artifacts, app: 'app.zip' })).toEqual({});
+  const unzipped = '/tmp/omni-build-e2e-1';
+
+  /** codesign's details of a signature, which it prints to stderr. */
+  const signedBy = (details: string) => {
+    respond = (program, args) =>
+      program === 'codesign' && args[0] === '--display' && args.length === 3
+        ? { output: details }
+        : undefined;
+  };
+
+  it("checks a simulator build's signature with codesign", async () => {
+    signedBy('Identifier=dev.omnibuild.e2e.app\nSignature=adhoc\n');
+    vi.mocked(readdirSync).mockReturnValueOnce(['OmniBuildShell.app'] as never);
+
+    expect(await ios.verify({ ...artifacts, app: 'app.zip' })).toEqual({
+      signer: 'ad hoc',
+    });
+    const bundle = path.join(unzipped, 'OmniBuildShell.app');
+    expect(commands()).toEqual([
+      `ditto -x -k app.zip ${unzipped}`,
+      `codesign --verify --strict --deep --verbose=2 ${bundle}`,
+      `codesign --display --verbose=2 ${bundle}`,
+    ]);
+    expect(rmSync).toHaveBeenCalledWith(unzipped, {
+      recursive: true,
+      force: true,
+    });
+  });
+
+  it('reports the certificate that signed it, or nothing for no signature', async () => {
+    vi.mocked(readdirSync).mockReturnValue(['OmniBuildShell.app'] as never);
+
+    signedBy('Authority=OmniBuild E2E\nAuthority=Its issuer\n');
+    const signed = await ios.verify({ ...artifacts, app: 'app.zip' });
+    signedBy('Identifier=dev.omnibuild.e2e.app\n');
+    const unsigned = await ios.verify({ ...artifacts, app: 'app.zip' });
+
+    expect(signed).toEqual({ signer: 'OmniBuild E2E' });
+    expect(unsigned).toEqual({ signer: undefined });
+  });
+
+  it("reads what a build for devices' files say, which the simulator can't run", async () => {
+    vi.mocked(readdirSync).mockReturnValue(['OmniBuildShell.app'] as never);
+    vi.mocked(readFileSync).mockReturnValue('the payload');
+    const bundle = path.join(unzipped, 'Payload', 'OmniBuildShell.app');
+    const info = {
+      CFBundleIdentifier: 'dev.omnibuild.e2e.app',
+      CFBundleName: 'OmniBuildShell',
+      CFBundleShortVersionString: '2.5.0',
+      CFBundleVersion: '42',
+    };
+    let display = { CFBundleDisplayName: 'OmniBuild E2E' };
+    respond = (program, args) => {
+      if (program === 'plutil') {
+        return { stdout: JSON.stringify({ ...info, ...display }) };
+      }
+      if (args.includes('--entitlements')) {
+        return {
+          stdout:
+            '<dict>\n\t<key>application-identifier</key>\n\t<string>TEAM.dev.omnibuild.e2e.app</string>\n</dict>',
+        };
+      }
+      return args[0] === '--display'
+        ? { output: 'Authority=OmniBuild E2E\n' }
+        : undefined;
+    };
+
+    const verified = await ios.verify({ ...artifacts, app: 'app.ipa' });
+    display = {} as typeof display;
+    respond = (
+      (previous) => (program: string, args: string[]) =>
+        args.includes('--entitlements')
+          ? { stdout: '<dict/>' }
+          : previous(program, args)
+    )(respond);
+    const nameless = await ios.verify({ ...artifacts, app: 'app.ipa' });
+
+    expect(verified).toEqual({
+      signer: 'OmniBuild E2E',
+      report: {
+        id: 'dev.omnibuild.e2e.app',
+        name: 'OmniBuild E2E',
+        version: '2.5.0',
+        build: '42',
+        payload: 'the payload',
+        applicationIdentifier: 'TEAM.dev.omnibuild.e2e.app',
+      },
+    });
+    expect(commands().slice(0, 5)).toEqual([
+      `ditto -x -k app.ipa ${unzipped}`,
+      `codesign --verify --strict --deep --verbose=2 ${bundle}`,
+      `codesign --display --verbose=2 ${bundle}`,
+      `plutil -convert json -o - ${path.join(bundle, 'Info.plist')}`,
+      `codesign --display --entitlements - --xml ${bundle}`,
+    ]);
+    expect(readFileSync).toHaveBeenCalledWith(
+      path.join(bundle, 'payload.txt'),
+      'utf8',
+    );
+    // Without a display name, the bundle's name is under the icon.
+    expect(nameless.report).toMatchObject({
+      name: 'OmniBuildShell',
+      applicationIdentifier: undefined,
+    });
   });
 });
 
