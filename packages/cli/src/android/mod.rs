@@ -4,7 +4,6 @@
 mod binary_xml;
 mod chunk;
 mod jar_signing;
-pub mod key;
 mod manifest;
 mod proto_resources;
 mod proto_xml;
@@ -19,10 +18,10 @@ use anyhow::{Context, Result};
 
 use crate::config::App;
 use crate::icon;
+use crate::key::SigningKey;
 use crate::payload;
 use crate::zip::{self, Entry, Method};
 use binary_xml::BinaryXml;
-use key::SigningKey;
 use manifest::{Changes, Document};
 use proto_resources::ProtoResources;
 use proto_xml::ProtoXml;
@@ -207,11 +206,11 @@ mod tests {
     use anyhow::Result;
 
     use super::{ProtoResources, ProtoXml, Resources, SigningKey, is_jar_signature, layout};
-    use crate::android::key::tests::KEY;
     use crate::android::manifest::{Document, Value};
     use crate::android::proto_xml::tests::SHELL_AAB;
     use crate::config::App;
     use crate::icon::tests::solid_png;
+    use crate::key::tests::KEY;
     use crate::zip::{self, Entry, Method, tests::SHELL, tests::entry};
 
     /// Repackages an APK or AAB from its bytes, as `omni-build repackage`

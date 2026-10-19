@@ -9,7 +9,7 @@
 
 use sha2::{Digest, Sha256};
 
-use super::key::SigningKey;
+use crate::key::SigningKey;
 use crate::zip::Written;
 
 /// Signature algorithm 0x0103: RSASSA-PKCS1-v1_5 with SHA2-256, over a
@@ -158,8 +158,8 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     use super::{CHUNK, content_digest, sign};
-    use crate::android::key::tests::{KEY, verifies};
     use crate::bytes::Reader;
+    use crate::key::tests::{KEY, verifies};
     use crate::zip::{self, Method, tests::entry};
 
     /// One length-prefixed field of a signer.

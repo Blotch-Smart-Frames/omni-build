@@ -1,13 +1,21 @@
 //! Repackaging iOS app shells, which are zipped: a `.app` is a folder, and
-//! its executable's mode wouldn't survive being copied around as one.
+//! its executable's mode wouldn't survive being copied around as one. A
+//! build for devices comes as an `.ipa`, a zip with the `.app` in
+//! `Payload/`.
 //!
-//! Only builds for the iOS Simulator, so far. Changing an app's files
-//! breaks the code signature Xcode gave it, which the Simulator doesn't
-//! check but a device does, and OmniBuild can't sign iOS apps yet.
+//! Changing an app's files breaks the signature Xcode gave it, so OmniBuild
+//! signs the app again: a Simulator build ad hoc, as Xcode signs one, and a
+//! build for devices with the user's key and provisioning profile.
 
 mod asset_catalog;
 mod bom;
+mod code_resources;
+mod code_signature;
+mod entitlements;
 mod info_plist;
+mod macho;
+mod profile;
+mod signing;
 
 use std::path::Path;
 
@@ -15,9 +23,17 @@ use anyhow::{Context, Result, bail};
 use image::RgbaImage;
 
 use crate::config::App;
+use crate::key::SigningKey;
 use crate::zip::{self, Entry, Method};
 use crate::{icon, payload};
 use info_plist::InfoPlist;
+use profile::Profile;
+use signing::Identity;
+
+/// The platforms in `CFBundleSupportedPlatforms` of a build for the
+/// Simulator, and of one for devices.
+const SIMULATOR: &str = "iPhoneSimulator";
+const DEVICES: &str = "iPhoneOS";
 
 /// The folder in the shell's entries that holds the app, if it's an iOS
 /// app: `Name.app/`, in a zipped `.app`, or `Payload/Name.app/`, in an
@@ -32,8 +48,16 @@ pub fn bundle(entries: &[Entry]) -> Option<String> {
 }
 
 /// Repackages an iOS app shell, given its entries and the folder in them
-/// that holds the app, into the app `app` describes.
-pub fn repackage(mut entries: Vec<Entry>, bundle: &str, app: &App) -> Result<Vec<u8>> {
+/// that holds the app, into the app `app` describes. A build for devices is
+/// signed with `key` and the provisioning profile `profile`, which a
+/// Simulator build doesn't need.
+pub fn repackage(
+    mut entries: Vec<Entry>,
+    bundle: &str,
+    app: &App,
+    key: Option<&SigningKey>,
+    profile: Option<&[u8]>,
+) -> Result<Vec<u8>> {
     let name = format!("{bundle}Info.plist");
     let index = entries
         .iter()
@@ -44,12 +68,21 @@ pub fn repackage(mut entries: Vec<Entry>, bundle: &str, app: &App) -> Result<Vec
         .and_then(|contents| InfoPlist::parse(&contents))
         .with_context(|| format!("couldn't read the shell's {name}"))?;
     let platforms = info.platforms();
-    if !platforms.contains(&"iPhoneSimulator") {
+    let profile = if platforms.contains(&SIMULATOR) {
+        None
+    } else if platforms.contains(&DEVICES) {
+        let (Some(_), Some(profile)) = (key, profile) else {
+            bail!(
+                "a build for devices has to be signed with a key Apple issued a certificate for, and a provisioning profile allowing it: give them with --signing-key and --profile"
+            );
+        };
+        Some(Profile::parse(profile).context("couldn't read the provisioning profile")?)
+    } else {
         bail!(
-            "the shell isn't built for the iOS Simulator: its CFBundleSupportedPlatforms is [{}]. OmniBuild can't sign iOS apps yet, so it only repackages Simulator builds, which run without a valid signature",
+            "the shell isn't built for iOS devices or the Simulator: its CFBundleSupportedPlatforms is [{}]",
             platforms.join(", ")
         );
-    }
+    };
     let shell = info.clone();
     info.rewrite(app)
         .with_context(|| format!("couldn't rewrite the shell's {name}"))?;
@@ -63,6 +96,11 @@ pub fn repackage(mut entries: Vec<Entry>, bundle: &str, app: &App) -> Result<Vec
     if let Some(payload) = &app.payload {
         add_payload(&mut entries, bundle, payload)?;
     }
+    let identity = profile
+        .as_ref()
+        .zip(key)
+        .map(|(profile, key)| Identity { key, profile });
+    let entries = signing::sign(entries, bundle, &info, identity.as_ref())?;
     Ok(zip::write(&entries).bytes)
 }
 
@@ -133,15 +171,20 @@ pub mod tests {
     use plist::Value;
 
     use super::asset_catalog::tests::icon_bitmap;
+    use super::code_signature::tests::{blobs, identity};
+    use super::profile::tests::PROFILE;
     use super::{InfoPlist, bundle, repackage};
+    use crate::bytes::Reader;
     use crate::config::App;
     use crate::icon::tests::solid_png;
     use crate::zip::{self, Entry, Method, tests::SHELL, tests::entry};
 
-    /// The iOS E2E shell, built for the Simulator: see
-    /// tests/fixtures/README.md.
+    /// The iOS E2E shell, built for the Simulator and for devices, as an
+    /// `.ipa`: see tests/fixtures/README.md.
     pub const SHELL_APP: &[u8] = include_bytes!("../../tests/fixtures/shell.app.zip");
+    pub const SHELL_IPA: &[u8] = include_bytes!("../../tests/fixtures/shell.ipa");
     const INFO_PLIST: &str = "OmniBuildShell.app/Info.plist";
+    const EXECUTABLE: &str = "OmniBuildShell.app/OmniBuildShell";
     const CATALOG: &str = "OmniBuildShell.app/Assets.car";
     /// The colour of every pixel of the app's icon in the tests.
     const ICON: Rgba<u8> = Rgba([0xe8, 0x59, 0x0c, 0xff]);
@@ -153,6 +196,13 @@ pub mod tests {
     /// One of the shell's files, as Xcode wrote it.
     pub fn shell_file(name: &str) -> Vec<u8> {
         file(&zip::read(SHELL_APP).unwrap(), name)
+            .contents()
+            .unwrap()
+    }
+
+    /// One of the device shell's files.
+    pub fn device_file(name: &str) -> Vec<u8> {
+        file(&zip::read(SHELL_IPA).unwrap(), name)
             .contents()
             .unwrap()
     }
@@ -232,13 +282,27 @@ pub mod tests {
     }
 
     #[test]
-    fn leaves_the_shell_as_it_was_without_changes() {
+    fn signs_the_shell_again_without_other_changes() {
         let shell = zip::read(SHELL_APP).unwrap();
 
-        let app = repackage(shell.clone(), "OmniBuildShell.app/", &App::default()).unwrap();
+        let app = repackage(
+            shell.clone(),
+            "OmniBuildShell.app/",
+            &App::default(),
+            None,
+            None,
+        )
+        .unwrap();
 
         let app = zip::read(&app).unwrap();
-        assert_eq!(app, shell);
+        // Signed ad hoc, as Xcode signed it. The seal is the same as
+        // Xcode's, for the same files.
+        for (entry, shell_entry) in app.iter().zip(&shell) {
+            assert_eq!(entry.name, shell_entry.name);
+            let unchanged = entry.contents().unwrap() == shell_entry.contents().unwrap();
+            assert_eq!(unchanged, entry.name != EXECUTABLE, "{}", entry.name);
+        }
+        assert_eq!(app.len(), shell.len());
         // ditto's modes, which the executable needs to run.
         assert_eq!(
             mode(file(&app, "OmniBuildShell.app/OmniBuildShell")),
@@ -263,7 +327,7 @@ pub mod tests {
         };
         let shell = zip::read(SHELL_APP).unwrap();
 
-        let repackaged = repackage(shell.clone(), "OmniBuildShell.app/", &app).unwrap();
+        let repackaged = repackage(shell.clone(), "OmniBuildShell.app/", &app, None, None).unwrap();
 
         let entries = zip::read(&repackaged).unwrap();
         let mut expected = InfoPlist::parse(&shell_info_plist()).unwrap();
@@ -279,15 +343,12 @@ pub mod tests {
         let bundle = file(&entries, "OmniBuildShell.app/bundle/main.lynx.bundle");
         assert_eq!(bundle.contents().unwrap(), b"bundle");
         assert_eq!(mode(bundle), 0o100_644);
-        // Every other file is as it was.
+        // The payload goes after the shell's files.
         let names = |entries: &[Entry]| -> Vec<String> {
             entries.iter().map(|entry| entry.name.clone()).collect()
         };
         assert_eq!(names(&entries)[..shell.len()], names(&shell));
-        assert_eq!(
-            file(&entries, "OmniBuildShell.app/OmniBuildShell"),
-            file(&shell, "OmniBuildShell.app/OmniBuildShell")
-        );
+        assert_eq!(mode(file(&entries, EXECUTABLE)), 0o100_755);
     }
 
     #[test]
@@ -299,6 +360,8 @@ pub mod tests {
             shell.clone(),
             "OmniBuildShell.app/",
             &app_with_icon(dir.path()),
+            None,
+            None,
         )
         .unwrap();
 
@@ -319,22 +382,81 @@ pub mod tests {
     }
 
     #[test]
-    fn refuses_a_build_for_devices() {
-        let shell = with_file(&info_plist_with(|info| {
+    fn signs_a_build_for_devices_with_the_key_and_profile() {
+        let shell = zip::read(SHELL_IPA).unwrap();
+        let app = App {
+            id: Some("dev.example.app".to_owned()),
+            ..App::default()
+        };
+
+        let ipa = repackage(
+            shell,
+            "Payload/OmniBuildShell.app/",
+            &app,
+            Some(&identity()),
+            Some(PROFILE),
+        )
+        .unwrap();
+
+        let entries = zip::read(&ipa).unwrap();
+        assert_eq!(
+            file(
+                &entries,
+                "Payload/OmniBuildShell.app/embedded.mobileprovision"
+            )
+            .contents()
+            .unwrap(),
+            PROFILE
+        );
+        let executable = file(&entries, "Payload/OmniBuildShell.app/OmniBuildShell");
+        assert_eq!(mode(executable), 0o100_755);
+        // The signature's entitlements are for the app's own ID.
+        let executable = executable.contents().unwrap();
+        let signature = Reader::at(&executable, 784 + 8).u32() as usize;
+        let (_, entitlements) = blobs(&executable[signature..])
+            .into_iter()
+            .find(|(slot, _)| *slot == 5)
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&entitlements)
+                .contains("<string>ABCDE12345.dev.example.app</string>")
+        );
+    }
+
+    #[test]
+    fn refuses_a_build_for_devices_without_a_key_and_profile() {
+        let key = identity();
+        let device = "a build for devices has to be signed with a key Apple issued a certificate for, and a provisioning profile allowing it: give them with --signing-key and --profile";
+        let mac = with_file(&info_plist_with(|info| {
             info.insert(
                 "CFBundleSupportedPlatforms".to_owned(),
-                Value::Array(vec![Value::String("iPhoneOS".to_owned())]),
+                Value::Array(vec![Value::String("MacOSX".to_owned())]),
             );
         }));
-
-        let error = repackage(shell, "OmniBuildShell.app/", &App::default()).unwrap_err();
-
-        assert!(
-            error.to_string().starts_with(
-                "the shell isn't built for the iOS Simulator: its CFBundleSupportedPlatforms is [iPhoneOS]. "
+        let cases = [
+            (zip::read(SHELL_IPA).unwrap(), None, None, device),
+            (zip::read(SHELL_IPA).unwrap(), Some(&key), None, device),
+            (
+                zip::read(SHELL_IPA).unwrap(),
+                Some(&key),
+                Some(&b"not a profile"[..]),
+                "couldn't read the provisioning profile: it isn't a provisioning profile, a property list in CMS signed data",
             ),
-            "{error}"
-        );
+            (
+                mac,
+                None,
+                None,
+                "the shell isn't built for iOS devices or the Simulator: its CFBundleSupportedPlatforms is [MacOSX]",
+            ),
+        ];
+
+        for (shell, key, profile, message) in cases {
+            let bundle = super::bundle(&shell).unwrap();
+
+            let error = repackage(shell, &bundle, &App::default(), key, profile).unwrap_err();
+
+            assert_eq!(format!("{error:#}"), message);
+        }
     }
 
     #[test]
@@ -400,10 +522,19 @@ pub mod tests {
                 },
                 "couldn't rewrite the shell's OmniBuildShell.app/Info.plist: \"dev.my_app\" isn't a valid iOS bundle ID: it can hold only letters, digits, hyphens and dots",
             ),
+            (
+                with_file(&Entry::new(
+                    EXECUTABLE,
+                    Method::Stored,
+                    b"not an executable",
+                )),
+                App::default(),
+                "couldn't sign OmniBuildShell.app/OmniBuildShell: it isn't a 64-bit Mach-O executable",
+            ),
         ];
 
         for (shell, app, message) in cases {
-            let error = repackage(shell, "OmniBuildShell.app/", &app).unwrap_err();
+            let error = repackage(shell, "OmniBuildShell.app/", &app, None, None).unwrap_err();
 
             // The first ends with the plist parser's own description.
             assert!(format!("{error:#}").starts_with(message), "{error:#}");
@@ -416,6 +547,8 @@ pub mod tests {
             zip::read(SHELL_APP).unwrap(),
             "OmniBuildShell.app/",
             &missing_payload,
+            None,
+            None,
         )
         .unwrap_err();
         assert!(

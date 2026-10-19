@@ -16,7 +16,9 @@
     // from). .claude/skills links to the same ones.
     ".agents",
     ".claude/skills/rust-*",
-    "skills-lock.json"
+    "skills-lock.json",
+    // Provisioning profiles are DER, which cspell doesn't know for binary.
+    "**/*.mobileprovision"
   ],
   "overrides": [
     {
@@ -34,6 +36,7 @@
   "words": [
     "aapt",
     "actool",
+    "addext",
     "AOSP",
     "apksigner",
     "ARGB",
@@ -48,9 +51,20 @@
     "EBADPLATFORM",
     "gradlew",
     "idents",
+    "inkey",
+    "iphoneos",
+    "iphonesimulator",
     "jarsigner",
+    "keyout",
+    "LDFLAGS",
+    "mobileprovision",
     "msvc",
+    "newkey",
+    "nodetach",
     "omnibuild",
+    "outform",
+    "plistlib",
+    "plutil",
     "rspack",
     "rustup",
     "sdkmanager",

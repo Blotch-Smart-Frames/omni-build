@@ -1,6 +1,7 @@
 //! Reading the binary formats inside app packages: zip archives, Android's
-//! binary XML and resource tables, and iOS asset catalogs. They're
-//! little-endian but for the BOM store an asset catalog is kept in.
+//! binary XML and resource tables, and iOS asset catalogs and executables.
+//! They're little-endian but for the BOM store an asset catalog is kept in,
+//! the header of a universal executable, and code signatures.
 
 /// A cursor over bytes whose reads never fail on their own.
 /// A read past the end returns zeros (or no bytes) and marks the reader as
@@ -57,6 +58,10 @@ impl<'a> Reader<'a> {
         u32::from_le_bytes(self.array())
     }
 
+    pub fn u64(&mut self) -> u64 {
+        u64::from_le_bytes(self.array())
+    }
+
     pub fn u16_be(&mut self) -> u16 {
         u16::from_be_bytes(self.array())
     }
@@ -77,11 +82,17 @@ mod tests {
 
     #[test]
     fn reads_little_endian_integers_in_order() {
-        let mut reader = Reader::at(&[0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07], 1);
+        let mut reader = Reader::at(
+            &[
+                0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 1, 2, 3, 4, 5, 6, 7, 8,
+            ],
+            1,
+        );
 
         assert_eq!(reader.u8(), 0x01);
         assert_eq!(reader.u16(), 0x0302);
         assert_eq!(reader.u32(), 0x0706_0504);
+        assert_eq!(reader.u64(), 0x0807_0605_0403_0201);
         assert!(!reader.overrun());
     }
 

@@ -274,6 +274,30 @@ describe('run', () => {
       ]);
     });
 
+    it("checks what an app's files say when the device can't run it", async () => {
+      const app = path.join(packageDir, 'App-linux.ipa');
+      vi.mocked(platform.verify).mockResolvedValue({
+        signer,
+        report: REPORTED,
+      });
+
+      expect(await runWith('test', '--platform', 'android', app)).toBe(0);
+
+      expect(platform.runApp).not.toHaveBeenCalled();
+      expect(
+        JSON.parse(
+          readFileSync(
+            path.join(
+              artifactsOf('test').artifactsDir,
+              'App-linux.ipa',
+              'report.json',
+            ),
+            'utf8',
+          ),
+        ),
+      ).toEqual({ ...REPORTED, signer });
+    });
+
     it('runs what the repackage stage wrote', async () => {
       const [app] = writeFiles(
         path.join(packageDir, 'build', 'repackaged', 'android'),

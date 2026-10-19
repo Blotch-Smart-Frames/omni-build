@@ -46,6 +46,20 @@ impl InfoPlist {
             .collect()
     }
 
+    /// The bundle ID, `CFBundleIdentifier`.
+    pub fn id(&self) -> Option<&str> {
+        self.string("CFBundleIdentifier")
+    }
+
+    /// The executable's name in the bundle, `CFBundleExecutable`.
+    pub fn executable(&self) -> Option<&str> {
+        self.string("CFBundleExecutable")
+    }
+
+    fn string(&self, key: &str) -> Option<&str> {
+        self.dictionary.get(key).and_then(Value::as_string)
+    }
+
     /// The name of the app's icon in its asset catalog, which Xcode gives
     /// in `CFBundleIcons` → `CFBundlePrimaryIcon` → `CFBundleIconName`.
     pub fn icon_name(&self) -> Option<&str> {
@@ -198,6 +212,8 @@ mod tests {
 
         assert!(info.binary);
         assert_eq!(info.platforms(), ["iPhoneSimulator"]);
+        assert_eq!(info.id(), Some("dev.omnibuild.shell"));
+        assert_eq!(info.executable(), Some("OmniBuildShell"));
         assert_eq!(info.icon_name(), Some("AppIcon"));
         assert_eq!(info.icon_files(), ["AppIcon60x60", "AppIcon76x76"]);
         assert_eq!(

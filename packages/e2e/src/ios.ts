@@ -42,11 +42,18 @@ interface SimctlList {
   devices: Record<string, { name: string; udid: string }[] | undefined>;
 }
 
-/**
- * Builds the shell for the simulator with Xcode, zips it into `outDir`, and
- * returns the zip's path, the only shell.
- */
-const build: Platform['build'] = async ({ buildDir, outDir, log }) => {
+/** Where each SDK's builds run: anywhere, on a simulator or a device. */
+const DESTINATIONS = {
+  iphonesimulator: 'generic/platform=iOS Simulator',
+  iphoneos: 'generic/platform=iOS',
+};
+
+/** Builds the shell with Xcode for one SDK, and returns the .app's path. */
+const xcodebuild = async (
+  sdk: keyof typeof DESTINATIONS,
+  { buildDir, log }: { buildDir: string; log: string },
+  settings: string[] = [],
+) => {
   const derivedData = path.join(buildDir, 'ios');
   await run(
     'xcodebuild',
@@ -59,30 +66,134 @@ const build: Platform['build'] = async ({ buildDir, outDir, log }) => {
       '-configuration',
       'Release',
       '-sdk',
-      'iphonesimulator',
+      sdk,
       '-destination',
-      'generic/platform=iOS Simulator',
+      DESTINATIONS[sdk],
       '-derivedDataPath',
       derivedData,
+      ...settings,
     ],
     { log },
   );
-  const app = path.join(
+  return path.join(
     derivedData,
-    'Build/Products/Release-iphonesimulator',
+    `Build/Products/Release-${sdk}`,
     `${SHELL}.app`,
   );
+};
+
+/**
+ * Builds the shell with Xcode for the simulator and for devices, zips each
+ * into `outDir`, and returns their paths: the simulator's a zipped .app,
+ * and the devices' an .ipa, a zip of a Payload folder with the .app.
+ */
+const build: Platform['build'] = async ({ buildDir, outDir, log }) => {
+  const simulator = await xcodebuild('iphonesimulator', { buildDir, log });
+  // Unsigned, as CI has no certificate Apple issued, but with room for a
+  // signature, which the linker reserves when asked: omni-build replaces
+  // a signature, and never adds one.
+  const device = await xcodebuild('iphoneos', { buildDir, log }, [
+    'CODE_SIGNING_ALLOWED=NO',
+    'OTHER_LDFLAGS=-Wl,-adhoc_codesign',
+  ]);
 
   // A .app is a folder, and its executable's mode wouldn't survive a
   // workflow artifact or a Windows file system on the way to the repackage
-  // stage. So the shell travels as a zip, which ditto writes with every
+  // stage. So the shells travel as zips, which ditto writes with every
   // file's mode.
   mkdirSync(outDir, { recursive: true });
-  const shell = path.join(outDir, `${SHELL}.zip`);
-  rmSync(shell, { force: true });
-  await run('ditto', ['-c', '-k', '--keepParent', app, shell], { log });
-  return [shell];
+  const zip = path.join(outDir, `${SHELL}.zip`);
+  const ipa = path.join(outDir, `${SHELL}.ipa`);
+  rmSync(zip, { force: true });
+  rmSync(ipa, { force: true });
+  await run('ditto', ['-c', '-k', '--keepParent', simulator, zip], { log });
+  const payload = path.join(buildDir, 'ios-ipa', 'Payload');
+  rmSync(payload, { recursive: true, force: true });
+  await run('ditto', [device, path.join(payload, `${SHELL}.app`)], { log });
+  await run('ditto', ['-c', '-k', '--keepParent', payload, ipa], { log });
+  return [zip, ipa];
 };
+
+/**
+ * Unzips an app into a folder of its own, passes `use` the .app (at the
+ * top of the zip, or in Payload/ in an .ipa), and deletes the folder.
+ */
+const withApp = async <T>(
+  app: string,
+  log: string,
+  use: (bundle: string) => Promise<T>,
+) => {
+  const unzipped = mkdtempSync(path.join(os.tmpdir(), 'omni-build-e2e-'));
+  try {
+    await run('ditto', ['-x', '-k', app, unzipped], { log });
+    const folder = app.endsWith('.ipa')
+      ? path.join(unzipped, 'Payload')
+      : unzipped;
+    const bundle = readdirSync(folder).find((name) => name.endsWith('.app'));
+    if (!bundle) {
+      throw new Error(`${app} has no .app inside.`);
+    }
+    return await use(path.join(folder, bundle));
+  } finally {
+    rmSync(unzipped, { recursive: true, force: true });
+  }
+};
+
+/**
+ * Checks an app's signature with codesign, as strictly as it checks one
+ * for the App Store, and returns what signed it. A build for devices
+ * can't run on the simulator, so for one it reads what the app's files
+ * say instead, which the harness checks in place of what the app reports.
+ */
+const verify: Platform['verify'] = ({ app, log }) =>
+  withApp(app, log, async (bundle) => {
+    await run(
+      'codesign',
+      ['--verify', '--strict', '--deep', '--verbose=2', bundle],
+      { log },
+    );
+    // codesign prints what it displays to stderr.
+    const { output } = await run(
+      'codesign',
+      ['--display', '--verbose=2', bundle],
+      { log },
+    );
+    const signer =
+      output.match(/^Authority=(.*)$/m)?.[1] ??
+      (output.includes('Signature=adhoc') ? 'ad hoc' : undefined);
+    if (!app.endsWith('.ipa')) {
+      return { signer };
+    }
+    const info = JSON.parse(
+      (
+        await run(
+          'plutil',
+          ['-convert', 'json', '-o', '-', path.join(bundle, 'Info.plist')],
+          { log },
+        )
+      ).stdout,
+    );
+    const entitlements = (
+      await run(
+        'codesign',
+        ['--display', '--entitlements', '-', '--xml', bundle],
+        { log },
+      )
+    ).stdout;
+    return {
+      signer,
+      report: {
+        id: info.CFBundleIdentifier,
+        name: info.CFBundleDisplayName ?? info.CFBundleName,
+        version: info.CFBundleShortVersionString,
+        build: info.CFBundleVersion,
+        payload: readFileSync(path.join(bundle, 'payload.txt'), 'utf8'),
+        applicationIdentifier: entitlements.match(
+          /<key>application-identifier<\/key>\s*<string>(.*?)<\/string>/,
+        )?.[1],
+      },
+    };
+  });
 
 /**
  * Boots the E2E simulator, first creating it on the newest iOS runtime, and
@@ -200,20 +311,12 @@ const runApp: Platform<string, string>['runApp'] = async ({
   log,
 }) => {
   const since = Date.now();
-  const unzipped = mkdtempSync(path.join(os.tmpdir(), 'omni-build-e2e-'));
-  try {
-    await run('ditto', ['-x', '-k', app, unzipped], { log });
-    const bundle = readdirSync(unzipped).find((name) => name.endsWith('.app'));
-    if (!bundle) {
-      throw new Error(`${app} has no .app inside.`);
-    }
+  await withApp(app, log, async (bundle) => {
     // A fresh install empties the data container, so the report can't be
     // one an earlier run left there.
     await simctl(['uninstall', udid, appId], { log, allowFailure: true });
-    await simctl(['install', udid, path.join(unzipped, bundle)], { log });
-  } finally {
-    rmSync(unzipped, { recursive: true, force: true });
-  }
+    await simctl(['install', udid, bundle], { log });
+  });
   const container = (
     await simctl(['get_app_container', udid, appId, 'data'], { log })
   ).stdout.trim();
@@ -253,9 +356,7 @@ export const ios: Platform<string, string> = {
   name: 'iOS',
   toolchain: 'Xcode',
   build,
-  // Nothing yet: omni-build doesn't sign iOS apps, and the Simulator runs
-  // them with the shell's signature, which no longer matches their files.
-  verify: async () => ({}),
+  verify,
   // Booting is the slowest part, so it starts first and goes on while the
   // other stages work.
   startDevice: ({ log }) => bootSimulator({ log, wait: false }),
