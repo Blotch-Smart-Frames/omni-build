@@ -3,7 +3,6 @@
 
 mod binary_xml;
 mod chunk;
-mod icon;
 mod jar_signing;
 pub mod key;
 mod manifest;
@@ -19,6 +18,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::config::App;
+use crate::icon;
 use crate::payload;
 use crate::zip::{self, Entry, Method};
 use binary_xml::BinaryXml;
@@ -207,11 +207,11 @@ mod tests {
     use anyhow::Result;
 
     use super::{ProtoResources, ProtoXml, Resources, SigningKey, is_jar_signature, layout};
-    use crate::android::icon::tests::solid_png;
     use crate::android::key::tests::KEY;
     use crate::android::manifest::{Document, Value};
     use crate::android::proto_xml::tests::SHELL_AAB;
     use crate::config::App;
+    use crate::icon::tests::solid_png;
     use crate::zip::{self, Entry, Method, tests::SHELL, tests::entry};
 
     /// Repackages an APK or AAB from its bytes, as `omni-build repackage`
@@ -437,7 +437,7 @@ mod tests {
                         b"<adaptive-icon/>",
                     )],
                 ),
-                "couldn't replace the shell's icon res/o-.png: it isn't a PNG, and OmniBuild only replaces PNG icons so far, not adaptive ones",
+                "couldn't replace the shell's icon res/o-.png: it isn't a PNG, and OmniBuild only replaces PNG icons so far",
             ),
             (
                 shell_with(&["AndroidManifest.xml"], vec![broken_table()]),

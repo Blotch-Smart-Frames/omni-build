@@ -10,10 +10,8 @@
     "fixtures/ios/OmniBuildShell.xcodeproj"
   ],
   "words": [
-    "actool",
     "androidx",
     "apks",
-    "ARGB",
     "avds",
     "bootstatus",
     "Dfile",
@@ -25,9 +23,11 @@
     "keysize",
     "keytool",
     "logcat",
+    "NSURL",
     "RRGGBB",
     "screencap",
     "UDID",
+    "Unretained",
     "xcodeproj",
     "xcuserdata"
   ]

@@ -109,7 +109,7 @@ fn repackage_gives_the_shell_the_apps_values() {
 }
 
 #[test]
-fn repackage_gives_an_ios_app_its_values_but_not_yet_its_icon() {
+fn repackage_gives_an_ios_app_its_values_and_icon() {
     let home = tempfile::tempdir().unwrap();
     let config = home.path().join("app.json");
     fs::write(
@@ -117,6 +117,9 @@ fn repackage_gives_an_ios_app_its_values_but_not_yet_its_icon() {
         r#"{ "id": "dev.example.app", "version": "2.5.0", "build": 42, "icon": "icon.png" }"#,
     )
     .unwrap();
+    image::RgbaImage::from_pixel(64, 64, image::Rgba([0xe8, 0x59, 0x0c, 0xff]))
+        .save(home.path().join("icon.png"))
+        .unwrap();
     let app = home.path().join("app.zip");
 
     let output = omni_build_at_home(
@@ -132,12 +135,9 @@ fn repackage_gives_an_ios_app_its_values_but_not_yet_its_icon() {
     );
 
     assert!(output.status.success(), "{}", stderr(&output));
-    assert_eq!(
-        stderr(&output),
-        "warning: the app keeps the shell's icon: OmniBuild can't write an iOS app's asset catalog (Assets.car) yet\n"
-    );
-    // Info.plist is compressed, so this checks it changed at all; the unit
-    // tests check what it says.
+    assert_eq!(stderr(&output), "");
+    // Info.plist and the icons are compressed, so this checks they changed
+    // at all; the unit tests check what they say.
     assert_ne!(fs::read(app).unwrap(), fs::read(SHELL_APP).unwrap());
     // iOS apps aren't signed with the Android debug key.
     assert!(!home.path().join(".omni-build").exists());

@@ -22,8 +22,8 @@ pub struct App {
     /// `CFBundleVersion` on iOS.
     pub build: Option<u32>,
     /// The app's icon: a square PNG, which OmniBuild resizes to each size
-    /// the shell has its icon in. Android only, so far: an iOS app keeps
-    /// the shell's.
+    /// the shell has its icon in: each density's on Android, and on iOS
+    /// each in the asset catalog and the PNGs beside it.
     pub icon: Option<PathBuf>,
     /// A folder of files the app reads at run time, such as its Lynx
     /// bundle: they go in the APK's `assets/`, or in the iOS app's bundle,

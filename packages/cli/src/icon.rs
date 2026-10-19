@@ -1,4 +1,5 @@
-//! The app's icon, in each size the shell has its icon in.
+//! The app's icon, in each size the shell has its icon in, on either
+//! platform.
 
 use std::fs;
 use std::io::Cursor;
@@ -26,18 +27,22 @@ pub fn load(path: &Path) -> Result<RgbaImage> {
     Ok(icon)
 }
 
-/// The icon as a PNG the size of `shell_icon`, the PNG it replaces. Each of
-/// the shell's PNGs is one density's size, so the app's icon is drawn as
-/// sharp as the shell's was, with no density arithmetic.
+/// The icon at `width`×`height`, the size of an icon of the shell's it
+/// replaces. Each of those is one density's or one device's size, so the
+/// app's icon is drawn as sharp as the shell's was, with no density
+/// arithmetic.
+pub fn sized(icon: &RgbaImage, width: u32, height: u32) -> RgbaImage {
+    imageops::resize(icon, width, height, FilterType::Lanczos3)
+}
+
+/// The icon as a PNG the size of `shell_icon`, the PNG it replaces.
 pub fn resized(icon: &RgbaImage, shell_icon: &[u8]) -> Result<Vec<u8>> {
     let (width, height) = ImageReader::with_format(Cursor::new(shell_icon), ImageFormat::Png)
         .into_dimensions()
         .ok()
-        .context(
-            "it isn't a PNG, and OmniBuild only replaces PNG icons so far, not adaptive ones",
-        )?;
+        .context("it isn't a PNG, and OmniBuild only replaces PNG icons so far")?;
     let mut png = Vec::new();
-    imageops::resize(icon, width, height, FilterType::Lanczos3)
+    sized(icon, width, height)
         .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
         .expect("encoding a PNG into memory can't fail");
     Ok(png)
@@ -96,7 +101,7 @@ pub mod tests {
             resized(&RgbaImage::new(1, 1), b"<adaptive-icon/>")
                 .unwrap_err()
                 .to_string(),
-            "it isn't a PNG, and OmniBuild only replaces PNG icons so far, not adaptive ones"
+            "it isn't a PNG, and OmniBuild only replaces PNG icons so far"
         );
     }
 }
