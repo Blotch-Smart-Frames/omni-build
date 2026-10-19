@@ -12,8 +12,8 @@ Docusaurus 3 (classic preset) in `packages/docs`, an npm workspace of the OmniBu
 
 ## Users
 
-- **Web developers who want to ship a mobile app**: today Angular developers using AngularLynx, later developers of ReactLynx, Sparkling and WebView-shell apps. They work on Linux, Windows or macOS, know Node and npm, and don't want to install Xcode, a JDK or the Android SDK to produce a store binary.
-- **Framework and tooling authors** (AngularLynx's `@blotch/angular-lynx-build` first) who would call OmniBuild from their own builders and CI.
+- **Web developers who want to ship a mobile app** whose per-app part is data: a Lynx bundle, a web app in a WebView shell. They work on Linux, Windows or macOS, know Node and npm, and don't want to install Xcode, a JDK or the Android SDK to produce a store binary.
+- **Framework and tooling authors** who would call OmniBuild from their own build commands and CI.
 - **Contributors** who want to understand the plan, the file formats and the risks before helping.
 
 ## Product Purpose
@@ -22,7 +22,7 @@ OmniBuild builds, signs, installs and ships iOS and Android apps with no native 
 
 ## Positioning
 
-A general app packager, not a Lynx-only tool. It works for any app whose per-app part is data (a Lynx bundle, a web app in a WebView shell), and AngularLynx is its first user rather than its reason to exist.
+A general app packager, not a Lynx-only tool. It works for any app whose per-app part is data (a Lynx bundle, a web app in a WebView shell). It's framework-agnostic: the frameworks that build with it are its users, and the site names none of them.
 
 Its mechanism: it doesn't compile anything. It takes a shell that OmniBuild's own CI compiled with Xcode and Gradle, rewrites the shell's configuration (`Info.plist`, binary `AndroidManifest.xml`, `resources.arsc`, `Assets.car`), adds the app's payload and icons, then signs it (Apple code signature, APK Signature Scheme v2/v3). Every step is file-format work and cryptography. It ships as one static Rust binary through npm (one package per OS and CPU, as rspack and oxlint do), `cargo install`, Homebrew and GitHub releases.
 
@@ -37,7 +37,7 @@ Its mechanism: it doesn't compile anything. It takes a shell that OmniBuild's ow
 
 - **Status: Phase 0, the spikes.** `omni-build repackage` gives an Android APK or app bundle (AAB) shell an app's ID, name, version, build number, icon and payload, and signs it, and gives an iOS shell built for the Simulator the same values but the icon, unsigned; nothing else is built. The plan is issue #1 (https://github.com/Blotch-Smart-Frames/omni-build/issues/1). The npm package is not published.
 - What exists today: the repository, the npm launcher, CI gating 100% coverage and release builds on six targets, and an end-to-end pipeline that builds real Swift and Kotlin shells, runs them through the binary on Linux, Windows and macOS with no `PATH` or toolchain variables, and launches them on the iOS Simulator and an Android emulator. The binary repackages both shells; the iOS one doesn't get the icon or a signature yet.
-- Planned phases: 0 spikes, 1 dev client (AngularLynx), 2 Android, 3 iOS, 4 `ng deploy`, 5 prebuilt native modules. Android goes first.
+- Planned phases: 0 spikes, 1 Android, 2 iOS, 3 upload, 4 prebuilt native modules. Android goes first.
 - Out of scope: compiling source code (Swift, Kotlin, C++). Custom native code still means Xcode or Gradle.
 - Release targets: aarch64 and x86_64 for macOS, Linux (musl, static) and Windows.
 
@@ -60,4 +60,4 @@ Its mechanism: it doesn't compile anything. It takes a shell that OmniBuild's ow
 1. Honest about status: every claim on the site is something the repository or the plan says.
 2. Data, not compilers: explain the mechanism (repackage, rewrite, sign) rather than promise outcomes.
 3. The web's ease is the yardstick: Node and a phone, as Node and a browser.
-4. General first: Lynx and AngularLynx are examples and the first user, never the boundary.
+4. General first: Lynx and WebView apps are examples, never the boundary, and no framework is named.

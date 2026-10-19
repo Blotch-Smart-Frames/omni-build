@@ -253,9 +253,7 @@ describe('the desktop', () => {
       `${REPOSITORY}/issues/1`,
     );
     expect(
-      screen.getByText(
-        'In planning. Nothing to install yet; AngularLynx is its first user.',
-      ),
+      screen.getByText('In planning. Nothing to install yet.'),
     ).toBeInTheDocument();
   });
 

@@ -7,11 +7,11 @@ description: Why an app build doesn't need a compiler, and what OmniBuild rewrit
 
 ## The shell is the same for every app
 
-A Lynx app binary is an ordinary native app that links the Lynx engine and carries `main.lynx.bundle` as a data file. In the shells OmniBuild uses, **no per-app value is in the Swift or Kotlin code**. The app ID, name, version, permissions, deep links, orientation and icons all live in `Info.plist`, `AndroidManifest.xml` and resources. The compiled code is byte-identical for every app.
+An app whose per-app part is data, such as a [Lynx](https://lynxjs.org) bundle or a web app in a WebView, is an ordinary native app: a shell that links its runtime and carries the app's code as data files. In the shells OmniBuild uses, **no per-app value is in the Swift or Kotlin code**. The app ID, name, version, permissions, deep links, orientation and icons all live in `Info.plist`, `AndroidManifest.xml` and resources. The compiled code is byte-identical for every app.
 
 So an app build doesn't need a compiler. It can be:
 
-1. **Take a shell** that OmniBuild's CI compiled with Xcode and Gradle: one per platform, per engine version, per debug or release.
+1. **Take a shell** compiled once in CI with Xcode and Gradle: one per platform, per runtime version, per debug or release.
 2. **Rewrite its configuration**, and add the app's payload and icons.
 3. **Sign it.**
 
@@ -40,13 +40,42 @@ Android's formats are all public in AOSP. On iOS, `Assets.car` is the one real r
 
 ## Why Rust, and why a standalone tool
 
-Nothing above is specific to Angular, or even to Lynx: any app whose per-app part is data can be built this way. A standalone tool serves more than one framework, ships its own fixes when Apple or Google change a rule, and keeps its users' code in their own language.
+Nothing above is specific to one framework, or even to Lynx: any app whose per-app part is data can be built this way. A standalone tool serves more than one framework, ships its own fixes when Apple or Google change a rule, and keeps its users' code in their own language.
 
 It's written in Rust because it stands alone:
 
 - **One static binary with no runtime.** It runs from npm, `cargo install`, Homebrew, a CI image or a plain download, with nothing else installed.
 - **The hardest part exists already.** apple-codesign implements Apple's code signature and signs on Linux and Windows. Mature crates cover zip, cryptography, ASN.1/CMS and protobuf.
 - **It's the same model as the tools JavaScript developers already run**: rspack, oxlint and esbuild arrive through npm as prebuilt native binaries.
+
+## From a framework's build
+
+A framework's build command runs OmniBuild when there's nothing to compile, and keeps its own Xcode and Gradle path for the rest:
+
+```text
+build for android
+   │
+   ├─ native source code (an ejected app, or modules that need compiling)? → Xcode or Gradle
+   └─ otherwise → download the prebuilt shell (cached by checksum)
+                → OmniBuild: rewrite config, add the app's files, sign
+                → *.apk, *.aab
+```
+
+The framework maps its own options to OmniBuild's [app config](./repackaging.md#the-app-config), and runs the binary from the `omni-build` npm package, reading progress and errors as JSON lines. Shells are downloaded rather than bundled in an npm package: a release asset pinned by SHA-256 and cached per user. There are release and debug variants per platform, iOS device and Simulator shells, and one universal Android shell from which only the requested ABIs are kept.
+
+## Native modules from npm
+
+A prebuilt shell can't compile a module's source, so the plan is for module packages to ship binaries built against the shell's runtime version, and declare them in `package.json`:
+
+```jsonc
+"omniBuild": {
+  "runtime": "lynx@4.1",
+  "ios": { "frameworks": ["ios/Camera.xcframework"], "modules": ["CameraModule"] },
+  "android": { "dex": "android/classes.dex", "jniLibs": "android/jni", "modules": ["dev.example.CameraModule"], "manifest": "android/AndroidManifest.xml" }
+}
+```
+
+OmniBuild collects these from the app's dependencies, embeds the binaries and writes the module list into the app's configuration. The shell registers each module by name at startup, so nothing is generated and nothing is compiled. This is [Phase 4](./roadmap.md#phases).
 
 ## Prior art
 

@@ -13,8 +13,8 @@ if (message) {
   console.error(message);
 }
 if (signal) {
-  // Die of the same signal, so whatever started us (a shell, CI, the Angular
-  // builder) sees why the binary stopped instead of an invented exit code.
+  // Die of the same signal, so whatever started us (a shell, CI, a build
+  // tool) sees why the binary stopped instead of an invented exit code.
   process.kill(process.pid, signal);
 }
 process.exit(status);

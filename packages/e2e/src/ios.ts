@@ -87,8 +87,8 @@ const build: Platform['build'] = async ({ buildDir, outDir, log }) => {
 /**
  * Boots the E2E simulator, first creating it on the newest iOS runtime, and
  * returns its UDID. On GitHub's runners a simulator sometimes fails to boot
- * ("Data Migration Failed"), so as in AngularLynx's E2E tests, it falls back
- * to an older runtime when that happens.
+ * ("Data Migration Failed"), so it falls back to an older runtime when that
+ * happens.
  */
 const bootSimulator = async ({ log, wait }: { log: string; wait: boolean }) => {
   const list: SimctlList = JSON.parse(

@@ -393,10 +393,11 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      # The image AngularLynx's E2E tests run on these runners. The fixture
-      # targets API 37 and runs on 24 and later. A device only applies the
-      # behaviour changes of the level an app targets when it runs that level
-      # or newer, so this checks the shells install and run, not those changes.
+      # An emulator image of its own, apart from the API level the shells
+      # target: the fixture targets API 37 and runs on 24 and later. A device
+      # only applies the behaviour changes of the level an app targets when it
+      # runs that level or newer, so this checks the shells install and run,
+      # not those changes.
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34

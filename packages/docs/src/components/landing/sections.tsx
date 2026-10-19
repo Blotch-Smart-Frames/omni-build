@@ -65,10 +65,9 @@ const IN_PLACE = [
 
 const PHASES = [
   ['Spikes', 'Rewrite and sign a prebuilt shell on each platform; go or no-go'],
-  ['Dev client', 'AngularLynx’s debug shell in both stores'],
   ['Android', 'APK and AAB writing, signing, ADB install'],
   ['iOS', '.app and .ipa writing, Assets.car, signing, device install'],
-  ['ng deploy', 'Upload to TestFlight and a Google Play track'],
+  ['Upload', 'Upload to TestFlight and a Google Play track'],
   ['Native modules', 'Prebuilt modules from npm, no Xcode or Gradle'],
 ];
 
@@ -321,8 +320,8 @@ const FollowAlong = () => (
         <p className={styles.statement}>OmniBuild is planned in the open.</p>
         <p className={styles.copy}>
           Watch the repository to see each phase land, or read the plan and
-          weigh in on the decisions still open. AngularLynx is its first user;
-          any app whose per-app part is data can be the next.
+          weigh in on the decisions still open. Any app whose per-app part is
+          data can be built with it.
         </p>
         <div className={styles.dialogActions}>
           <Button href={`${REPOSITORY}/issues/1`}>Read the plan</Button>

@@ -180,7 +180,7 @@ export const parseGradleSdk = (gradle: string): ApiLevels => {
  * fetched; anything else is a path from the repository root.
  *
  * The shells' toolchain is read from the E2E fixtures, the only shells there
- * are yet. When the release shells arrive (Phase 2 of #1), their files take
+ * are yet. When the release shells arrive (Phase 1 of #1), their files take
  * these two places.
  */
 export const SOURCES = [

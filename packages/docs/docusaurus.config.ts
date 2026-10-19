@@ -102,7 +102,7 @@ const config: Config = {
             { type: 'doc', docId: 'intro', label: 'Introduction' },
             { type: 'doc', docId: 'how-it-works', label: 'How it works' },
             { type: 'doc', docId: 'installation', label: 'Installation' },
-            { type: 'doc', docId: 'angularlynx', label: 'AngularLynx' },
+            { type: 'doc', docId: 'repackaging', label: 'Repackaging' },
             { type: 'doc', docId: 'roadmap', label: 'Roadmap' },
             { type: 'doc', docId: 'contributing', label: 'Contributing' },
           ],
@@ -140,10 +140,6 @@ const config: Config = {
           items: [
             { label: 'GitHub', href: repository },
             { label: 'The plan', href: `${repository}/issues/1` },
-            {
-              label: 'AngularLynx',
-              href: 'https://github.com/Blotch-Smart-Frames/AngularLynx',
-            },
           ],
         },
       ],

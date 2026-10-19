@@ -23,7 +23,7 @@ A mobile developer has to install the platforms' toolchains: macOS and Xcode for
 ## Who it's for
 
 - **Apps whose per-app part is data**: a [Lynx](https://lynxjs.org) bundle, a web app in a WebView shell. Their native code is the same for every app, so it can be compiled once, by us, and reused.
-- **Framework builders.** [AngularLynx](https://github.com/Blotch-Smart-Frames/AngularLynx) is the first user: its `@blotch/angular-lynx-build` builder will run OmniBuild for `ng build --platform ios|android`. See [AngularLynx](./angularlynx.md).
+- **Framework builders**, whose build command can run OmniBuild for their users' apps when there's nothing to compile. See [How it works](./how-it-works.md#from-a-frameworks-build).
 - **CI pipelines** on Linux, Windows or macOS runners, with nothing installed but the binary.
 
 ## What it won't do

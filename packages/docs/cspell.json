@@ -19,7 +19,6 @@
   // doesn&rsquo;t into a word no dictionary has.
   "ignoreRegExpList": ["/\\b\\w+n&rsquo;t\\b/g"],
   "words": [
-    "angularlynx",
     "apktool",
     "atrule",
     "Cascadia",

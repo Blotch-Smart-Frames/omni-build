@@ -215,11 +215,7 @@ const Hero = () => {
         draggable
         className={styles.main}
         bodyClassName={styles.mainBody}
-        status={
-          <span>
-            In planning. Nothing to install yet; AngularLynx is its first user.
-          </span>
-        }
+        status={<span>In planning. Nothing to install yet.</span>}
       >
         <h1 className={styles.headline}>
           <DecryptedText
