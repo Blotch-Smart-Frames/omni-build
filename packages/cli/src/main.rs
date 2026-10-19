@@ -3,6 +3,7 @@
 mod android;
 mod bytes;
 mod config;
+mod icon;
 mod ios;
 mod payload;
 mod zip;
@@ -45,9 +46,9 @@ struct Repackage {
     #[arg(long, short)]
     out: PathBuf,
     /// The app config, a JSON file: the app's `id`, `name`, `version`,
-    /// `build` number, `icon` (a square PNG; Android only, so far) and
-    /// `payload` (a folder of files for the app's assets). What it leaves
-    /// out stays as the shell has it.
+    /// `build` number, `icon` (a square PNG) and `payload` (a folder of
+    /// files for the app's assets). What it leaves out stays as the shell
+    /// has it.
     #[arg(long, short)]
     config: Option<PathBuf>,
 }
@@ -77,11 +78,6 @@ fn repackage(args: &Repackage) -> Result<()> {
     };
     let entries = zip::read(&shell).context(NOT_A_SHELL)?;
     let repackaged = if let Some(bundle) = ios::bundle(&entries) {
-        if app.icon.is_some() {
-            eprintln!(
-                "warning: the app keeps the shell's icon: OmniBuild can't write an iOS app's asset catalog (Assets.car) yet"
-            );
-        }
         ios::repackage(entries, &bundle, &app)?
     } else if let Some(layout) = android::layout(&entries) {
         android::repackage(entries, layout, &app, &android_debug_key()?)?

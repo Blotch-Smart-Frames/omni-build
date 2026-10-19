@@ -33,8 +33,10 @@
   // in that package's cspell.json.
   "words": [
     "aapt",
+    "actool",
     "AOSP",
     "apksigner",
+    "ARGB",
     "arsc",
     "assetutil",
     "avdmanager",
@@ -61,8 +63,8 @@
     "USERPROFILE",
     "vitest",
     "worktrees",
-    "xcrun",
     "Xcodes",
+    "xcrun",
     "zipalign"
   ]
 }

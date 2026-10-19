@@ -75,7 +75,7 @@ describe('expected', () => {
     });
   });
 
-  it("is the app's values for iOS, but for the icon, which it can't write yet", () => {
+  it("is the app's values for iOS, unsigned", () => {
     expect(expected('ios')).toEqual({
       ...SHELL,
       id: 'dev.omnibuild.e2e.app',
@@ -83,6 +83,7 @@ describe('expected', () => {
       version: '2.5.0',
       build: '42',
       payload: 'Payload from the OmniBuild E2E app\n',
+      icon: '#E8590C',
     });
   });
 });

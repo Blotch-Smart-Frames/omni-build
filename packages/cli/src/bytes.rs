@@ -1,7 +1,8 @@
-//! Reading the little-endian binary formats inside app packages: zip
-//! archives, and later Android's binary XML and resource tables.
+//! Reading the binary formats inside app packages: zip archives, Android's
+//! binary XML and resource tables, and iOS asset catalogs. They're
+//! little-endian but for the BOM store an asset catalog is kept in.
 
-/// A cursor over little-endian bytes whose reads never fail on their own.
+/// A cursor over bytes whose reads never fail on their own.
 /// A read past the end returns zeros (or no bytes) and marks the reader as
 /// overrun, which the caller checks once when it has read a whole
 /// structure. Shells come from files users hand OmniBuild, so a truncated
@@ -56,6 +57,14 @@ impl<'a> Reader<'a> {
         u32::from_le_bytes(self.array())
     }
 
+    pub fn u16_be(&mut self) -> u16 {
+        u16::from_be_bytes(self.array())
+    }
+
+    pub fn u32_be(&mut self) -> u32 {
+        u32::from_be_bytes(self.array())
+    }
+
     /// Whether any read so far went past the end.
     pub fn overrun(&self) -> bool {
         self.overrun
@@ -73,6 +82,15 @@ mod tests {
         assert_eq!(reader.u8(), 0x01);
         assert_eq!(reader.u16(), 0x0302);
         assert_eq!(reader.u32(), 0x0706_0504);
+        assert!(!reader.overrun());
+    }
+
+    #[test]
+    fn reads_big_endian_integers_too() {
+        let mut reader = Reader::at(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06], 0);
+
+        assert_eq!(reader.u16_be(), 0x0102);
+        assert_eq!(reader.u32_be(), 0x0304_0506);
         assert!(!reader.overrun());
     }
 

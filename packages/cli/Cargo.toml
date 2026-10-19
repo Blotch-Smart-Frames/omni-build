@@ -16,6 +16,11 @@ crc32fast = "1.5.2"
 flate2 = "1.1.10"
 # PNG only: app icons are PNGs, and resizing them is all OmniBuild does.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+# actool compresses an asset catalog's bitmaps with LZFSE. Pure Rust, unlike
+# the bindings to Apple's C library, so every release target builds without
+# a C toolchain. OmniBuild only compresses its own pixels with it, and never
+# decompresses what users hand it.
+lzfse_rust = "0.2.1"
 # Without serde: Info.plist is edited as a dictionary, so the keys OmniBuild
 # doesn't know stay as Xcode wrote them.
 plist = { version = "1.10.1", default-features = false }

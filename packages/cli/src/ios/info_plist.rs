@@ -46,6 +46,41 @@ impl InfoPlist {
             .collect()
     }
 
+    /// The name of the app's icon in its asset catalog, which Xcode gives
+    /// in `CFBundleIcons` → `CFBundlePrimaryIcon` → `CFBundleIconName`.
+    pub fn icon_name(&self) -> Option<&str> {
+        self.primary_icon("CFBundleIcons")
+            .and_then(|icon| icon.get("CFBundleIconName"))
+            .and_then(Value::as_string)
+    }
+
+    /// The PNGs of the icon that Xcode puts beside the asset catalog for
+    /// earlier versions of iOS, named as `CFBundleIconFiles` lists them,
+    /// without their scale and device: `AppIcon60x60` for
+    /// `AppIcon60x60@2x.png`. The iPad's (`CFBundleIcons~ipad`) list the
+    /// iPhone's again, with its own.
+    pub fn icon_files(&self) -> Vec<&str> {
+        let mut files: Vec<&str> = ["CFBundleIcons", "CFBundleIcons~ipad"]
+            .into_iter()
+            .filter_map(|key| self.primary_icon(key))
+            .filter_map(|icon| icon.get("CFBundleIconFiles"))
+            .filter_map(Value::as_array)
+            .flatten()
+            .filter_map(Value::as_string)
+            .collect();
+        files.sort_unstable();
+        files.dedup();
+        files
+    }
+
+    fn primary_icon(&self, key: &str) -> Option<&Dictionary> {
+        self.dictionary
+            .get(key)
+            .and_then(Value::as_dictionary)
+            .and_then(|icons| icons.get("CFBundlePrimaryIcon"))
+            .and_then(Value::as_dictionary)
+    }
+
     /// Gives the app its ID, name, version and build number. Every other
     /// key stays as Xcode wrote it, the `DT*` keys above all: they say
     /// which Xcode and SDK built the shell, which App Store validation
@@ -163,6 +198,8 @@ mod tests {
 
         assert!(info.binary);
         assert_eq!(info.platforms(), ["iPhoneSimulator"]);
+        assert_eq!(info.icon_name(), Some("AppIcon"));
+        assert_eq!(info.icon_files(), ["AppIcon60x60", "AppIcon76x76"]);
         assert_eq!(
             info.dictionary.get("CFBundleIdentifier"),
             Some(&Value::String("dev.omnibuild.shell".to_owned()))
@@ -219,6 +256,8 @@ mod tests {
             ]
         );
         assert_eq!(info.platforms(), Vec::<&str>::new());
+        assert_eq!(info.icon_name(), None);
+        assert_eq!(info.icon_files(), Vec::<&str>::new());
     }
 
     #[test]

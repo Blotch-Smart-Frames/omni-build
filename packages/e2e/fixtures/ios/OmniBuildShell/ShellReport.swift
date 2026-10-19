@@ -2,7 +2,7 @@ import Foundation
 import UIKit
 
 /// What the app found in its own bundle: every value OmniBuild may rewrite.
-/// The keys match the expected values in packages/e2e/src/shell.js.
+/// The keys match the expected values in packages/e2e/src/shell.ts.
 struct ShellReport: Encodable {
     /// The file the harness reads, in the app's Documents folder. A file
     /// rather than the log, because the simulator's data container is a
@@ -25,16 +25,76 @@ struct ShellReport: Encodable {
         build = info["CFBundleVersion"] as? String
         payload = bundle.url(forResource: "payload", withExtension: "txt")
             .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
-        // The icon as UIKit can load it: the PNGs that Xcode writes next to
-        // Assets.car, named in Info.plist. The home screen shows the copy in
-        // Assets.car, which no public API reads (`UIImage(named: "AppIcon")`
-        // is nil: actool stores app icons as a kind of asset UIImage doesn't
-        // load), so that one can't be checked from inside the app.
+        // The icon is in two places, which Info.plist names: Assets.car,
+        // which the home screen draws it from, and the PNGs that Xcode
+        // writes beside it for earlier versions of iOS. Both should be the
+        // app's, so the report gives one colour when they agree, and both
+        // when they don't.
         let icons = info["CFBundleIcons"] as? [String: Any]
         let primaryIcon = icons?["CFBundlePrimaryIcon"] as? [String: Any]
-        icon = (primaryIcon?["CFBundleIconFiles"] as? [String])?.last
+        let catalogIcon = (primaryIcon?["CFBundleIconName"] as? String)
+            .flatMap { Self.catalogIcon(named: $0, in: bundle) }
+            .flatMap(Self.centerColor)
+        let fileIcon = (primaryIcon?["CFBundleIconFiles"] as? [String])?.last
             .flatMap { UIImage(named: $0) }
             .flatMap(Self.centerColor)
+        icon =
+            catalogIcon == fileIcon
+            ? catalogIcon
+            : "Assets.car: \(catalogIcon ?? "none"), PNGs: \(fileIcon ?? "none")"
+    }
+
+    /// The iPhone icon named `name` in the bundle's Assets.car, as CoreUI
+    /// reads it for the home screen. No public API reads it:
+    /// `UIImage(named: "AppIcon")` is nil, because actool stores an app
+    /// icon as a kind of asset UIImage doesn't load. So this calls CoreUI's
+    /// CUICatalog by name, which is fine in an app that's only ever built
+    /// for these tests. A method CoreUI no longer has gives nil, and so a
+    /// failed test, rather than a crash.
+    static func catalogIcon(named name: String, in bundle: Bundle) -> UIImage? {
+        guard let url = bundle.url(forResource: "Assets", withExtension: "car"),
+            let catalogClass = NSClassFromString("CUICatalog") as? NSObject.Type
+        else {
+            return nil
+        }
+        // `[[CUICatalog alloc] initWithURL:error:]`. init takes over the
+        // reference alloc returns, so Swift mustn't release it too.
+        let allocated =
+            catalogClass.perform(NSSelectorFromString("alloc")).takeUnretainedValue() as! NSObject
+        let initialize = NSSelectorFromString("initWithURL:error:")
+        typealias Initialize = @convention(c) (
+            NSObject, Selector, NSURL, UnsafeMutablePointer<NSError?>?
+        ) -> Unmanaged<NSObject>?
+        guard allocated.responds(to: initialize),
+            let catalog = unsafeBitCast(
+                allocated.method(for: initialize), to: Initialize.self
+            )(allocated, initialize, url as NSURL, nil)?.takeRetainedValue()
+        else {
+            return nil
+        }
+        // An iPhone's icon (idiom 1), as large as it comes: the shell's
+        // single-size icon is 1024×1024, at 1x. The other attributes are
+        // left to match any.
+        let lookup = NSSelectorFromString(
+            "iconImageWithName:scaleFactor:deviceIdiom:deviceSubtype:displayGamut:layoutDirection:sizeClassHorizontal:sizeClassVertical:desiredSize:"
+        )
+        typealias Lookup = @convention(c) (
+            NSObject, Selector, NSString, CGFloat, Int, Int, Int, Int, Int, Int, CGSize
+        ) -> Unmanaged<NSObject>?
+        let image = NSSelectorFromString("image")
+        typealias Image = @convention(c) (NSObject, Selector) -> Unmanaged<CGImage>?
+        guard catalog.responds(to: lookup),
+            let named = unsafeBitCast(catalog.method(for: lookup), to: Lookup.self)(
+                catalog, lookup, name as NSString, 1, 1, 0, 0, 0, 0, 0,
+                CGSize(width: 1024, height: 1024)
+            )?.takeUnretainedValue(),
+            named.responds(to: image),
+            let cgImage = unsafeBitCast(named.method(for: image), to: Image.self)(named, image)?
+                .takeUnretainedValue()
+        else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage)
     }
 
     func save() {

@@ -93,18 +93,17 @@ export const expected = (
       path.join(path.dirname(APP_CONFIG), APP.payload, 'payload.txt'),
       'utf8',
     ),
+    icon: APP_ICON,
   };
   return platform === 'android'
     ? {
         ...app,
-        icon: APP_ICON,
         // The debug key omni-build creates and signs with when it's given
         // no key: only it could have signed the app with this.
         signer: 'CN=OmniBuild Debug, O=OmniBuild',
       }
-    : // omni-build can't write Assets.car or sign iOS apps yet, so they
-      // keep the shell's icon, and the Simulator runs them with the
-      // signature Xcode gave the shell, which no longer matches.
+    : // omni-build can't sign iOS apps yet, so the Simulator runs them
+      // with the signature Xcode gave the shell, which no longer matches.
       app;
 };
 
