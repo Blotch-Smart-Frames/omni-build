@@ -24,6 +24,8 @@ const APP: {
   build: number;
   /** The app's payload folder, relative to app.json. */
   payload: string;
+  android: { permissions: string[]; abis: string[] };
+  ios: { usageDescriptions: { NSCameraUsageDescription: string } };
 } = JSON.parse(readFileSync(APP_CONFIG, 'utf8'));
 /** The colour of every pixel of the app's icon, `app/icon.png`. */
 const APP_ICON = '#E8590C';
@@ -142,7 +144,6 @@ export const expected = (
   app = '',
 ): Record<string, string> => {
   const values = {
-    ...SHELL,
     id: APP.id,
     name: APP.name,
     version: APP.version,
@@ -156,6 +157,17 @@ export const expected = (
   if (platform === 'android') {
     return {
       ...values,
+      // Under the app's ID, as Gradle would have put them for it.
+      provider: `${APP.id}.provider`,
+      // The app's, sorted as the app lists them, and the one the shell
+      // declares for itself, under the app's ID.
+      permissions: [
+        ...APP.android.permissions.map((name) => `android.permission.${name}`),
+        `${APP.id}.permission.SHELL`,
+      ]
+        .sort()
+        .join(', '),
+      abis: [...APP.android.abis].sort().join(', '),
       // An app bundle is signed with the upload key omni-build created for
       // it, and an APK with the debug key it creates and signs with when
       // it's given no key: only omni-build could have made either.
@@ -164,6 +176,7 @@ export const expected = (
         : 'CN=OmniBuild Debug, O=OmniBuild',
     };
   }
+  const cameraUsage = APP.ios.usageDescriptions.NSCameraUsageDescription;
   if (app.endsWith('.ipa')) {
     // A build for devices, which the simulator can't run: what its files
     // say, but for the icon, which only iOS reads out of Assets.car, and
@@ -174,12 +187,19 @@ export const expected = (
       version: values.version,
       build: values.build,
       payload: values.payload,
+      cameraUsage,
       signer: SIGNER,
       applicationIdentifier: `${TEAM}.${APP.id}`,
     };
   }
-  // Signed ad hoc, as Xcode signs a simulator build.
-  return { ...values, signer: 'ad hoc' };
+  // Signed ad hoc, as Xcode signs a simulator build, and its framework,
+  // which only loads with a signature of its own, too.
+  return {
+    ...values,
+    cameraUsage,
+    framework: SHELL.framework,
+    signer: 'ad hoc',
+  };
 };
 
 /**

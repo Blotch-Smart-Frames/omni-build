@@ -90,6 +90,7 @@ pub fn repackage(
     if info != shell {
         entries[index] = entries[index].with_contents(&info.to_bytes());
     }
+    drop_translations(&mut entries, bundle, &InfoPlist::translated(app))?;
     if let Some(path) = &app.icon {
         set_icon(&mut entries, bundle, &shell, &icon::load(path)?)?;
     }
@@ -102,6 +103,37 @@ pub fn repackage(
         .map(|(profile, key)| Identity { key, profile });
     let entries = signing::sign(entries, bundle, &info, identity.as_ref())?;
     Ok(zip::write(&entries).bytes)
+}
+
+/// Takes the keys out of the shell's translations of its Info.plist,
+/// `InfoPlist.strings` in each language's folder, which iOS shows in the
+/// language it runs in, in place of the app's values. Xcode writes them as
+/// property lists, as it does Info.plist.
+fn drop_translations(entries: &mut [Entry], bundle: &str, keys: &[&str]) -> Result<()> {
+    if keys.is_empty() {
+        return Ok(());
+    }
+    for entry in entries.iter_mut().filter(|entry| {
+        entry
+            .name
+            .strip_prefix(bundle)
+            .and_then(|file| file.strip_suffix(".lproj/InfoPlist.strings"))
+            .is_some_and(|language| !language.contains('/'))
+    }) {
+        let mut strings = entry
+            .contents()
+            .and_then(|contents| InfoPlist::parse(&contents))
+            .with_context(|| {
+                format!(
+                    "couldn't read the shell's {}: OmniBuild reads the property lists Xcode makes of .strings files, not the text it makes them from",
+                    entry.name
+                )
+            })?;
+        if strings.remove(keys) {
+            *entry = entry.with_contents(&strings.to_bytes());
+        }
+    }
+    Ok(())
 }
 
 /// Gives the app its icon: in the asset catalog, where the home screen and
@@ -175,7 +207,7 @@ pub mod tests {
     use super::profile::tests::PROFILE;
     use super::{InfoPlist, bundle, repackage};
     use crate::bytes::Reader;
-    use crate::config::App;
+    use crate::config::{App, Ios};
     use crate::icon::tests::solid_png;
     use crate::zip::{self, Entry, Method, tests::SHELL, tests::entry};
 
@@ -186,6 +218,8 @@ pub mod tests {
     const INFO_PLIST: &str = "OmniBuildShell.app/Info.plist";
     const EXECUTABLE: &str = "OmniBuildShell.app/OmniBuildShell";
     const CATALOG: &str = "OmniBuildShell.app/Assets.car";
+    /// The shell's English translation of its Info.plist.
+    const STRINGS: &str = "OmniBuildShell.app/en.lproj/InfoPlist.strings";
     /// The colour of every pixel of the app's icon in the tests.
     const ICON: Rgba<u8> = Rgba([0xe8, 0x59, 0x0c, 0xff]);
 
@@ -295,12 +329,24 @@ pub mod tests {
         .unwrap();
 
         let app = zip::read(&app).unwrap();
-        // Signed ad hoc, as Xcode signed it. The seal is the same as
-        // Xcode's, for the same files.
+        // Signed ad hoc, as Xcode signed it: its executable and the
+        // framework's, and the app's seal, which covers the framework's
+        // executable. The framework's seal is the same as Xcode's, for the
+        // same files.
+        let signed = [
+            EXECUTABLE,
+            "OmniBuildShell.app/Frameworks/ShellKit.framework/ShellKit",
+            "OmniBuildShell.app/_CodeSignature/CodeResources",
+        ];
         for (entry, shell_entry) in app.iter().zip(&shell) {
             assert_eq!(entry.name, shell_entry.name);
             let unchanged = entry.contents().unwrap() == shell_entry.contents().unwrap();
-            assert_eq!(unchanged, entry.name != EXECUTABLE, "{}", entry.name);
+            assert_eq!(
+                unchanged,
+                !signed.contains(&entry.name.as_str()),
+                "{}",
+                entry.name
+            );
         }
         assert_eq!(app.len(), shell.len());
         // ditto's modes, which the executable needs to run.
@@ -323,6 +369,15 @@ pub mod tests {
             version: Some("2.5.0".to_owned()),
             build: Some(42),
             payload: Some(dir.path().to_owned()),
+            ios: Ios {
+                usage_descriptions: Some(
+                    [(
+                        "NFCReaderUsageDescription".to_owned(),
+                        "Reads tags.".to_owned(),
+                    )]
+                    .into(),
+                ),
+            },
             ..App::default()
         };
         let shell = zip::read(SHELL_APP).unwrap();
@@ -338,6 +393,20 @@ pub mod tests {
             expected
         );
         assert_eq!(mode(info), 0o100_644);
+        // The English name goes, so iOS shows the app's, but the English
+        // reason for the camera, which the app keeps, stays.
+        let strings = |entries: &[Entry]| -> plist::Dictionary {
+            let strings = file(entries, STRINGS).contents().unwrap();
+            assert!(strings.starts_with(b"bplist00"));
+            Value::from_reader(Cursor::new(strings))
+                .unwrap()
+                .into_dictionary()
+                .unwrap()
+        };
+        let mut english = strings(&shell);
+        english.remove("CFBundleDisplayName");
+        assert_eq!(strings(&entries), english);
+        assert!(english.contains_key("NSCameraUsageDescription"));
         let payload = file(&entries, "OmniBuildShell.app/payload.txt");
         assert_eq!(payload.contents().unwrap(), b"the app's payload");
         let bundle = file(&entries, "OmniBuildShell.app/bundle/main.lynx.bundle");
@@ -349,6 +418,119 @@ pub mod tests {
         };
         assert_eq!(names(&entries)[..shell.len()], names(&shell));
         assert_eq!(mode(file(&entries, EXECUTABLE)), 0o100_755);
+    }
+
+    #[test]
+    fn takes_the_apps_purpose_strings_out_of_the_translations() {
+        let app = App {
+            ios: Ios {
+                usage_descriptions: Some(
+                    [(
+                        "NSCameraUsageDescription".to_owned(),
+                        "Scans codes.".to_owned(),
+                    )]
+                    .into(),
+                ),
+            },
+            ..App::default()
+        };
+        // In XML too, as Xcode can write them.
+        let mut english = Vec::new();
+        Value::from_reader(Cursor::new(shell_file(STRINGS)))
+            .unwrap()
+            .to_writer_xml(&mut english)
+            .unwrap();
+        let mut shell = with_file(&Entry::new(STRINGS, Method::Deflated, &english));
+        // A folder's own strings, which aren't the app's.
+        shell.push(Entry::new(
+            "OmniBuildShell.app/Settings.bundle/en.lproj/InfoPlist.strings",
+            Method::Deflated,
+            b"not a plist",
+        ));
+
+        let entries =
+            zip::read(&repackage(shell, "OmniBuildShell.app/", &app, None, None).unwrap()).unwrap();
+
+        let strings = file(&entries, STRINGS).contents().unwrap();
+        assert!(strings.starts_with(b"<?xml"));
+        let strings = Value::from_reader(Cursor::new(strings)).unwrap();
+        let strings = strings.as_dictionary().unwrap();
+        assert!(!strings.contains_key("NSCameraUsageDescription"));
+        assert!(strings.contains_key("CFBundleDisplayName"));
+        let info = InfoPlist::parse(&file(&entries, INFO_PLIST).contents().unwrap()).unwrap();
+        let mut expected = InfoPlist::parse(&shell_info_plist()).unwrap();
+        expected.rewrite(&app).unwrap();
+        assert_eq!(info, expected);
+
+        // A purpose the translations don't have leaves them as they were.
+        let nfc = App {
+            ios: Ios {
+                usage_descriptions: Some(
+                    [(
+                        "NFCReaderUsageDescription".to_owned(),
+                        "Reads tags.".to_owned(),
+                    )]
+                    .into(),
+                ),
+            },
+            ..App::default()
+        };
+        let entries = zip::read(
+            &repackage(
+                zip::read(SHELL_APP).unwrap(),
+                "OmniBuildShell.app/",
+                &nfc,
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            file(&entries, STRINGS).contents().unwrap(),
+            shell_file(STRINGS)
+        );
+    }
+
+    #[test]
+    fn reports_translations_and_purpose_strings_it_cant_use() {
+        // As Xcode writes a .strings file when told to keep it as text.
+        let text = with_file(&Entry::new(
+            STRINGS,
+            Method::Deflated,
+            b"\"CFBundleDisplayName\" = \"Shell\";",
+        ));
+        let named = App {
+            name: Some("Repackaged".to_owned()),
+            ..App::default()
+        };
+        let not_a_purpose = App {
+            ios: Ios {
+                usage_descriptions: Some(
+                    [("NSCamera".to_owned(), "Scans codes.".to_owned())].into(),
+                ),
+            },
+            ..App::default()
+        };
+
+        let unread = repackage(text, "OmniBuildShell.app/", &named, None, None).unwrap_err();
+        let unset = repackage(
+            zip::read(SHELL_APP).unwrap(),
+            "OmniBuildShell.app/",
+            &not_a_purpose,
+            None,
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            unread.to_string(),
+            "couldn't read the shell's OmniBuildShell.app/en.lproj/InfoPlist.strings: OmniBuild reads the property lists Xcode makes of .strings files, not the text it makes them from"
+        );
+        assert_eq!(
+            format!("{unset:#}"),
+            "couldn't rewrite the shell's OmniBuildShell.app/Info.plist: \"NSCamera\" isn't the key of a purpose string, such as NSCameraUsageDescription"
+        );
     }
 
     #[test]

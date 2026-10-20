@@ -4,5 +4,14 @@
   "version": "2.5.0",
   "build": 42,
   "icon": "icon.png",
-  "payload": "payload"
+  "payload": "payload",
+  "android": {
+    "permissions": ["INTERNET", "VIBRATE"],
+    "abis": ["x86_64", "arm64-v8a"]
+  },
+  "ios": {
+    "usageDescriptions": {
+      "NSCameraUsageDescription": "Scans the codes on OmniBuild's test cards."
+    }
+  }
 }

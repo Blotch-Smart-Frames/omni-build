@@ -107,6 +107,7 @@ const WWDR_G3: &[u8] = include_bytes!("apple/AppleWWDRCAG3.cer");
 const APPLE_ROOT: &[u8] = include_bytes!("apple/AppleRootCA.cer");
 
 /// What goes into an app's signature besides its code.
+#[derive(Clone, Copy)]
 pub struct Signer<'a> {
     /// The bundle ID, which codesign uses as the identifier.
     pub identifier: &'a str,
@@ -115,6 +116,8 @@ pub struct Signer<'a> {
     pub entitlements: Option<&'a Entitlements>,
     /// Signs ad hoc without one.
     pub key: Option<&'a SigningKey>,
+    /// Whether it's the app's own executable, rather than a framework's.
+    pub main: bool,
 }
 
 impl Signer<'_> {
@@ -192,7 +195,11 @@ impl Signer<'_> {
         }
         // A 64-bit code limit, unused under 4 GiB, then the executable
         // segment.
-        let flags = MAIN_BINARY | if debuggable { ALLOW_UNSIGNED } else { 0 };
+        let flags = match (self.main, debuggable) {
+            (false, _) => 0,
+            (true, false) => MAIN_BINARY,
+            (true, true) => MAIN_BINARY | ALLOW_UNSIGNED,
+        };
         for field in [0, code.text.0, code.text.1, flags] {
             directory.extend(field.to_be_bytes());
         }
@@ -514,6 +521,7 @@ pub mod tests {
             code_resources: b"CodeResources",
             entitlements: None,
             key: None,
+            main: true,
         };
 
         let signature = signer.sign(&code(&bytes));
@@ -566,6 +574,7 @@ pub mod tests {
             code_resources: b"CodeResources",
             entitlements: Some(&entitlements),
             key: Some(&key),
+            main: true,
         };
 
         let signature = signer.sign(&code(&bytes));
@@ -643,6 +652,7 @@ pub mod tests {
             code_resources: b"",
             entitlements: None,
             key: Some(&key),
+            main: true,
         };
 
         let signature = signer.sign(&code(&[]));

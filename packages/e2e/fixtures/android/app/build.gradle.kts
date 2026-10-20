@@ -26,6 +26,15 @@ android {
         }
     }
 
+    packaging {
+        jniLibs {
+            // The native libraries are stand-ins, there for their ABIs
+            // (src/main/jniLibs), so there's nothing to strip, and no NDK to
+            // strip them with.
+            keepDebugSymbols += "**/*.so"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

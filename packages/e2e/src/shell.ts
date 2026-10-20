@@ -3,14 +3,20 @@
  * report on launch. They're set in:
  *
  * - iOS: `fixtures/ios/OmniBuildShell.xcodeproj` (bundle ID, version, build)
- *   and `OmniBuildShell/Info.plist` (name)
+ *   and `OmniBuildShell/Info.plist` (name, camera usage), which
+ *   `en.lproj/InfoPlist.strings` translates into English
  * - Android: `fixtures/android/app/build.gradle.kts` (application ID,
- *   version, build) and `res/values/strings.xml` (name)
- * - both: `payload.txt`, and the icons, solid squares of this colour.
+ *   version, build), `res/values/strings.xml` (name, as the application's
+ *   label and the launcher activity's), and the manifest (provider,
+ *   permissions); the ABIs are `src/main/jniLibs`' folders
+ * - both: `payload.txt`, and the icons, solid squares of this colour (on
+ *   Android, a WebP per density and an adaptive icon, whose layers are
+ *   vectors).
  *
  * The apps the tests make from them have different values for each of
  * these (`app/app.json`), so an app that reports one got it from OmniBuild.
- * See expected() in repackage.ts.
+ * The iOS shell's framework is the same in the app: it shows the framework
+ * loads once OmniBuild has signed it. See expected() in repackage.ts.
  */
 export const SHELL = {
   id: 'dev.omnibuild.shell',
@@ -19,6 +25,14 @@ export const SHELL = {
   build: '1',
   payload: 'Payload from the OmniBuild shell\n',
   icon: '#2F6FEB',
+  // Android's.
+  provider: 'dev.omnibuild.shell.provider',
+  permissions:
+    'android.permission.CAMERA, android.permission.INTERNET, dev.omnibuild.shell.permission.SHELL',
+  abis: 'arm64-v8a, armeabi-v7a, x86, x86_64',
+  // iOS's.
+  cameraUsage: "The shell's camera.",
+  framework: 'ShellKit',
 };
 
 /**

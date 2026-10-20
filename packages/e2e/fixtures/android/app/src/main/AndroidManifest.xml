@@ -1,18 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Permissions an app from this shell may keep or drop (app.json's
+         android.permissions), and one the shell declares for itself, under
+         its application ID, as AndroidX does. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <permission
+        android:name="${applicationId}.permission.SHELL"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="${applicationId}.permission.SHELL" />
+
     <application
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <!-- A label of its own, which the launcher shows in place of the
+             application's. -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:label="@string/launcher_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- An authority under the application ID, as FileProvider's and
+             AndroidX Startup's are: two apps can't share one. -->
+        <provider
+            android:name=".ShellProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false" />
     </application>
 
 </manifest>

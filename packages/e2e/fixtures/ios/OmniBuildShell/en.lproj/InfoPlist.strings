@@ -1,0 +1,5 @@
+/* What iOS shows in English in place of Info.plist's values, as a shell
+   translated into other languages has. The same text as Info.plist's, so
+   that only an app OmniBuild gave its own values reports them. */
+"CFBundleDisplayName" = "OmniBuild Shell";
+"NSCameraUsageDescription" = "The shell's camera.";

@@ -32,7 +32,10 @@ const CPU_TYPE_ARM64: u32 = 0x0100_000c;
 const SEGMENT_VM_SIZE: usize = 32;
 const SEGMENT_FILE_OFFSET: usize = 40;
 const SEGMENT_FILE_SIZE: usize = 48;
-/// codesign pads a signature to a multiple of 16 bytes.
+/// codesign leaves room for a signature 8 bytes longer than the one it
+/// writes, padded to a multiple of 16 bytes, as measured signing a library
+/// under identifiers of every length from 1 to 39.
+const SIGNATURE_SLACK: usize = 8;
 const SIGNATURE_ALIGNMENT: usize = 16;
 /// codesign rounds `__LINKEDIT`'s size in memory up to 16 KiB, arm64's page
 /// size, for every architecture.
@@ -163,7 +166,7 @@ fn sign_architecture(macho: &[u8], sign: &impl Fn(&Code) -> Vec<u8>) -> Result<V
         page_size,
         text,
     });
-    let size = first.len().next_multiple_of(SIGNATURE_ALIGNMENT);
+    let size = (first.len() + SIGNATURE_SLACK).next_multiple_of(SIGNATURE_ALIGNMENT);
     let file_size = (data_offset + size) as u64 - file_offset.min(data_offset as u64);
     let vm_size = vm_size.max(file_size.next_multiple_of(LINKEDIT_ROUNDING));
     code[signature + 12..signature + 16].copy_from_slice(&u32_of(size).to_le_bytes());
@@ -310,9 +313,9 @@ mod tests {
     fn grows_linkedit_for_a_signature_that_needs_more_pages() {
         let signed = sign(&device(), |_: &Code| vec![1; 20_000]).unwrap();
 
-        // 176 bytes of __LINKEDIT before the signature, then 20,000 of it,
-        // which the 16 KiB in memory don't hold.
-        assert_eq!(layout(&signed), (32_944, 20_000, 32_768, 176 + 20_000));
+        // 176 bytes of __LINKEDIT before the signature, then room for it,
+        // 8 bytes more padded to 16, which the 16 KiB in memory don't hold.
+        assert_eq!(layout(&signed), (32_944, 20_016, 32_768, 176 + 20_016));
     }
 
     #[test]

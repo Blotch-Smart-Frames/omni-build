@@ -30,15 +30,42 @@ const COMPLEX: u16 = 0x0001;
 const COMPACT: u16 = 0x0008;
 const NO_ENTRY: u32 = u32::MAX;
 const TYPE_STRING: u8 = 0x03;
+/// A colour as `#AARRGGBB`, the first of the colour types: aapt2 keeps every
+/// colour as 32-bit ARGB, however it was written, and says which way in
+/// the type.
+const TYPE_INT_COLOR_ARGB8: u8 = 0x1c;
+const TYPE_INT_COLOR_RGB4: u8 = 0x1f;
+/// Where an APK keeps the files its resource table names.
+const FILES: &str = "res/";
 
-/// A resource table whose string and file values can be read and changed,
-/// in either format: an APK's `resources.arsc` or an AAB's `resources.pb`.
+/// A resource's value in one configuration, as far as OmniBuild tells them
+/// apart.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Value {
+    /// A file in the package, by its path: a bitmap, or XML such as a
+    /// vector drawable or an adaptive icon.
+    File(String),
+    String(String),
+    /// A colour, as ARGB.
+    Color(u32),
+    Other,
+}
+
+/// A resource table whose values can be read and changed, in either
+/// format: an APK's `resources.arsc` or an AAB's `resources.pb`.
 pub trait Resources {
-    /// The resource's string values, one for each configuration it has a
-    /// string in. A file resource's value is its path in the package.
-    fn strings(&self, id: u32) -> Result<Vec<String>>;
+    /// The resource's value in each configuration it has one in.
+    fn values(&self, id: u32) -> Result<Vec<Value>>;
+    /// Every file the table names, in any resource.
+    fn files(&self) -> Result<Vec<String>>;
     /// Makes a resource a string in every configuration it has a value in.
     fn set_string(&mut self, id: u32, value: &str) -> Result<()>;
+    /// Makes a resource the file at `path`, a PNG, in every configuration
+    /// it has a value in.
+    fn set_file(&mut self, id: u32, path: &str) -> Result<()>;
+    /// Makes a resource a colour, as ARGB, in every configuration it has a
+    /// value in.
+    fn set_color(&mut self, id: u32, argb: u32) -> Result<()>;
     fn to_bytes(&self) -> Vec<u8>;
 }
 
@@ -55,6 +82,15 @@ pub struct ResourceTable {
 struct Slot {
     data_type: usize,
     data: usize,
+}
+
+/// What a type chunk has for an entry.
+enum Found {
+    Nothing,
+    /// A map of values (a style, an array, a plural), which OmniBuild leaves
+    /// as it is.
+    Map,
+    Value(Slot),
 }
 
 impl ResourceTable {
@@ -87,18 +123,44 @@ impl ResourceTable {
             }
             for chunk in chunks(&self.packages, package.body(), package.end())? {
                 if chunk.kind == TYPE && u32::from(self.packages[chunk.start + 8]) == type_id {
-                    slots.extend(self.slot(&chunk, index, id)?);
+                    match self.slot(&chunk, index)? {
+                        Found::Nothing => {}
+                        Found::Map => bail!("resource {id:#010x} holds several values, not one"),
+                        Found::Value(slot) => slots.push(slot),
+                    }
                 }
             }
         }
         Ok(slots)
     }
 
-    /// Where the value of the entry at `index` is in a type chunk, if the
-    /// chunk has one.
-    fn slot(&self, chunk: &Chunk, index: usize, id: u32) -> Result<Option<Slot>> {
-        let data = &self.packages;
-        let mut header = Reader::at(data, chunk.start + 9);
+    /// Where every value in the table is, but those in maps.
+    fn all_slots(&self) -> Result<Vec<Slot>> {
+        let mut slots = Vec::new();
+        let packages = chunks(&self.packages, 0, self.packages.len())?;
+        for package in packages.iter().filter(|chunk| chunk.kind == PACKAGE) {
+            let types = chunks(&self.packages, package.body(), package.end())?;
+            for chunk in types.iter().filter(|chunk| chunk.kind == TYPE) {
+                let (flags, count, _) = self.type_header(chunk)?;
+                for index in 0..count {
+                    // A sparse chunk lists its entries' indexes.
+                    let index = if flags & SPARSE == 0 {
+                        index
+                    } else {
+                        usize::from(Reader::at(&self.packages, chunk.body() + 4 * index).u16())
+                    };
+                    if let Found::Value(slot) = self.slot(chunk, index)? {
+                        slots.push(slot);
+                    }
+                }
+            }
+        }
+        Ok(slots)
+    }
+
+    /// A type chunk's flags, its number of entries, and where they start.
+    fn type_header(&self, chunk: &Chunk) -> Result<(u8, usize, usize)> {
+        let mut header = Reader::at(&self.packages, chunk.start + 9);
         let flags = header.u8();
         header.skip(2);
         let (count, entries) = (offset(header.u32()), offset(header.u32()));
@@ -111,6 +173,14 @@ impl ResourceTable {
         {
             bail!("it's corrupt or cut short");
         }
+        Ok((flags, count, entries))
+    }
+
+    /// Where the value of the entry at `index` is in a type chunk, if the
+    /// chunk has one.
+    fn slot(&self, chunk: &Chunk, index: usize) -> Result<Found> {
+        let data = &self.packages;
+        let (flags, count, entries) = self.type_header(chunk)?;
         let offsets = chunk.body();
         let entry = if flags & SPARSE != 0 {
             (0..count).find_map(|pair| {
@@ -127,7 +197,7 @@ impl ResourceTable {
             (offset != NO_ENTRY).then(|| self::offset(offset))
         };
         let Some(entry) = entry else {
-            return Ok(None);
+            return Ok(Found::Nothing);
         };
 
         let at = chunk.start + entries + entry;
@@ -148,42 +218,81 @@ impl ResourceTable {
             }
         };
         if flags & (COMPLEX | COMPACT) == COMPLEX {
-            bail!("resource {id:#010x} holds several values, not one");
+            return Ok(Found::Map);
         }
         if slot.data + 4 > chunk.end() {
             bail!("it's corrupt or cut short");
         }
-        Ok(Some(slot))
+        Ok(Found::Value(slot))
+    }
+
+    /// The file a value names, if it's one: a string in `res/`.
+    fn file(&self, slot: &Slot) -> Option<String> {
+        let data = Reader::at(&self.packages, slot.data).u32();
+        (self.packages[slot.data_type] == TYPE_STRING)
+            .then(|| self.pool.get(data))
+            .flatten()
+            .filter(|path| path.starts_with(FILES))
     }
 }
 
-impl Resources for ResourceTable {
-    /// The resource's string values, one for each configuration it has a
-    /// string in. A file resource's value is its path in the APK.
-    fn strings(&self, id: u32) -> Result<Vec<String>> {
-        Ok(self
-            .slots(id)?
-            .into_iter()
-            .filter(|slot| self.packages[slot.data_type] == TYPE_STRING)
-            .filter_map(|slot| {
-                let index = Reader::at(&self.packages, slot.data).u32();
-                self.pool.get(index)
-            })
-            .collect())
-    }
-
-    /// Makes a resource a string in every configuration it has a value in.
-    fn set_string(&mut self, id: u32, value: &str) -> Result<()> {
+impl ResourceTable {
+    /// Gives the resource this type and data in every configuration it has
+    /// a value in.
+    fn set(&mut self, id: u32, data_type: u8, data: u32) -> Result<()> {
         let slots = self.slots(id)?;
         if slots.is_empty() {
             bail!("it has no resource {id:#010x}");
         }
-        let index = self.pool.add(value);
         for slot in slots {
-            self.packages[slot.data_type] = TYPE_STRING;
-            self.packages[slot.data..slot.data + 4].copy_from_slice(&index.to_le_bytes());
+            self.packages[slot.data_type] = data_type;
+            self.packages[slot.data..slot.data + 4].copy_from_slice(&data.to_le_bytes());
         }
         Ok(())
+    }
+}
+
+impl Resources for ResourceTable {
+    /// The resource's values. A file's is its path, a string like any
+    /// other, which is how a file's is told from another string: an APK
+    /// keeps its resources' files in `res/`.
+    fn values(&self, id: u32) -> Result<Vec<Value>> {
+        Ok(self
+            .slots(id)?
+            .into_iter()
+            .map(|slot| {
+                let data = Reader::at(&self.packages, slot.data).u32();
+                match (self.file(&slot), self.packages[slot.data_type]) {
+                    (Some(path), _) => Value::File(path),
+                    (None, TYPE_STRING) => self.pool.get(data).map_or(Value::Other, Value::String),
+                    (None, TYPE_INT_COLOR_ARGB8..=TYPE_INT_COLOR_RGB4) => Value::Color(data),
+                    _ => Value::Other,
+                }
+            })
+            .collect())
+    }
+
+    fn files(&self) -> Result<Vec<String>> {
+        Ok(self
+            .all_slots()?
+            .iter()
+            .filter_map(|slot| self.file(slot))
+            .collect())
+    }
+
+    fn set_string(&mut self, id: u32, value: &str) -> Result<()> {
+        // Added only once it's known the resource is there.
+        self.slots(id)?;
+        let index = self.pool.add(value);
+        self.set(id, TYPE_STRING, index)
+    }
+
+    fn set_file(&mut self, id: u32, path: &str) -> Result<()> {
+        self.set_string(id, path)
+    }
+
+    fn set_color(&mut self, id: u32, argb: u32) -> Result<()> {
+        self.set(id, TYPE_INT_COLOR_ARGB8, argb)
     }
 
     fn to_bytes(&self) -> Vec<u8> {
@@ -207,19 +316,35 @@ fn offset(value: u32) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{COMPACT, COMPLEX, OFFSET16, ResourceTable, Resources, SPARSE, TYPE_STRING};
+pub mod tests {
+    use super::{
+        COMPACT, COMPLEX, OFFSET16, ResourceTable, Resources, SPARSE, TYPE_INT_COLOR_ARGB8,
+        TYPE_STRING, Value,
+    };
     use crate::android::string_pool::tests::empty;
     use crate::zip::{self, tests::SHELL};
 
-    const APP_NAME: u32 = 0x7f02_0000;
+    const APP_NAME: u32 = 0x7f03_0000;
 
     fn shell_table() -> Vec<u8> {
-        zip::read(SHELL).unwrap()[4].contents().unwrap()
+        zip::tests::file(SHELL, "resources.arsc")
     }
 
     /// Each value the resource has: its type and string, if it's one.
-    fn values(table: &ResourceTable, id: u32) -> Vec<(u8, Option<String>)> {
+    /// The resource's string values, one for each configuration it has a
+    /// string in. A file resource's value is its path in the package.
+    pub fn strings(table: &dyn Resources, id: u32) -> anyhow::Result<Vec<String>> {
+        Ok(table
+            .values(id)?
+            .into_iter()
+            .filter_map(|value| match value {
+                Value::File(text) | Value::String(text) => Some(text),
+                Value::Color(_) | Value::Other => None,
+            })
+            .collect())
+    }
+
+    fn values_with_types(table: &ResourceTable, id: u32) -> Vec<(u8, Option<String>)> {
         table
             .slots(id)
             .unwrap()
@@ -312,11 +437,14 @@ mod tests {
 
         let table = ResourceTable::parse(&table.to_bytes()).unwrap();
         assert_eq!(
-            values(&table, APP_NAME),
+            values_with_types(&table, APP_NAME),
             [(TYPE_STRING, Some("Repackaged".to_owned()))]
         );
-        // The icon's file path, in the same pool, is as it was.
-        assert_eq!(table.strings(0x7f01_0000).unwrap(), ["res/o-.png"]);
+        // The icon's file paths, in the same pool, are as they were.
+        assert_eq!(
+            strings(&table, 0x7f02_0000).unwrap(),
+            ["res/d2.webp", "res/sK.webp", "res/BW.xml"]
+        );
     }
 
     #[test]
@@ -346,12 +474,14 @@ mod tests {
             table.set_string(0x7f02_0001, "Name").unwrap();
 
             assert_eq!(
-                values(&table, 0x7f02_0001),
+                values_with_types(&table, 0x7f02_0001),
                 [(TYPE_STRING, Some("Name".to_owned()))]
             );
             // Entry 0 has no value; entry 2 is past the end.
-            assert_eq!(values(&table, 0x7f02_0000), []);
-            assert_eq!(values(&table, 0x7f02_0002), []);
+            assert_eq!(values_with_types(&table, 0x7f02_0000), []);
+            assert_eq!(values_with_types(&table, 0x7f02_0002), []);
+            // A string, not a file.
+            assert_eq!(table.files().unwrap(), Vec::<String>::new());
         }
     }
 
@@ -366,8 +496,8 @@ mod tests {
         );
         let table = ResourceTable::parse(&table(&[chunk])).unwrap();
 
-        assert_eq!(table.strings(0x7f02_0000).unwrap(), ["Shell"]);
-        assert_eq!(table.strings(0x7f02_0001).unwrap(), Vec::<String>::new());
+        assert_eq!(strings(&table, 0x7f02_0000).unwrap(), ["Shell"]);
+        assert_eq!(strings(&table, 0x7f02_0001).unwrap(), Vec::<String>::new());
     }
 
     #[test]
@@ -379,8 +509,68 @@ mod tests {
         table.set_string(0x7f02_0000, "Name").unwrap();
 
         assert_eq!(
-            values(&table, 0x7f02_0000),
+            values_with_types(&table, 0x7f02_0000),
             [(TYPE_STRING, Some("Name".to_owned()))]
+        );
+    }
+
+    #[test]
+    fn tells_files_strings_and_colours_apart() {
+        // The shell's icon: a WebP for two densities, and an adaptive icon.
+        let shell = ResourceTable::parse(&shell_table()).unwrap();
+        // A string, a colour (#FF2F6FEB, written as #2F6FEB), a reference
+        // and a string the pool doesn't have.
+        let entries = [
+            entry(0, TYPE_STRING, 0),
+            entry(0, 0x1d, 0xff2f_6feb),
+            entry(0, 0x01, 0x7f02_0000),
+            entry(0, TYPE_STRING, 9),
+        ]
+        .concat();
+        let offsets: Vec<u8> = (0..4u32)
+            .flat_map(|index| (16 * index).to_le_bytes())
+            .collect();
+        let mut table =
+            ResourceTable::parse(&table(&[type_chunk(0, 4, &offsets, &entries)])).unwrap();
+
+        let values: Vec<_> = (0..4)
+            .flat_map(|index| table.values(0x7f02_0000 + index).unwrap())
+            .collect();
+        table.set_file(0x7f02_0002, "res/icon.png").unwrap();
+        table.set_color(0x7f02_0003, 0xff00_ff00).unwrap();
+
+        assert_eq!(
+            shell.values(0x7f02_0000).unwrap(),
+            [
+                Value::File("res/d2.webp".to_owned()),
+                Value::File("res/sK.webp".to_owned()),
+                Value::File("res/BW.xml".to_owned()),
+            ]
+        );
+        assert_eq!(
+            values,
+            [
+                Value::String("Shell".to_owned()),
+                Value::Color(0xff2f_6feb),
+                Value::Other,
+                Value::Other,
+            ]
+        );
+        assert_eq!(
+            table.values(0x7f02_0002).unwrap(),
+            [Value::File("res/icon.png".to_owned())]
+        );
+        assert_eq!(
+            table.values(0x7f02_0003).unwrap(),
+            [Value::Color(0xff00_ff00)]
+        );
+        assert_eq!(
+            values_with_types(&table, 0x7f02_0003)[0].0,
+            TYPE_INT_COLOR_ARGB8
+        );
+        assert_eq!(
+            table.set_color(0x7f02_0009, 0).unwrap_err().to_string(),
+            "it has no resource 0x7f020009"
         );
     }
 
@@ -423,6 +613,20 @@ mod tests {
                     .unwrap_err()
                     .to_string(),
                 message
+            );
+            assert_eq!(
+                table.set_color(0x7f02_0000, 0).unwrap_err().to_string(),
+                message
+            );
+            // A map isn't a file, and an empty table has none.
+            let corrupt = message == "it's corrupt or cut short";
+            assert_eq!(
+                table.files().map_err(|error| error.to_string()),
+                if corrupt {
+                    Err(message.to_owned())
+                } else {
+                    Ok(Vec::new())
+                }
             );
         }
     }

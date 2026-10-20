@@ -8,9 +8,11 @@
 //! - `files2`: each file's SHA-256, but for `Info.plist`, which the
 //!   signature hashes itself, and `PkgInfo`.
 //! - `rules` and `rules2`: codesign's rules for which files each list
-//!   seals, and how. OmniBuild applies only those its shells' files need:
-//!   localized resources (`.lproj`) would be sealed as optional, and none
-//!   of the shells has any.
+//!   seals, and how. OmniBuild applies those its shells' files need:
+//!   localized resources (`.lproj`), but for `Base.lproj`'s, are optional,
+//!   so iOS accepts an app without some of its languages, and their
+//!   `locversion.plist` isn't sealed at all. A framework's files are sealed
+//!   like any other, its own seal and signed code among them.
 
 use plist::{Dictionary, Value};
 use sha1::Sha1;
@@ -18,18 +20,34 @@ use sha2::{Digest, Sha256};
 
 /// The seal of `files`, by their paths in the bundle.
 pub fn code_resources(files: &[(String, Vec<u8>)]) -> Vec<u8> {
-    let mut files: Vec<&(String, Vec<u8>)> = files.iter().collect();
+    let mut files: Vec<&(String, Vec<u8>)> = files
+        .iter()
+        .filter(|(name, _)| !(is_localized(name) && name.ends_with("/locversion.plist")))
+        .collect();
     files.sort_by(|(a, _), (b, _)| a.cmp(b));
+    // An optional file's hash is in a dictionary that says so.
+    let hash = |name: &str, key: &str, hash: Vec<u8>| {
+        if is_optional(name) {
+            dictionary(&[(key, Value::Data(hash)), ("optional", Value::Boolean(true))])
+        } else if key == "hash" {
+            Value::Data(hash)
+        } else {
+            dictionary(&[(key, Value::Data(hash))])
+        }
+    };
     let v1: Dictionary = files
         .iter()
-        .map(|(name, contents)| (name.clone(), Value::Data(Sha1::digest(contents).to_vec())))
+        .map(|(name, contents)| {
+            let hash = hash(name, "hash", Sha1::digest(contents).to_vec());
+            (name.clone(), hash)
+        })
         .collect();
     let v2: Dictionary = files
         .iter()
         .filter(|(name, _)| name != "Info.plist" && name != "PkgInfo")
         .map(|(name, contents)| {
-            let hash = Value::Data(Sha256::digest(contents).to_vec());
-            (name.clone(), dictionary(&[("hash2", hash)]))
+            let hash = hash(name, "hash2", Sha256::digest(contents).to_vec());
+            (name.clone(), hash)
         })
         .collect();
     let seal = dictionary(&[
@@ -43,6 +61,22 @@ pub fn code_resources(files: &[(String, Vec<u8>)]) -> Vec<u8> {
         .expect("writing into memory can't fail");
     xml.push(b'\n');
     xml
+}
+
+/// Whether the file is in a language's folder (`^.*\.lproj/`). As
+/// codesign's rule, case-sensitive.
+fn is_localized(name: &str) -> bool {
+    name.split('/').rev().skip(1).any(|folder| {
+        folder
+            .rsplit_once('.')
+            .is_some_and(|(_, extension)| extension == "lproj")
+    })
+}
+
+/// Whether the file is sealed as optional: a localized one, but for the
+/// base localization's, which a heavier rule seals as any other.
+fn is_optional(name: &str) -> bool {
+    is_localized(name) && !name.starts_with("Base.lproj/")
 }
 
 /// codesign's rules for `files`.
@@ -109,11 +143,16 @@ mod tests {
     #[test]
     fn seals_the_files_as_codesign_does() {
         // The Simulator shell's files, besides its executable and its seal,
-        // out of order.
+        // out of order: its framework's as Xcode signed them, and English
+        // strings.
         let files: Vec<(String, Vec<u8>)> = [
             "payload.txt",
             "Info.plist",
             "AppIcon60x60@2x.png",
+            "en.lproj/InfoPlist.strings",
+            "Frameworks/ShellKit.framework/ShellKit",
+            "Frameworks/ShellKit.framework/_CodeSignature/CodeResources",
+            "Frameworks/ShellKit.framework/Info.plist",
             "Assets.car",
             "AppIcon76x76@2x~ipad.png",
             "PkgInfo",
@@ -130,9 +169,37 @@ mod tests {
         let seal = code_resources(&files);
 
         // What codesign wrote signing the same app ad hoc.
-        assert_eq!(
-            format!("{:x}", Sha256::digest(&seal)),
-            "305a8450879786d090c10650a686e258e3b7bd1560d66ef66d211bfc5a561713"
-        );
+        assert_eq!(format!("{:x}", Sha256::digest(&seal)), SIMULATOR_SEAL);
+    }
+
+    /// codesign's seal of the Simulator shell, with its framework as it is.
+    const SIMULATOR_SEAL: &str = "e10333ecc0de39a0368835f25af896b40188f2c5e74cda7a55eed64a3b65b190";
+
+    #[test]
+    fn seals_localized_files_as_optional_but_the_base_ones() {
+        let file = |name: &str| (name.to_owned(), name.as_bytes().to_vec());
+
+        let seal = code_resources(&[
+            file("Base.lproj/Main.storyboardc"),
+            file("fr.lproj/InfoPlist.strings"),
+            file("fr.lproj/locversion.plist"),
+            file("Settings.bundle/de.lproj/Root.strings"),
+        ]);
+
+        let seal = plist::Value::from_reader_xml(seal.as_slice()).unwrap();
+        let files = seal.as_dictionary().unwrap()["files2"]
+            .as_dictionary()
+            .unwrap();
+        let optional = |name: &str| {
+            files[name]
+                .as_dictionary()
+                .unwrap()
+                .get("optional")
+                .is_some()
+        };
+        assert!(!optional("Base.lproj/Main.storyboardc"));
+        assert!(optional("fr.lproj/InfoPlist.strings"));
+        assert!(optional("Settings.bundle/de.lproj/Root.strings"));
+        assert!(!files.contains_key("fr.lproj/locversion.plist"));
     }
 }

@@ -17,6 +17,7 @@ const UTF8: u32 = 1 << 8;
 /// keep their exact bytes: an Android string pool may share data between
 /// strings and use encodings that decoding and encoding again wouldn't
 /// reproduce, and every other index into it must stay valid.
+#[derive(Clone)]
 pub struct StringPool {
     flags: u32,
     /// Where each string starts in `strings`.
@@ -85,6 +86,11 @@ impl StringPool {
     }
 
     /// Adds a string at the end, and returns its index.
+    /// The index of the first string equal to `value`, if the pool has one.
+    pub fn find(&self, value: &str) -> Option<u32> {
+        (0..u32_of(self.offsets.len())).find(|&index| self.get(index).as_deref() == Some(value))
+    }
+
     pub fn add(&mut self, value: &str) -> u32 {
         let index = u32_of(self.offsets.len());
         self.offsets.push(u32_of(self.strings.len()));
@@ -229,7 +235,7 @@ pub mod tests {
         let (pool, size) = StringPool::parse(&table[12..]).unwrap();
 
         assert_eq!(pool.flags & UTF8, UTF8);
-        assert_eq!(pool.get(1).as_deref(), Some("OmniBuild Shell"));
+        assert_eq!(pool.get(8).as_deref(), Some("OmniBuild Shell"));
         assert_eq!(pool.to_bytes(), &table[12..12 + size]);
     }
 
