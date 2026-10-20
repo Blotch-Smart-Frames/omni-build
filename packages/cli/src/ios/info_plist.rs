@@ -1,5 +1,7 @@
 //! An app's `Info.plist`, where iOS reads its ID, name, version and build
-//! number, among everything else it needs to know before running it.
+//! number, among everything else it needs to know before running it, and
+//! its translations, `InfoPlist.strings` in each language's folder, which
+//! Xcode writes in the same format.
 
 use std::io::Cursor;
 
@@ -125,7 +127,33 @@ impl InfoPlist {
         if let Some(build) = app.build {
             self.set("CFBundleVersion", &build.to_string());
         }
+        for (key, description) in app.ios.usage_descriptions.iter().flatten() {
+            if !is_usage_description(key) {
+                bail!(
+                    "\"{key}\" isn't the key of a purpose string, such as NSCameraUsageDescription"
+                );
+            }
+            self.set(key, description);
+        }
         Ok(())
+    }
+
+    /// The keys whose translations iOS would show in place of the app's
+    /// values: its name's, and its purpose strings'.
+    pub fn translated(app: &App) -> Vec<&str> {
+        let name = app.name.as_ref().map(|_| "CFBundleDisplayName");
+        let descriptions = app.ios.usage_descriptions.iter().flatten();
+        name.into_iter()
+            .chain(descriptions.map(|(key, _)| key.as_str()))
+            .collect()
+    }
+
+    /// Removes the keys, and says whether it had any of them.
+    pub fn remove(&mut self, keys: &[&str]) -> bool {
+        keys.iter()
+            .filter(|key| self.dictionary.remove(key).is_some())
+            .count()
+            > 0
     }
 
     fn set(&mut self, key: &str, value: &str) {
@@ -145,6 +173,13 @@ impl InfoPlist {
         .expect("writing into memory can't fail");
         bytes
     }
+}
+
+/// Whether `key` is a purpose string's, as Apple names them:
+/// `NSCameraUsageDescription`, `NFCReaderUsageDescription`.
+fn is_usage_description(key: &str) -> bool {
+    key.strip_suffix("UsageDescription")
+        .is_some_and(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric()))
 }
 
 /// Whether `id` is a valid bundle ID: letters, digits, hyphens and dots,

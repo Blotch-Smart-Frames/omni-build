@@ -1,4 +1,5 @@
 import Foundation
+import ShellKit
 import UIKit
 
 /// What the app found in its own bundle: every value OmniBuild may rewrite.
@@ -15,12 +16,25 @@ struct ShellReport: Encodable {
     let build: String?
     let payload: String?
     let icon: String?
+    /// Why the app asks for the camera, as iOS shows it.
+    let cameraUsage: String?
+    /// The embedded framework's name, which the app only knows if the
+    /// framework loaded.
+    let framework: String
+
 
     init(bundle: Bundle) {
         let info = bundle.infoDictionary ?? [:]
+        // What iOS shows: the strings in the language it runs in
+        // (InfoPlist.strings), where the shell has them, over Info.plist's.
+        let shown = (bundle.localizedInfoDictionary ?? [:]).merging(info) { localized, _ in
+            localized
+        }
         id = bundle.bundleIdentifier
         // The name under the icon on the home screen.
-        name = (info["CFBundleDisplayName"] ?? info["CFBundleName"]) as? String
+        name = (shown["CFBundleDisplayName"] ?? shown["CFBundleName"]) as? String
+        cameraUsage = shown["NSCameraUsageDescription"] as? String
+        framework = ShellKit.name
         version = info["CFBundleShortVersionString"] as? String
         build = info["CFBundleVersion"] as? String
         payload = bundle.url(forResource: "payload", withExtension: "txt")

@@ -24,6 +24,22 @@ const BACKUP_AGENT: u32 = 0x0101_027f;
 const PARENT_ACTIVITY_NAME: u32 = 0x0101_03a7;
 const ROUND_ICON: u32 = 0x0101_052c;
 
+/// The elements that start an app's components. The intent filters
+/// inside one come after it in document order, before the next one.
+const COMPONENTS: [&str; 5] = [
+    "activity",
+    "activity-alias",
+    "service",
+    "receiver",
+    "provider",
+];
+/// The intent of the activity a launcher shows.
+const MAIN: &str = "android.intent.action.MAIN";
+const LAUNCHER: &str = "android.intent.category.LAUNCHER";
+/// The elements that ask for a permission, the second only on Android 6.0
+/// and later.
+const PERMISSION_REQUESTS: [&str; 2] = ["uses-permission", "uses-permission-sdk-23"];
+
 /// Android 7.0, the first to verify APK Signature Scheme v2. Earlier
 /// versions only verify a v1 (JAR) signature, which OmniBuild doesn't write
 /// for APKs.
@@ -45,6 +61,9 @@ pub enum Value {
 pub struct Attribute {
     /// The name of the element it's on.
     pub element: String,
+    /// Which element it's on: its place in document order, counting every
+    /// element, with attributes or without.
+    pub node: usize,
     pub name: String,
     /// The resource ID of an android: attribute. Others, like `package`,
     /// have none.
@@ -52,27 +71,37 @@ pub struct Attribute {
     pub value: Value,
 }
 
-/// A manifest whose attributes can be changed, in either format.
+/// Compiled XML whose attributes can be changed, and the root's children
+/// added and removed, in either format: a manifest, or a resource such as
+/// an adaptive icon.
 pub trait Document {
     /// Every attribute, in document order.
     fn attributes(&self) -> &[Attribute];
     fn set_string(&mut self, index: usize, value: &str);
     fn set_int(&mut self, index: usize, value: u32);
+    /// Removes the root's children named `name` whose attributes `remove`
+    /// picks, with everything in them.
+    fn remove_children(&mut self, name: &str, remove: &dyn Fn(&[&Attribute]) -> bool);
+    /// Adds a child named `name` to the root, with one android: attribute,
+    /// a string: by its name and resource ID, such as `android:name`'s.
+    fn add_child(&mut self, name: &str, attribute: (&str, u32), value: &str) -> Result<()>;
     fn to_bytes(&self) -> Vec<u8>;
 }
 
 /// Where else the app's values go, besides the manifest.
 #[derive(Debug)]
 pub struct Changes {
-    /// The string resource the app's name goes in, when the shell's label
-    /// is one rather than text in the manifest.
-    pub name_resource: Option<u32>,
+    /// The string resources the app's name goes in, where the shell's
+    /// labels are ones rather than text in the manifest: the application's,
+    /// and any the launcher shows in its place.
+    pub name_resources: Vec<u32>,
     /// The resources the app's icon goes in: the application's icon, and
     /// its round icon, which some launchers show instead.
     pub icon_resources: Vec<u32>,
 }
 
-/// Gives the manifest the app's ID, name, version and build number.
+/// Gives the manifest the app's ID, name, version, build number and
+/// permissions.
 pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
     let min_sdk = find(manifest, "uses-sdk", MIN_SDK_VERSION)
         .and_then(|index| match manifest.attributes()[index].value {
@@ -87,6 +116,9 @@ pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
     }
     if let Some(id) = &app.id {
         set_package(manifest, id)?;
+    }
+    if let Some(permissions) = &app.android.permissions {
+        set_permissions(manifest, permissions)?;
     }
     if let Some(version) = &app.version {
         let index = find(manifest, "manifest", VERSION_NAME)
@@ -104,15 +136,23 @@ pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
         manifest.set_int(index, build);
     }
     // The application's label is the name under the icon, unless the
-    // launcher activity has a label of its own: shells shouldn't.
-    let mut name_resource = None;
+    // launcher activity, or its intent filter, has a label of its own.
+    let mut name_resources = Vec::new();
     if let Some(name) = &app.name {
         let index =
             find(manifest, "application", LABEL).context("it has no android:label to change")?;
-        match manifest.attributes()[index].value {
-            Value::Reference(id) => name_resource = Some(id),
-            _ => manifest.set_string(index, name),
+        for index in [index].into_iter().chain(launcher_labels(manifest)) {
+            match manifest.attributes()[index].value {
+                Value::Reference(id) if name_resources.contains(&id) => {}
+                Value::Reference(id) => name_resources.push(id),
+                _ => manifest.set_string(index, name),
+            }
         }
+    }
+    if app.android.adaptive_icon.is_some() && app.icon.is_none() {
+        bail!(
+            "an adaptive icon needs the app's icon too, which Android shows before 8.0: give an icon"
+        );
     }
     let mut icon_resources = Vec::new();
     if app.icon.is_some() {
@@ -129,9 +169,128 @@ pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
         }
     }
     Ok(Changes {
-        name_resource,
+        name_resources,
         icon_resources,
     })
+}
+
+/// The labels a launcher shows in place of the application's: a launcher
+/// activity's (or alias's) own, and its intent filters'. An element's
+/// children follow it in document order, and components don't nest, so
+/// the elements after a component, up to the next, are in it.
+fn launcher_labels(manifest: &dyn Document) -> Vec<usize> {
+    /// A component, and what's been seen in it so far.
+    #[derive(Default)]
+    struct Component {
+        node: usize,
+        labels: Vec<usize>,
+        main: bool,
+        launcher: bool,
+    }
+    let mut launcher_labels = Vec::new();
+    let mut current: Option<Component> = None;
+    let mut finish = |component: Option<Component>| {
+        if let Some(component) = component.filter(|component| component.main && component.launcher)
+        {
+            launcher_labels.extend(component.labels);
+        }
+    };
+    for (index, attribute) in manifest.attributes().iter().enumerate() {
+        let element = attribute.element.as_str();
+        let is_new = current
+            .as_ref()
+            .is_none_or(|component| component.node != attribute.node);
+        if is_new && COMPONENTS.contains(&element) {
+            finish(current.take());
+            current = matches!(element, "activity" | "activity-alias").then(|| Component {
+                node: attribute.node,
+                ..Component::default()
+            });
+        }
+        let Some(component) = current.as_mut() else {
+            continue;
+        };
+        match (element, attribute.resource_id, &attribute.value) {
+            ("activity" | "activity-alias" | "intent-filter", Some(LABEL), _) => {
+                component.labels.push(index);
+            }
+            ("action", Some(NAME), Value::String(action)) if action == MAIN => {
+                component.main = true;
+            }
+            ("category", Some(NAME), Value::String(category)) if category == LAUNCHER => {
+                component.launcher = true;
+            }
+            _ => {}
+        }
+    }
+    finish(current);
+    launcher_labels
+}
+
+/// Gives the app the permissions it asks for, `android.permission.` and
+/// the rest of the name, or the whole name: the shell's others go, but
+/// those under the app's own ID, which the shell's code declares and uses
+/// itself (AndroidX's `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`).
+fn set_permissions(manifest: &mut dyn Document, permissions: &[String]) -> Result<()> {
+    let own = format!("{}.", package(manifest)?);
+    let mut wanted = Vec::new();
+    for permission in permissions {
+        let name = if permission.contains('.') {
+            permission.clone()
+        } else {
+            format!("android.permission.{permission}")
+        };
+        if !is_application_id(&name) {
+            bail!(
+                "\"{permission}\" isn't the name of a permission, such as android.permission.CAMERA, or CAMERA for short"
+            );
+        }
+        wanted.push(name);
+    }
+    for element in PERMISSION_REQUESTS {
+        manifest.remove_children(element, &|attributes| {
+            attributes.iter().any(|attribute| {
+                matches!(
+                    (attribute.resource_id, &attribute.value),
+                    (Some(NAME), Value::String(name)) if !wanted.contains(name) && !name.starts_with(&own)
+                )
+            })
+        });
+    }
+    let requested: Vec<Value> = manifest
+        .attributes()
+        .iter()
+        .filter(|attribute| {
+            PERMISSION_REQUESTS.contains(&attribute.element.as_str())
+                && attribute.resource_id == Some(NAME)
+        })
+        .map(|attribute| attribute.value.clone())
+        .collect();
+    for name in wanted
+        .iter()
+        .filter(|name| !requested.contains(&Value::String((*name).clone())))
+    {
+        manifest.add_child("uses-permission", ("name", NAME), name)?;
+    }
+    Ok(())
+}
+
+/// The manifest's package.
+fn package(manifest: &dyn Document) -> Result<String> {
+    manifest
+        .attributes()
+        .iter()
+        .find_map(|attribute| match &attribute.value {
+            Value::String(package)
+                if attribute.element == "manifest"
+                    && attribute.resource_id.is_none()
+                    && attribute.name == "package" =>
+            {
+                Some(package.clone())
+            }
+            _ => None,
+        })
+        .context("it has no package to change")
 }
 
 /// The index of the android: attribute with this resource ID on the first
@@ -156,26 +315,14 @@ fn set_package(manifest: &mut dyn Document, id: &str) -> Result<()> {
             "\"{id}\" isn't a valid Android application ID: it needs two or more parts separated by dots, each starting with a letter and holding only letters, digits and underscores"
         );
     }
-    let package = manifest
-        .attributes()
-        .iter()
-        .find_map(|attribute| match &attribute.value {
-            Value::String(package)
-                if attribute.element == "manifest"
-                    && attribute.resource_id.is_none()
-                    && attribute.name == "package" =>
-            {
-                Some(package.clone())
-            }
-            _ => None,
-        })
-        .context("it has no package to change")?;
+    let package = package(manifest)?;
     for index in 0..manifest.attributes().len() {
         let Attribute {
             element,
             name,
             resource_id,
             value,
+            ..
         } = &manifest.attributes()[index];
         let Value::String(value) = value else {
             continue;
@@ -260,9 +407,9 @@ mod tests {
     use crate::android::binary_xml::BinaryXml;
     use crate::android::binary_xml::tests::{
         Value::{Int, Ref, Str},
-        binary_xml, shell_manifest,
+        binary_xml, names, shell_manifest, texts,
     };
-    use crate::config::App;
+    use crate::config::{AdaptiveIcon, Android, App, Background};
 
     /// The manifest rewritten, and the changes elsewhere.
     fn rewritten(data: &[u8], app: &App) -> Result<(Vec<u8>, Changes)> {
@@ -338,14 +485,36 @@ mod tests {
             value(&rewritten, "activity", "name"),
             "dev.omnibuild.shell.MainActivity"
         );
-        // Everything else is as it was.
-        let unchanged = |values: Vec<(String, String, String)>| -> Vec<(String, String, String)> {
+        // What Gradle derived from the application ID moves with it.
+        assert_eq!(
+            value(&rewritten, "provider", "authorities"),
+            "dev.example.app.provider"
+        );
+        assert_eq!(
+            value(&rewritten, "permission", "name"),
+            "dev.example.app.permission.SHELL"
+        );
+        // Everything else is as it was, but for those, and the permission
+        // the shell asks for under its own.
+        let moved = [
+            "dev.omnibuild.shell.provider",
+            "dev.omnibuild.shell.permission.SHELL",
+        ];
+        let others = |values: Vec<(String, String, String)>| -> Vec<(String, String, String)> {
             values
                 .into_iter()
                 .filter(|(element, _, _)| element != "manifest")
+                .map(|(element, name, value)| {
+                    if moved.contains(&value.as_str()) {
+                        let value = value.replace("dev.omnibuild.shell", "dev.example.app");
+                        (element, name, value)
+                    } else {
+                        (element, name, value)
+                    }
+                })
                 .collect()
         };
-        assert_eq!(unchanged(values(&rewritten)), unchanged(values(&manifest)));
+        assert_eq!(others(values(&rewritten)), others(values(&manifest)));
     }
 
     /// A manifest with every kind of value that derives from the package,
@@ -537,11 +706,196 @@ mod tests {
         let in_resources = rewritten(&shell, &named("Repackaged")).unwrap();
         let in_manifest = rewritten(&literal, &named("Repackaged")).unwrap();
 
-        // The shell's label is @string/app_name.
-        assert_eq!(in_resources.1.name_resource, Some(0x7f02_0000));
+        // The shell's label is @string/app_name, and its launcher
+        // activity's @string/launcher_name.
+        assert_eq!(in_resources.1.name_resources, [0x7f03_0000, 0x7f03_0001]);
         assert_eq!(in_resources.0, shell);
-        assert_eq!(in_manifest.1.name_resource, None);
+        assert_eq!(in_manifest.1.name_resources, Vec::<u32>::new());
         assert_eq!(value(&in_manifest.0, "application", "label"), "Repackaged");
+    }
+
+    #[test]
+    fn names_what_the_launcher_shows_in_place_of_the_application() {
+        let name = |name| ("name", Some(NAME), Str(name));
+        let label = |label| ("label", Some(super::LABEL), label);
+        let manifest = binary_xml(&[
+            (
+                "uses-sdk",
+                vec![("minSdkVersion", Some(super::MIN_SDK_VERSION), Int(24))],
+            ),
+            ("application", vec![label(Str("App"))]),
+            // Not a launcher's: no LAUNCHER category.
+            ("activity", vec![name(".Settings"), label(Str("Settings"))]),
+            ("action", vec![name(super::MAIN)]),
+            ("activity", vec![name(".Main"), label(Ref(0x7f03_0001))]),
+            ("intent-filter", vec![label(Str("Open"))]),
+            ("action", vec![name(super::MAIN)]),
+            ("category", vec![name(super::LAUNCHER)]),
+            // Another component ends the activity, and isn't one a
+            // launcher shows.
+            ("service", vec![name(".Sync"), label(Str("Sync"))]),
+            ("category", vec![name(super::LAUNCHER)]),
+            ("activity-alias", vec![name(".Alias"), label(Str("Alias"))]),
+            ("action", vec![name(super::MAIN)]),
+            ("category", vec![name(super::LAUNCHER)]),
+        ]);
+
+        let (rewritten, changes) = rewritten(&manifest, &named("Repackaged")).unwrap();
+        // One resource for both labels, which is set once.
+        let shared = binary_xml(&[
+            (
+                "uses-sdk",
+                vec![("minSdkVersion", Some(super::MIN_SDK_VERSION), Int(24))],
+            ),
+            ("application", vec![label(Ref(0x7f03_0000))]),
+            ("activity", vec![name(".Main"), label(Ref(0x7f03_0000))]),
+            ("action", vec![name(super::MAIN)]),
+            ("category", vec![name(super::LAUNCHER)]),
+        ]);
+
+        assert_eq!(changes.name_resources, [0x7f03_0001]);
+        assert_eq!(
+            super::tests::rewritten(&shared, &named("Repackaged"))
+                .unwrap()
+                .1
+                .name_resources,
+            [0x7f03_0000]
+        );
+        let labels: Vec<(String, String)> = values(&rewritten)
+            .into_iter()
+            .filter(|(_, attribute, _)| attribute == "label")
+            .map(|(element, _, label)| (element, label))
+            .collect();
+        let label = |element: &str, label: &str| (element.to_owned(), label.to_owned());
+        assert_eq!(
+            labels,
+            [
+                label("application", "Repackaged"),
+                label("activity", "Settings"),
+                label("activity", ""),
+                label("intent-filter", "Repackaged"),
+                label("service", "Sync"),
+                label("activity-alias", "Repackaged"),
+            ]
+        );
+    }
+
+    fn with_permissions(id: Option<&str>, permissions: &[&str]) -> App {
+        App {
+            id: id.map(str::to_owned),
+            android: Android {
+                permissions: Some(permissions.iter().map(|&name| name.to_owned()).collect()),
+                ..Android::default()
+            },
+            ..App::default()
+        }
+    }
+
+    #[test]
+    fn asks_for_the_permissions_the_app_does() {
+        let mut shell = BinaryXml::parse(&shell_manifest()).unwrap();
+        shell
+            .add_child(
+                "uses-permission-sdk-23",
+                ("name", NAME),
+                "android.permission.CAMERA",
+            )
+            .unwrap();
+        let shell = shell.to_bytes();
+
+        let kept = rewritten(
+            &shell,
+            &with_permissions(None, &["INTERNET", "android.permission.VIBRATE"]),
+        )
+        .unwrap()
+        .0;
+        let none = rewritten(&shell, &with_permissions(Some("dev.example.app"), &[]))
+            .unwrap()
+            .0;
+        let unchanged = rewritten(&shell, &App::default()).unwrap().0;
+
+        let requests = |manifest: &[u8]| {
+            let xml = BinaryXml::parse(manifest).unwrap();
+            [
+                names(&xml, "uses-permission"),
+                names(&xml, "uses-permission-sdk-23"),
+            ]
+            .concat()
+        };
+        // CAMERA goes, VIBRATE comes, and the shell's own stays.
+        assert_eq!(
+            requests(&kept),
+            texts(&[
+                "android.permission.VIBRATE",
+                "android.permission.INTERNET",
+                "dev.omnibuild.shell.permission.SHELL",
+            ])
+        );
+        // Under the app's own ID, once it has one.
+        assert_eq!(
+            requests(&none),
+            texts(&["dev.example.app.permission.SHELL"])
+        );
+        assert_eq!(unchanged, shell);
+    }
+
+    #[test]
+    fn says_why_it_cant_ask_for_a_permission() {
+        // A manifest without the android: namespace to add one in.
+        let no_namespace = binary_xml(&[
+            (
+                "manifest",
+                vec![("package", None, Str("dev.omnibuild.shell"))],
+            ),
+            (
+                "uses-sdk",
+                vec![("minSdkVersion", Some(super::MIN_SDK_VERSION), Int(24))],
+            ),
+            ("activity", vec![("name", Some(NAME), Str(".Main"))]),
+        ]);
+
+        let no_package = binary_xml(&[(
+            "uses-sdk",
+            vec![("minSdkVersion", Some(super::MIN_SDK_VERSION), Int(24))],
+        )]);
+
+        let bad_name = rewritten(&shell_manifest(), &with_permissions(None, &["CAMERA!"]));
+        let not_added = rewritten(&no_namespace, &with_permissions(None, &["CAMERA"]));
+        let unnamed = rewritten(&no_package, &with_permissions(None, &["CAMERA"]));
+
+        assert_eq!(
+            unnamed.unwrap_err().to_string(),
+            "it has no package to change"
+        );
+
+        assert_eq!(
+            bad_name.unwrap_err().to_string(),
+            "\"CAMERA!\" isn't the name of a permission, such as android.permission.CAMERA, or CAMERA for short"
+        );
+        assert_eq!(
+            not_added.unwrap_err().to_string(),
+            "it declares no android: namespace"
+        );
+    }
+
+    #[test]
+    fn needs_the_apps_icon_with_an_adaptive_icon() {
+        let app = App {
+            android: Android {
+                adaptive_icon: Some(AdaptiveIcon {
+                    foreground: "front.png".into(),
+                    background: Background::Color([0; 3]),
+                    monochrome: None,
+                }),
+                ..Android::default()
+            },
+            ..App::default()
+        };
+
+        assert_eq!(
+            rewritten(&shell_manifest(), &app).unwrap_err().to_string(),
+            "an adaptive icon needs the app's icon too, which Android shows before 8.0: give an icon"
+        );
     }
 
     #[test]
@@ -583,7 +937,8 @@ mod tests {
         let not_a_reference = rewritten(&not_a_reference, &with_icon).unwrap().1;
         let without = rewritten(&shell_manifest(), &App::default()).unwrap().1;
 
-        assert_eq!(shell.icon_resources, [0x7f01_0000]);
+        // The shell's @mipmap/ic_launcher and @mipmap/ic_launcher_round.
+        assert_eq!(shell.icon_resources, [0x7f02_0000, 0x7f02_0001]);
         assert_eq!(both.icon_resources, [0x7f01_0000, 0x7f01_0001]);
         assert_eq!(not_a_reference.icon_resources, [0x7f01_0000]);
         assert_eq!(without.icon_resources, Vec::<u32>::new());

@@ -1,13 +1,16 @@
 package dev.omnibuild.shell
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import android.os.Build
 import org.json.JSONObject
 import java.util.Locale
+import java.util.zip.ZipFile
 
 /**
  * What the app found in its own APK: every value OmniBuild may rewrite. The
@@ -19,21 +22,52 @@ object ShellReport {
     fun read(context: Context): JSONObject {
         val packageManager = context.packageManager
         @Suppress("DEPRECATION") // The flags overload is API 33 and up.
-        val packageInfo = packageManager.getPackageInfo(context.packageName, 0)
+        val packageInfo = packageManager.getPackageInfo(
+            context.packageName,
+            PackageManager.GET_PERMISSIONS or PackageManager.GET_PROVIDERS,
+        )
         val payload = runCatching {
             context.assets.open("payload.txt").bufferedReader().use { it.readText() }
         }.getOrNull()
         return JSONObject()
             .put("id", context.packageName)
-            // The name under the icon in the launcher, from resources.arsc.
-            .put("name", context.applicationInfo.loadLabel(packageManager).toString())
+            // The name under the icon in the launcher, from resources.arsc:
+            // the launcher activity's label, which is the application's
+            // unless the activity has one of its own.
+            .put("name", launcherLabel(context))
             .put("version", packageInfo.versionName ?: JSONObject.NULL)
             .put("build", versionCode(packageInfo).toString())
             .put("payload", payload ?: JSONObject.NULL)
             // The icon the launcher shows, found the way the launcher finds
             // it: through the manifest's android:icon resource.
             .put("icon", centerColor(packageManager.getApplicationIcon(context.applicationInfo)))
+            // Values in the manifest that Gradle derived from the application
+            // ID, which have to change with it.
+            .put("provider", packageInfo.providers?.joinToString { it.authority } ?: JSONObject.NULL)
+            .put("permissions", packageInfo.requestedPermissions?.sorted()?.joinToString() ?: "")
+            // The ABIs the APK has native libraries for: its lib/ folders.
+            .put("abis", abis(context))
     }
+
+    private fun launcherLabel(context: Context): String {
+        val launcher = Intent(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_LAUNCHER)
+            .setPackage(context.packageName)
+        @Suppress("DEPRECATION") // The flags overload is API 33 and up.
+        val activity = context.packageManager.queryIntentActivities(launcher, 0).first()
+        return activity.loadLabel(context.packageManager).toString()
+    }
+
+    private fun abis(context: Context): String =
+        ZipFile(context.applicationInfo.sourceDir).use { apk ->
+            apk.entries().asSequence()
+                .map { it.name }
+                .filter { it.startsWith("lib/") }
+                .map { it.split('/')[1] }
+                .distinct()
+                .sorted()
+                .joinToString()
+        }
 
     private fun versionCode(info: PackageInfo): Long =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {

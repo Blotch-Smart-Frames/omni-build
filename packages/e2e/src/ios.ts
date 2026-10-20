@@ -180,11 +180,27 @@ const verify: Platform['verify'] = ({ app, log }) =>
         { log },
       )
     ).stdout;
+    // What iOS shows in English: the strings the app has in English, over
+    // Info.plist's.
+    const strings = path.join(bundle, 'en.lproj', 'InfoPlist.strings');
+    const shown = existsSync(strings)
+      ? {
+          ...info,
+          ...JSON.parse(
+            (
+              await run('plutil', ['-convert', 'json', '-o', '-', strings], {
+                log,
+              })
+            ).stdout,
+          ),
+        }
+      : info;
     return {
       signer,
       report: {
         id: info.CFBundleIdentifier,
-        name: info.CFBundleDisplayName ?? info.CFBundleName,
+        name: shown.CFBundleDisplayName ?? shown.CFBundleName,
+        cameraUsage: shown.NSCameraUsageDescription,
         version: info.CFBundleShortVersionString,
         build: info.CFBundleVersion,
         payload: readFileSync(path.join(bundle, 'payload.txt'), 'utf8'),

@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OmniBuild Shell</string>
+    <!-- The launcher activity's own label: the same name, in a resource of
+         its own. -->
+    <string name="launcher_name">OmniBuild Shell</string>
 </resources>

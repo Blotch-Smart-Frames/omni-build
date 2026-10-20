@@ -342,6 +342,16 @@ pub mod tests {
         }
     }
 
+    /// The entry `name` among `entries`.
+    pub fn named<'a>(entries: &'a [Entry], name: &str) -> &'a Entry {
+        entries.iter().find(|entry| entry.name == name).expect(name)
+    }
+
+    /// The contents of the file `name` in the archive `archive`.
+    pub fn file(archive: &[u8], name: &str) -> Vec<u8> {
+        named(&read(archive).unwrap(), name).contents().unwrap()
+    }
+
     /// Where an entry's data starts in a written archive.
     fn data_offset(archive: &[u8], data: &[u8]) -> usize {
         archive
@@ -359,27 +369,36 @@ pub mod tests {
             names,
             [
                 "META-INF/com/android/build/gradle/app-metadata.properties",
+                "lib/arm64-v8a/libshell.so",
+                "lib/armeabi-v7a/libshell.so",
+                "lib/x86/libshell.so",
+                "lib/x86_64/libshell.so",
                 "assets/payload.txt",
                 "AndroidManifest.xml",
-                "res/o-.png",
+                "res/-6.webp",
+                "res/0K.xml",
+                "res/0w.xml",
+                "res/BW.xml",
+                "res/Qr.xml",
+                "res/d2.webp",
+                "res/sK.webp",
+                "res/yw.webp",
                 "resources.arsc",
             ]
         );
-        let arsc = &entries[4];
+        let arsc = named(&entries, "resources.arsc");
         assert_eq!(arsc.method, Method::Stored);
-        assert_eq!(arsc.size, 748);
-        assert_eq!(arsc.data.len(), 748);
+        assert_eq!(arsc.size, 1440);
+        assert_eq!(arsc.data.len(), 1440);
         assert_eq!(arsc.crc32, crc32(&arsc.data));
-        let manifest = &entries[2];
+        let manifest = named(&entries, "AndroidManifest.xml");
         assert_eq!(manifest.method, Method::Deflated);
-        assert_eq!((manifest.size, manifest.data.len()), (1976, 720));
+        assert_eq!((manifest.size, manifest.data.len()), (3012, 991));
         assert_eq!((manifest.time, manifest.date), (0x0821, 0x0221));
         // Gradle makes some entries as Unix files, with a mode, and others
         // as MS-DOS ones.
-        assert_eq!(
-            (entries[1].system, entries[1].attributes),
-            (3, 0o100_644 << 16)
-        );
+        let payload = named(&entries, "assets/payload.txt");
+        assert_eq!((payload.system, payload.attributes), (3, 0o100_644 << 16));
         assert_eq!(manifest.system, 0);
     }
 
@@ -419,13 +438,13 @@ pub mod tests {
     #[test]
     fn decompresses_and_recompresses_entries() {
         let entries = read(SHELL).unwrap();
-        let manifest = &entries[2];
+        let manifest = named(&entries, "AndroidManifest.xml");
         let contents = manifest.contents().unwrap();
 
         let rewritten = manifest.with_contents(b"other contents");
-        let stored = entries[4].with_contents(b"table");
+        let stored = named(&entries, "resources.arsc").with_contents(b"table");
 
-        assert_eq!(contents.len(), 1976);
+        assert_eq!(contents.len(), 3012);
         assert_eq!(&contents[..4], b"\x03\x00\x08\x00");
         assert_eq!(
             manifest.with_contents(&contents).contents().unwrap(),
@@ -442,7 +461,8 @@ pub mod tests {
 
     #[test]
     fn makes_new_entries_as_the_shells_are() {
-        let shell = &read(SHELL).unwrap()[1];
+        let entries = read(SHELL).unwrap();
+        let shell = named(&entries, "assets/payload.txt");
 
         let new = Entry::new("assets/payload.txt", Method::Deflated, b"payload");
 

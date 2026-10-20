@@ -82,15 +82,22 @@ afterEach(() => {
 });
 
 describe('expected', () => {
+  const values = {
+    id: 'dev.omnibuild.e2e.app',
+    name: 'OmniBuild E2E',
+    version: '2.5.0',
+    build: '42',
+    payload: 'Payload from the OmniBuild E2E app\n',
+  };
+
   it("is the app's values for Android, which omni-build repackages", () => {
     expect(expected('android')).toEqual({
-      ...SHELL,
-      id: 'dev.omnibuild.e2e.app',
-      name: 'OmniBuild E2E',
-      version: '2.5.0',
-      build: '42',
-      payload: 'Payload from the OmniBuild E2E app\n',
+      ...values,
       icon: '#E8590C',
+      provider: 'dev.omnibuild.e2e.app.provider',
+      permissions:
+        'android.permission.INTERNET, android.permission.VIBRATE, dev.omnibuild.e2e.app.permission.SHELL',
+      abis: 'arm64-v8a, x86_64',
       signer: 'CN=OmniBuild Debug, O=OmniBuild',
     });
     // An app bundle, signed with the upload key omni-build created.
@@ -101,24 +108,18 @@ describe('expected', () => {
 
   it("is the app's values for an iOS simulator build, signed ad hoc", () => {
     expect(expected('ios', 'OmniBuildShell-linux.zip')).toEqual({
-      ...SHELL,
-      id: 'dev.omnibuild.e2e.app',
-      name: 'OmniBuild E2E',
-      version: '2.5.0',
-      build: '42',
-      payload: 'Payload from the OmniBuild E2E app\n',
+      ...values,
       icon: '#E8590C',
+      cameraUsage: "Scans the codes on OmniBuild's test cards.",
+      framework: SHELL.framework,
       signer: 'ad hoc',
     });
   });
 
   it("is what an iOS build for devices' files say, signed with the test key", () => {
     expect(expected('ios', 'OmniBuildShell-linux.ipa')).toEqual({
-      id: 'dev.omnibuild.e2e.app',
-      name: 'OmniBuild E2E',
-      version: '2.5.0',
-      build: '42',
-      payload: 'Payload from the OmniBuild E2E app\n',
+      ...values,
+      cameraUsage: "Scans the codes on OmniBuild's test cards.",
       signer: 'OmniBuild E2E',
       applicationIdentifier: 'OMNIBUILD0.dev.omnibuild.e2e.app',
     });

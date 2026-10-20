@@ -497,6 +497,37 @@ describe('verify', () => {
       applicationIdentifier: undefined,
     });
   });
+
+  it('reads what iOS shows in English, over what Info.plist says', async () => {
+    vi.mocked(readdirSync).mockReturnValue(['OmniBuildShell.app'] as never);
+    vi.mocked(readFileSync).mockReturnValue('the payload');
+    const bundle = path.join(unzipped, 'Payload', 'OmniBuildShell.app');
+    const strings = path.join(bundle, 'en.lproj', 'InfoPlist.strings');
+    vi.mocked(existsSync).mockImplementation((file) => file === strings);
+    respond = (program, args) => {
+      if (program === 'plutil') {
+        return {
+          stdout: JSON.stringify(
+            args.includes(strings)
+              ? { NSCameraUsageDescription: 'The camera, in English.' }
+              : {
+                  CFBundleDisplayName: 'OmniBuild E2E',
+                  NSCameraUsageDescription: 'The camera.',
+                },
+          ),
+        };
+      }
+      return args[0] === '--display' ? { output: '' } : { stdout: '<dict/>' };
+    };
+
+    const verified = await ios.verify({ ...artifacts, app: 'app.ipa' });
+
+    expect(verified.report).toMatchObject({
+      name: 'OmniBuild E2E',
+      cameraUsage: 'The camera, in English.',
+    });
+    expect(commands()).toContain(`plutil -convert json -o - ${strings}`);
+  });
 });
 
 describe('stopDevice', () => {

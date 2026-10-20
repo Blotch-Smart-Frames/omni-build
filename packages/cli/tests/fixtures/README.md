@@ -2,7 +2,7 @@
 
 ## `shell.apk`
 
-The Android E2E shell (`packages/e2e/fixtures/android`), as Gradle builds it, without its code: the Rust tests read and rewrite its manifest, resource table, icon and payload, and never run it. Without `classes.dex` and the Kotlin metadata it's 8 KB instead of 650 KB. It keeps a v2 signature by the Android SDK's debug key, as the real shell has, which repackaging replaces.
+The Android E2E shell (`packages/e2e/fixtures/android`), as Gradle builds it, without its code: the Rust tests read and rewrite its manifest, resource table, icons (a WebP per density, and an adaptive icon whose layers are vectors), payload and native libraries (stand-ins, one per ABI), and never run it. Without `classes.dex` and the Kotlin metadata it's 78 KB instead of 710 KB, most of it the 16 KB each native library is aligned to. It keeps a v2 signature by the Android SDK's debug key, as the real shell has, which repackaging replaces.
 
 To make it again after changing the E2E shell (with the Android SDK's build tools on the `PATH`):
 
@@ -30,18 +30,22 @@ jarsigner -keystore ~/.android/debug.keystore -storepass android \
   -signedjar packages/cli/tests/fixtures/shell.aab trimmed.aab androiddebugkey
 ```
 
-The Rust tests find files in both Android shells by their place in the archive, so a remade fixture needs the same entries in the same order.
+The Rust tests find files in both Android shells by name, and resources by their IDs, which aapt2 gives in the order of their types and names: a remade fixture keeps them while the shell's resources stay as they are.
 
 ## `shell.app.zip`
 
-The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. Its executable is a tiny program instead of the shell's Swift, linked for the Simulator's two architectures and signed by the linker: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, its icon, in the asset catalog (`Assets.car`) and the PNGs beside it, and its signature, but never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
+The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. Its executable and its framework's (`Frameworks/ShellKit.framework`) are tiny programs instead of the shell's Swift, linked for the Simulator's two architectures and signed by the linker: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, its English translation (`en.lproj/InfoPlist.strings`), its icon, in the asset catalog (`Assets.car`) and the PNGs beside it, and its signatures, but never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
 
 ```sh
 node packages/e2e/src/cli.ts build --platform ios
 ditto -x -k packages/e2e/build/shells/ios/OmniBuildShell.zip trimmed
 printf 'int main(void) { return 0; }\n' > main.c
+printf 'int shell_kit(void) { return 0; }\n' > lib.c
 xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-version-min=17.0 \
   -Wl,-adhoc_codesign main.c -o trimmed/OmniBuildShell.app/OmniBuildShell
+xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-version-min=17.0 \
+  -dynamiclib -install_name @rpath/ShellKit.framework/ShellKit -Wl,-adhoc_codesign lib.c \
+  -o trimmed/OmniBuildShell.app/Frameworks/ShellKit.framework/ShellKit
 ditto -c -k --norsrc --keepParent trimmed/OmniBuildShell.app packages/cli/tests/fixtures/shell.app.zip
 ```
 
@@ -53,10 +57,23 @@ The same shell built for devices, as the E2E tests build it (unsigned, with room
 ditto -x -k packages/e2e/build/shells/ios/OmniBuildShell.ipa trimmed-ipa
 xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -Wl,-adhoc_codesign main.c \
   -o trimmed-ipa/Payload/OmniBuildShell.app/OmniBuildShell
+xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -dynamiclib \
+  -install_name @rpath/ShellKit.framework/ShellKit -Wl,-adhoc_codesign lib.c \
+  -o trimmed-ipa/Payload/OmniBuildShell.app/Frameworks/ShellKit.framework/ShellKit
 cd trimmed-ipa && ditto -c -k --norsrc --keepParent Payload ../packages/cli/tests/fixtures/shell.ipa
 ```
 
-The tests compare what OmniBuild signs with what `codesign` signs from the same files: ad hoc, with `codesign --sign - --force` on each unzipped shell, and with the identity below, from a keychain, with `codesign --sign "OmniBuild Test" --timestamp=none --entitlements` the entitlements the profile gives `dev.omnibuild.shell`, and the profile copied in as `embedded.mobileprovision`. A remade shell needs those values in the tests made again.
+The tests compare what OmniBuild signs with what `codesign` signs from the same files, framework first and then the app, as Xcode signs them: ad hoc, with `codesign --sign - --force` on each unzipped shell, and with the identity below, from a keychain, with `codesign --sign "OmniBuild Test" --timestamp=none`, adding for the app `--entitlements` the entitlements the profile gives `dev.omnibuild.shell`, and the profile copied in as `embedded.mobileprovision`. For the device shell, where `codesign` pads the framework's signature with what the linker's left there and OmniBuild with zeros, the app is signed again around OmniBuild's framework. A remade shell needs those values in the tests made again.
+
+## `packed-icons.car`
+
+An asset catalog `actool` compiled from an icon set with every size, as Xcode made them before Xcode 14, so that it packs the smaller sizes into larger images. Each size is a square of its own colour, `#XX6FEB` with its size in pixels (mod 256) as the red, so the tests can tell where `actool` put each one. Made with a script writing those PNGs and the set's `Contents.json` for 20, 29, 38, 40, 60, 64, 68, 76 and 83.5 points at 2x and 3x, with 1024×1024 for the App Store, then:
+
+```sh
+xcrun actool --compile out --platform iphoneos --minimum-deployment-target 17.0 --app-icon AppIcon \
+  --target-device iphone --output-partial-info-plist partial.plist Assets.xcassets
+cp out/Assets.car packages/cli/tests/fixtures/packed-icons.car
+```
 
 ## `identity.pem` and `profile.mobileprovision`
 

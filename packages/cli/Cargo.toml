@@ -19,12 +19,18 @@ crc32fast = "1.5.2"
 des = "0.8.1"
 flate2 = "1.1.10"
 hmac = "0.12.1"
-# PNG only: app icons are PNGs, and resizing them is all OmniBuild does.
-image = { version = "0.25.10", default-features = false, features = ["png"] }
+# PNG, and WebP for the Android icons Android Studio's templates make, which
+# OmniBuild writes losslessly (image-webp, in pure Rust). Resizing icons is
+# all OmniBuild does with images.
+image = { version = "0.25.10", default-features = false, features = [
+  "png",
+  "webp",
+] }
 # actool compresses an asset catalog's bitmaps with LZFSE. Pure Rust, unlike
 # the bindings to Apple's C library, so every release target builds without
-# a C toolchain. OmniBuild only compresses its own pixels with it, and never
-# decompresses what users hand it.
+# a C toolchain. OmniBuild compresses its own pixels with it, and decompresses
+# only the images actool packs an icon's smaller sizes into, to paint the
+# app's icon into them.
 lzfse_rust = "0.2.1"
 # PKCS #12's structures and key derivation, and PKCS #8's encryption
 # (PBES2), of the same RustCrypto generation as cms and x509-cert.

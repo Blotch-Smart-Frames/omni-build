@@ -3,20 +3,31 @@
 //!
 //! Binary XML is a string pool, a resource map giving the resource ID of
 //! each attribute name, and the nodes, whose attributes hold string pool
-//! indexes or typed values. OmniBuild changes attribute values in place and
-//! adds the strings they need to the end of the pool, so every other node,
-//! index and string stays as aapt2 wrote it.
+//! indexes or typed values. OmniBuild changes attribute values in place,
+//! adds and removes whole elements, and adds the strings they need to the
+//! end of the pool, so every other node, index and string stays as aapt2
+//! wrote it.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
-use super::chunk::chunks;
+use super::chunk::{Chunk, chunks};
 use super::manifest::{Attribute, Document, Value};
 use super::string_pool::StringPool;
 use crate::bytes::Reader;
 
 const XML: u16 = 0x0003;
 const RESOURCE_MAP: u16 = 0x0180;
+const START_NAMESPACE: u16 = 0x0100;
 const START_ELEMENT: u16 = 0x0102;
+const END_ELEMENT: u16 = 0x0103;
+/// A node's header: its type, header size and size, then its line number
+/// and comment.
+const NODE_HEADER: u16 = 16;
+/// Where an element's attributes start after its header, and each one's
+/// size.
+const ATTRIBUTES_START: u16 = 20;
+const ATTRIBUTE_SIZE: u16 = 20;
+const ANDROID: &str = "http://schemas.android.com/apk/res/android";
 /// A string pool index meaning "no string".
 const NO_STRING: u32 = u32::MAX;
 /// `Res_value` data types.
@@ -30,6 +41,8 @@ pub struct BinaryXml {
     /// Every chunk after the string pool: the resource map and the nodes,
     /// which rewriting changes in place.
     nodes: Vec<u8>,
+    /// The resource ID of each attribute name, by its index in the pool.
+    resource_map: Vec<u32>,
     attributes: Vec<Attribute>,
     /// Where each attribute's record starts in `nodes`.
     offsets: Vec<usize>,
@@ -48,6 +61,7 @@ impl BinaryXml {
         let mut resource_map = Vec::new();
         let mut attributes = Vec::new();
         let mut offsets = Vec::new();
+        let mut node = 0;
         for chunk in chunks(&nodes, 0, nodes.len())? {
             match chunk.kind {
                 RESOURCE_MAP => {
@@ -88,12 +102,14 @@ impl BinaryXml {
                         };
                         attributes.push(Attribute {
                             element: element.clone(),
+                            node,
                             name: pool.get(name).unwrap_or_default(),
                             resource_id: resource_map.get(self::offset(name)).copied(),
                             value,
                         });
                         offsets.push(offset);
                     }
+                    node += 1;
                 }
                 _ => {}
             }
@@ -101,9 +117,31 @@ impl BinaryXml {
         Ok(Self {
             pool,
             nodes,
+            resource_map,
             attributes,
             offsets,
         })
+    }
+
+    /// The document with its nodes replaced, read again so its attributes
+    /// and their places are those of the new nodes.
+    fn with_nodes(&self, nodes: Vec<u8>) -> Result<Self> {
+        Self::parse(
+            &Self {
+                nodes,
+                pool: self.pool.clone(),
+                resource_map: Vec::new(),
+                attributes: Vec::new(),
+                offsets: Vec::new(),
+            }
+            .to_bytes(),
+        )
+    }
+
+    /// The element's name.
+    fn element_name(&self, chunk: &Chunk) -> Option<String> {
+        self.pool
+            .get(Reader::at(&self.nodes, chunk.body() + 4).u32())
     }
 
     /// Sets an attribute's raw value (a string, or none) and typed value.
@@ -131,6 +169,91 @@ impl Document for BinaryXml {
         self.attributes[index].value = Value::Int(value);
     }
 
+    fn remove_children(&mut self, name: &str, remove: &dyn Fn(&[&Attribute]) -> bool) {
+        let mut kept = Vec::with_capacity(self.nodes.len());
+        // How deep in the tree each element is (the root is 1), and the
+        // depth of the element being left out, while one is.
+        let (mut depth, mut node, mut removing) = (0, 0, None);
+        let read = "the document was read once already";
+        for chunk in chunks(&self.nodes, 0, self.nodes.len()).expect(read) {
+            match chunk.kind {
+                START_ELEMENT => {
+                    depth += 1;
+                    let attributes: Vec<&Attribute> = self
+                        .attributes
+                        .iter()
+                        .filter(|attribute| attribute.node == node)
+                        .collect();
+                    if removing.is_none()
+                        && depth == 2
+                        && self.element_name(&chunk).as_deref() == Some(name)
+                        && remove(&attributes)
+                    {
+                        removing = Some(depth);
+                    }
+                    node += 1;
+                }
+                END_ELEMENT => {
+                    depth -= 1;
+                    if removing == Some(depth + 1) {
+                        removing = None;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+            if removing.is_none() {
+                kept.extend(&self.nodes[chunk.start..chunk.end()]);
+            }
+        }
+        *self = self.with_nodes(kept).expect(read);
+    }
+
+    fn add_child(&mut self, name: &str, (_, attribute): (&str, u32), value: &str) -> Result<()> {
+        let read = "the document was read once already";
+        let chunks = chunks(&self.nodes, 0, self.nodes.len()).expect(read);
+        let root = chunks
+            .iter()
+            .find(|chunk| chunk.kind == START_ELEMENT)
+            .context("it has no elements")?;
+        // The attribute's name is the string the resource map gives its ID,
+        // and its namespace the URI the document declares for android:.
+        let attribute_name = self
+            .resource_map
+            .iter()
+            .position(|&id| id == attribute)
+            .with_context(|| format!("it has no attribute {attribute:#010x} to name another by"))?;
+        let namespace = chunks
+            .iter()
+            .filter(|chunk| chunk.kind == START_NAMESPACE)
+            .map(|chunk| Reader::at(&self.nodes, chunk.body() + 4).u32())
+            .find(|&uri| self.pool.get(uri).as_deref() == Some(ANDROID))
+            .context("it declares no android: namespace")?;
+        let line = Reader::at(&self.nodes, root.start + 8).u32();
+        let element = match self.pool.find(name) {
+            Some(index) => index,
+            None => self.pool.add(name),
+        };
+        let string = self.pool.add(value);
+
+        let mut child = Vec::new();
+        node(&mut child, START_ELEMENT, line, &[NO_STRING, element]);
+        for field in [ATTRIBUTES_START, ATTRIBUTE_SIZE, 1, 0, 0, 0] {
+            child.extend(field.to_le_bytes());
+        }
+        for field in [namespace, u32_of(attribute_name), string] {
+            child.extend(field.to_le_bytes());
+        }
+        child.extend([8, 0, 0, TYPE_STRING]);
+        child.extend(string.to_le_bytes());
+        node(&mut child, END_ELEMENT, line, &[NO_STRING, element]);
+
+        let mut nodes = self.nodes.clone();
+        nodes.splice(root.end()..root.end(), child);
+        *self = self.with_nodes(nodes).expect(read);
+        Ok(())
+    }
+
     fn to_bytes(&self) -> Vec<u8> {
         let pool = self.pool.to_bytes();
         let size =
@@ -146,14 +269,41 @@ impl Document for BinaryXml {
     }
 }
 
+/// Appends a node: its header, with its size counted from what's appended
+/// after it, which `fields` begins, as an element's start does with its
+/// namespace and name.
+fn node(out: &mut Vec<u8>, kind: u16, line: u32, fields: &[u32]) {
+    let start = out.len();
+    out.extend(kind.to_le_bytes());
+    out.extend(NODE_HEADER.to_le_bytes());
+    // The size, filled in below for an element's end, and for its start
+    // once its attributes are there.
+    out.extend([0; 4]);
+    out.extend(line.to_le_bytes());
+    out.extend(NO_STRING.to_le_bytes());
+    for field in fields {
+        out.extend(field.to_le_bytes());
+    }
+    let size = match kind {
+        // The extension and one attribute.
+        START_ELEMENT => usize::from(NODE_HEADER + ATTRIBUTES_START + ATTRIBUTE_SIZE),
+        _ => out.len() - start,
+    };
+    out[start + 4..start + 8].copy_from_slice(&u32_of(size).to_le_bytes());
+}
+
 fn offset(value: u32) -> usize {
     usize::try_from(value).expect("OmniBuild runs on 32 and 64-bit systems")
+}
+
+fn u32_of(value: usize) -> u32 {
+    u32::try_from(value).expect("binary XML is under 4 GiB")
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::{BinaryXml, NO_STRING, TYPE_INT_DEC, TYPE_INT_HEX, TYPE_REFERENCE, TYPE_STRING};
-    use crate::android::manifest::{Document, Value as Typed};
+    use crate::android::manifest::{Attribute, Document, Value as Typed};
     use crate::android::string_pool::tests::empty;
     use crate::zip::{self, tests::SHELL};
 
@@ -245,7 +395,7 @@ pub mod tests {
     }
 
     pub fn shell_manifest() -> Vec<u8> {
-        zip::read(SHELL).unwrap()[2].contents().unwrap()
+        zip::tests::file(SHELL, "AndroidManifest.xml")
     }
 
     #[test]
@@ -272,7 +422,7 @@ pub mod tests {
         );
         assert_eq!(
             attribute("application", "label").value,
-            Typed::Reference(0x7f02_0000)
+            Typed::Reference(0x7f03_0000)
         );
         // android:exported is a boolean.
         assert_eq!(attribute("activity", "exported").value, Typed::Other);
@@ -307,6 +457,102 @@ pub mod tests {
             ]
         );
         assert_eq!(xml.attributes()[1].value, Typed::Int(42));
+    }
+
+    /// The android:name of each element named `element`, in order.
+    pub fn names(xml: &dyn Document, element: &str) -> Vec<Typed> {
+        xml.attributes()
+            .iter()
+            .filter(|attribute| attribute.element == element && attribute.name == "name")
+            .map(|attribute| attribute.value.clone())
+            .collect()
+    }
+
+    /// Strings, as attributes' values.
+    pub fn texts(texts: &[&str]) -> Vec<Typed> {
+        texts
+            .iter()
+            .map(|&text| Typed::String(text.to_owned()))
+            .collect()
+    }
+
+    /// Whether an element's attributes include this android:name.
+    pub fn named(name: &str) -> impl Fn(&[&Attribute]) -> bool {
+        move |attributes| {
+            attributes
+                .iter()
+                .any(|attribute| attribute.value == Typed::String(name.to_owned()))
+        }
+    }
+
+    #[test]
+    fn removes_and_adds_the_roots_children() {
+        let mut xml = BinaryXml::parse(&shell_manifest()).unwrap();
+        let before = names(&xml, "activity");
+
+        xml.remove_children("uses-permission", &named("android.permission.CAMERA"));
+        // Only the root's children: the launcher activity's action stays.
+        xml.remove_children("action", &|_| true);
+        xml.add_child(
+            "uses-permission",
+            ("name", 0x0101_0003),
+            "android.permission.VIBRATE",
+        )
+        .unwrap();
+        xml.add_child("feature", ("name", 0x0101_0003), "android.hardware.camera")
+            .unwrap();
+
+        let xml = BinaryXml::parse(&xml.to_bytes()).unwrap();
+        assert_eq!(
+            names(&xml, "uses-permission"),
+            texts(&[
+                "android.permission.VIBRATE",
+                "android.permission.INTERNET",
+                "dev.omnibuild.shell.permission.SHELL",
+            ])
+        );
+        assert_eq!(names(&xml, "feature"), texts(&["android.hardware.camera"]));
+        assert_eq!(
+            names(&xml, "action"),
+            texts(&["android.intent.action.MAIN"])
+        );
+        assert_eq!(names(&xml, "activity"), before);
+        // The new elements are counted with the rest: the manifest, then
+        // uses-sdk.
+        let added = xml
+            .attributes()
+            .iter()
+            .find(|attribute| attribute.element == "feature")
+            .unwrap();
+        assert_eq!(added.node, 1);
+        assert_eq!(added.resource_id, Some(0x0101_0003));
+    }
+
+    #[test]
+    fn says_why_it_cant_add_a_child() {
+        let name = |name| ("name", Some(0x0101_0003), Value::Str(name));
+        let cases = [
+            (binary_xml(&[]), "it has no elements"),
+            (
+                binary_xml(&[("manifest", vec![("package", None, Value::Str("a.b"))])]),
+                "it has no attribute 0x01010003 to name another by",
+            ),
+            (
+                binary_xml(&[("manifest", vec![name("a.b")])]),
+                "it declares no android: namespace",
+            ),
+        ];
+
+        for (data, message) in cases {
+            let mut xml = BinaryXml::parse(&data).unwrap();
+
+            assert_eq!(
+                xml.add_child("uses-permission", ("name", 0x0101_0003), "x")
+                    .unwrap_err()
+                    .to_string(),
+                message
+            );
+        }
     }
 
     #[test]
