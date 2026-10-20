@@ -5,21 +5,26 @@
 //! each attribute name, and the nodes, whose attributes hold string pool
 //! indexes or typed values. OmniBuild changes attribute values in place,
 //! adds and removes whole elements, and adds the strings they need to the
-//! end of the pool, so every other node, index and string stays as aapt2
-//! wrote it.
+//! end of the pool, so every other node and string stays as aapt2 wrote
+//! it. The exception is an attribute the document doesn't name yet, such
+//! as `android:scheme`: Android finds attributes by resource ID, which the
+//! resource map gives the first strings in the pool, in order, so its name
+//! goes after theirs, and the indexes of the strings after it move up one.
 
 use anyhow::{Context, Result, bail};
 
 use super::chunk::{Chunk, chunks};
-use super::manifest::{Attribute, Document, Value};
+use super::manifest::{Attribute, Document, Element, Value};
 use super::string_pool::StringPool;
 use crate::bytes::Reader;
 
 const XML: u16 = 0x0003;
 const RESOURCE_MAP: u16 = 0x0180;
 const START_NAMESPACE: u16 = 0x0100;
+const END_NAMESPACE: u16 = 0x0101;
 const START_ELEMENT: u16 = 0x0102;
 const END_ELEMENT: u16 = 0x0103;
+const CDATA: u16 = 0x0104;
 /// A node's header: its type, header size and size, then its line number
 /// and comment.
 const NODE_HEADER: u16 = 16;
@@ -144,6 +149,75 @@ impl BinaryXml {
             .get(Reader::at(&self.nodes, chunk.body() + 4).u32())
     }
 
+    /// The pool index of the name of the android: attribute with resource
+    /// ID `id`, adding `name` for it if the document has none: after the
+    /// names the resource map gives IDs, with the ID at the end of the map,
+    /// and the indexes of every string after it moved up one.
+    fn attribute_name(&mut self, name: &str, id: u32) -> u32 {
+        if let Some(index) = self.resource_map.iter().position(|&mapped| mapped == id) {
+            return u32_of(index);
+        }
+        let index = u32_of(self.resource_map.len());
+        self.pool.insert(index, name);
+        shift_strings(&mut self.nodes, index);
+        self.resource_map.push(id);
+        let mut map = Vec::new();
+        map.extend(RESOURCE_MAP.to_le_bytes());
+        map.extend(8u16.to_le_bytes());
+        map.extend(u32_of(8 + 4 * self.resource_map.len()).to_le_bytes());
+        map.extend(self.resource_map.iter().flat_map(|id| id.to_le_bytes()));
+        let read = "the document was read once already";
+        let chunks = chunks(&self.nodes, 0, self.nodes.len()).expect(read);
+        // Where aapt2 puts it, before the nodes, unless there's one.
+        let old = chunks
+            .iter()
+            .find(|chunk| chunk.kind == RESOURCE_MAP)
+            .map_or(0..0, |chunk| chunk.start..chunk.end());
+        self.nodes.splice(old, map);
+        index
+    }
+
+    /// Appends the nodes of `element` and the elements in it: its
+    /// attributes in the android: namespace, whose URI is the pool's string
+    /// `namespace`, in order of their resource IDs, as aapt2 writes them and
+    /// Android looks them up, and each of their names in the resource map
+    /// already. Each node has the line number `line`.
+    fn encode(&mut self, element: &Element, namespace: u32, line: u32, out: &mut Vec<u8>) {
+        let name = match self.pool.find(element.name) {
+            Some(index) => index,
+            None => self.pool.add(element.name),
+        };
+        let mut attributes = element.attributes.clone();
+        attributes.sort_by_key(|&(_, id, _)| id);
+        let start = out.len();
+        node(out, START_ELEMENT, line, &[NO_STRING, name]);
+        let count = u32_of(attributes.len());
+        for field in [ATTRIBUTES_START, ATTRIBUTE_SIZE] {
+            out.extend(field.to_le_bytes());
+        }
+        out.extend(
+            u16::try_from(count)
+                .expect("an element has few attributes")
+                .to_le_bytes(),
+        );
+        out.extend([0; 6]);
+        for (attribute, id, value) in attributes {
+            let attribute_name = self.attribute_name(attribute, id);
+            let string = self.pool.add(value);
+            for field in [namespace, attribute_name, string] {
+                out.extend(field.to_le_bytes());
+            }
+            out.extend([8, 0, 0, TYPE_STRING]);
+            out.extend(string.to_le_bytes());
+        }
+        let size = u32_of(out.len() - start);
+        out[start + 4..start + 8].copy_from_slice(&size.to_le_bytes());
+        for child in &element.children {
+            self.encode(child, namespace, line, out);
+        }
+        node(out, END_ELEMENT, line, &[NO_STRING, name]);
+    }
+
     /// Sets an attribute's raw value (a string, or none) and typed value.
     fn set(&mut self, index: usize, raw: u32, data_type: u8, data: u32) {
         let offset = self.offsets[index];
@@ -209,48 +283,37 @@ impl Document for BinaryXml {
         *self = self.with_nodes(kept).expect(read);
     }
 
-    fn add_child(&mut self, name: &str, (_, attribute): (&str, u32), value: &str) -> Result<()> {
+    fn add_element(&mut self, parent: usize, element: &Element) -> Result<()> {
         let read = "the document was read once already";
+        // The names first, since adding one moves the strings after it, in
+        // order of their IDs, as aapt2 lists them.
+        let mut ids = Vec::new();
+        attribute_ids(element, &mut ids);
+        ids.sort_by_key(|&(_, id)| id);
+        for (name, id) in ids {
+            self.attribute_name(name, id);
+        }
         let chunks = chunks(&self.nodes, 0, self.nodes.len()).expect(read);
-        let root = chunks
+        let parent = chunks
             .iter()
-            .find(|chunk| chunk.kind == START_ELEMENT)
-            .context("it has no elements")?;
-        // The attribute's name is the string the resource map gives its ID,
-        // and its namespace the URI the document declares for android:.
-        let attribute_name = self
-            .resource_map
-            .iter()
-            .position(|&id| id == attribute)
-            .with_context(|| format!("it has no attribute {attribute:#010x} to name another by"))?;
+            .filter(|chunk| chunk.kind == START_ELEMENT)
+            .nth(parent)
+            .context("it has no element to add one to")?;
         let namespace = chunks
             .iter()
             .filter(|chunk| chunk.kind == START_NAMESPACE)
             .map(|chunk| Reader::at(&self.nodes, chunk.body() + 4).u32())
             .find(|&uri| self.pool.get(uri).as_deref() == Some(ANDROID))
             .context("it declares no android: namespace")?;
-        let line = Reader::at(&self.nodes, root.start + 8).u32();
-        let element = match self.pool.find(name) {
-            Some(index) => index,
-            None => self.pool.add(name),
-        };
-        let string = self.pool.add(value);
+        let line = Reader::at(&self.nodes, parent.start + 8).u32();
+        let at = parent.end();
 
-        let mut child = Vec::new();
-        node(&mut child, START_ELEMENT, line, &[NO_STRING, element]);
-        for field in [ATTRIBUTES_START, ATTRIBUTE_SIZE, 1, 0, 0, 0] {
-            child.extend(field.to_le_bytes());
-        }
-        for field in [namespace, u32_of(attribute_name), string] {
-            child.extend(field.to_le_bytes());
-        }
-        child.extend([8, 0, 0, TYPE_STRING]);
-        child.extend(string.to_le_bytes());
-        node(&mut child, END_ELEMENT, line, &[NO_STRING, element]);
-
-        let mut nodes = self.nodes.clone();
-        nodes.splice(root.end()..root.end(), child);
-        *self = self.with_nodes(nodes).expect(read);
+        let mut nodes = Vec::new();
+        self.encode(element, namespace, line, &mut nodes);
+        let mut all = self.nodes.clone();
+        // The parent's first child, right after its start.
+        all.splice(at..at, nodes);
+        *self = self.with_nodes(all).expect(read);
         Ok(())
     }
 
@@ -284,12 +347,65 @@ fn node(out: &mut Vec<u8>, kind: u16, line: u32, fields: &[u32]) {
     for field in fields {
         out.extend(field.to_le_bytes());
     }
-    let size = match kind {
-        // The extension and one attribute.
-        START_ELEMENT => usize::from(NODE_HEADER + ATTRIBUTES_START + ATTRIBUTE_SIZE),
-        _ => out.len() - start,
-    };
+    let size = out.len() - start;
     out[start + 4..start + 8].copy_from_slice(&u32_of(size).to_le_bytes());
+}
+
+/// The android: attributes `element` and the elements in it have, by name
+/// and resource ID.
+fn attribute_ids<'a>(element: &Element<'a>, ids: &mut Vec<(&'a str, u32)>) {
+    ids.extend(element.attributes.iter().map(|&(name, id, _)| (name, id)));
+    for child in &element.children {
+        attribute_ids(child, ids);
+    }
+}
+
+/// Moves up one every index into the pool, in `nodes`, of a string from
+/// `from` on, for a string inserted there: in each node's comment, a
+/// namespace's prefix and URI, an element's namespace and name, and each
+/// of its attributes' namespace, name, raw value and string value, and
+/// text.
+fn shift_strings(nodes: &mut [u8], from: u32) {
+    let shift = |nodes: &mut [u8], at: usize| {
+        let index = Reader::at(nodes, at).u32();
+        if index != NO_STRING && index >= from {
+            nodes[at..at + 4].copy_from_slice(&(index + 1).to_le_bytes());
+        }
+    };
+    let read = "the document was read once already";
+    for chunk in chunks(nodes, 0, nodes.len()).expect(read) {
+        let body = chunk.body();
+        let mut fields = vec![chunk.start + 12, body, body + 4];
+        match chunk.kind {
+            START_NAMESPACE | END_NAMESPACE | END_ELEMENT => {}
+            START_ELEMENT => {
+                let mut element = Reader::at(nodes, body + 8);
+                let (start, size, count) = (
+                    usize::from(element.u16()),
+                    usize::from(element.u16()),
+                    usize::from(element.u16()),
+                );
+                for attribute in (0..count).map(|index| body + start + index * size) {
+                    fields.extend([attribute, attribute + 4, attribute + 8]);
+                    if nodes[attribute + 15] == TYPE_STRING {
+                        fields.push(attribute + 16);
+                    }
+                }
+            }
+            CDATA => {
+                // The text, and its typed value.
+                fields.truncate(2);
+                if nodes[body + 7] == TYPE_STRING {
+                    fields.push(body + 8);
+                }
+            }
+            // The resource map's IDs aren't strings.
+            _ => continue,
+        }
+        for field in fields {
+            shift(nodes, field);
+        }
+    }
 }
 
 fn offset(value: u32) -> usize {
@@ -302,8 +418,10 @@ fn u32_of(value: usize) -> u32 {
 
 #[cfg(test)]
 pub mod tests {
-    use super::{BinaryXml, NO_STRING, TYPE_INT_DEC, TYPE_INT_HEX, TYPE_REFERENCE, TYPE_STRING};
-    use crate::android::manifest::{Attribute, Document, Value as Typed};
+    use super::{
+        BinaryXml, CDATA, NO_STRING, TYPE_INT_DEC, TYPE_INT_HEX, TYPE_REFERENCE, TYPE_STRING, node,
+    };
+    use crate::android::manifest::{Attribute, Document, Element as Added, Value as Typed};
     use crate::android::string_pool::tests::empty;
     use crate::zip::{self, tests::SHELL};
 
@@ -493,14 +611,20 @@ pub mod tests {
         xml.remove_children("uses-permission", &named("android.permission.CAMERA"));
         // Only the root's children: the launcher activity's action stays.
         xml.remove_children("action", &|_| true);
-        xml.add_child(
-            "uses-permission",
-            ("name", 0x0101_0003),
-            "android.permission.VIBRATE",
+        xml.add_element(
+            0,
+            &Added::with(
+                "uses-permission",
+                ("name", 0x0101_0003),
+                "android.permission.VIBRATE",
+            ),
         )
         .unwrap();
-        xml.add_child("feature", ("name", 0x0101_0003), "android.hardware.camera")
-            .unwrap();
+        xml.add_element(
+            0,
+            &Added::with("feature", ("name", 0x0101_0003), "android.hardware.camera"),
+        )
+        .unwrap();
 
         let xml = BinaryXml::parse(&xml.to_bytes()).unwrap();
         assert_eq!(
@@ -528,15 +652,145 @@ pub mod tests {
         assert_eq!(added.resource_id, Some(0x0101_0003));
     }
 
+    /// The launcher activity's intent filter for URLs with the scheme
+    /// `scheme`, with attributes the shell's manifest doesn't name.
+    pub fn url_filter(scheme: &str) -> Added<'_> {
+        Added {
+            name: "intent-filter",
+            attributes: Vec::new(),
+            children: vec![
+                Added::with(
+                    "action",
+                    ("name", 0x0101_0003),
+                    "android.intent.action.VIEW",
+                ),
+                Added {
+                    name: "data",
+                    // Two the manifest doesn't name, out of order.
+                    attributes: vec![
+                        ("host", 0x0101_0028, "report"),
+                        ("scheme", 0x0101_0027, scheme),
+                    ],
+                    children: Vec::new(),
+                },
+            ],
+        }
+    }
+
     #[test]
-    fn says_why_it_cant_add_a_child() {
+    fn adds_elements_with_attributes_the_document_doesnt_name_yet() {
+        let shell = BinaryXml::parse(&shell_manifest()).unwrap();
+        let activity = shell
+            .attributes()
+            .iter()
+            .find(|attribute| attribute.element == "activity")
+            .unwrap()
+            .node;
+        let mut xml = BinaryXml::parse(&shell_manifest()).unwrap();
+
+        xml.add_element(activity, &url_filter("myapp")).unwrap();
+
+        let xml = BinaryXml::parse(&xml.to_bytes()).unwrap();
+        // Every attribute the shell had is as it was, with its name and
+        // resource ID, though its strings moved.
+        let summary = |attribute: &Attribute| {
+            (
+                attribute.element.clone(),
+                attribute.name.clone(),
+                attribute.resource_id,
+                attribute.value.clone(),
+            )
+        };
+        let added: Vec<_> = xml
+            .attributes()
+            .iter()
+            .filter(|attribute| attribute.node > activity && attribute.node <= activity + 3)
+            .map(summary)
+            .collect();
+        assert_eq!(
+            added,
+            [
+                (
+                    "action".to_owned(),
+                    "name".to_owned(),
+                    Some(0x0101_0003),
+                    Typed::String("android.intent.action.VIEW".to_owned())
+                ),
+                (
+                    "data".to_owned(),
+                    "scheme".to_owned(),
+                    Some(0x0101_0027),
+                    Typed::String("myapp".to_owned())
+                ),
+                (
+                    "data".to_owned(),
+                    "host".to_owned(),
+                    Some(0x0101_0028),
+                    Typed::String("report".to_owned())
+                ),
+            ]
+        );
+        let others: Vec<_> = xml
+            .attributes()
+            .iter()
+            .filter(|attribute| attribute.node <= activity || attribute.node > activity + 3)
+            .map(summary)
+            .collect();
+        let before: Vec<_> = shell.attributes().iter().map(summary).collect();
+        assert_eq!(others, before);
+        // The new names follow the resource map's, which gives their IDs.
+        let names = xml.resource_map.len();
+        assert_eq!(xml.resource_map[names - 2..], [0x0101_0027, 0x0101_0028]);
+        assert_eq!(
+            xml.pool.get(u32::try_from(names - 2).unwrap()).as_deref(),
+            Some("scheme")
+        );
+    }
+
+    #[test]
+    fn moves_the_strings_of_text_and_of_a_document_without_a_resource_map() {
+        let mut xml = BinaryXml::parse(&binary_xml(&[(
+            "manifest",
+            vec![("package", None, Value::Str("a.b"))],
+        )]))
+        .unwrap();
+        // Without the resource map, as a document without android:
+        // attributes may be; then text, its string and typed value the
+        // element's name.
+        xml.nodes.drain(..8);
+        let name = xml.pool.find("manifest").unwrap();
+        // Text whose typed value is a string, and text whose typed value
+        // isn't, though its data is the same number.
+        for data_type in [TYPE_STRING, TYPE_INT_DEC] {
+            let mut text = Vec::new();
+            node(&mut text, CDATA, 1, &[name]);
+            text.extend([8, 0, 0, data_type]);
+            text.extend(name.to_le_bytes());
+            let size = u32::try_from(text.len()).unwrap();
+            text[4..8].copy_from_slice(&size.to_le_bytes());
+            xml.nodes.extend(&text);
+        }
+
+        let index = xml.attribute_name("scheme", 0x0101_0027);
+
+        assert_eq!(index, 0);
+        assert_eq!(xml.resource_map, [0x0101_0027]);
+        let xml = BinaryXml::parse(&xml.to_bytes()).unwrap();
+        assert_eq!(xml.pool.get(0).as_deref(), Some("scheme"));
+        let end = xml.nodes.len();
+        let at = |at: usize| u32::from_le_bytes(xml.nodes[at..at + 4].try_into().unwrap());
+        // Each text node is 28 bytes, the string's index 12 from its end
+        // and its typed value's data 4.
+        assert_eq!((at(end - 40), at(end - 32)), (name + 1, name + 1));
+        assert_eq!((at(end - 12), at(end - 4)), (name + 1, name));
+        assert_eq!(xml.attributes()[0].value, Typed::String("a.b".to_owned()));
+    }
+
+    #[test]
+    fn says_why_it_cant_add_an_element() {
         let name = |name| ("name", Some(0x0101_0003), Value::Str(name));
         let cases = [
-            (binary_xml(&[]), "it has no elements"),
-            (
-                binary_xml(&[("manifest", vec![("package", None, Value::Str("a.b"))])]),
-                "it has no attribute 0x01010003 to name another by",
-            ),
+            (binary_xml(&[]), "it has no element to add one to"),
             (
                 binary_xml(&[("manifest", vec![name("a.b")])]),
                 "it declares no android: namespace",
@@ -547,9 +801,12 @@ pub mod tests {
             let mut xml = BinaryXml::parse(&data).unwrap();
 
             assert_eq!(
-                xml.add_child("uses-permission", ("name", 0x0101_0003), "x")
-                    .unwrap_err()
-                    .to_string(),
+                xml.add_element(
+                    0,
+                    &Added::with("uses-permission", ("name", 0x0101_0003), "x")
+                )
+                .unwrap_err()
+                .to_string(),
                 message
             );
         }

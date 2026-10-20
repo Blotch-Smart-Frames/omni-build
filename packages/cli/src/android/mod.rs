@@ -1116,6 +1116,30 @@ mod tests {
     }
 
     #[test]
+    fn opens_the_apps_urls_in_a_bundle_and_an_apk() {
+        let app = App {
+            url_schemes: Some(vec!["myapp".to_owned()]),
+            ..App::default()
+        };
+        let schemes = |manifest: &dyn Document| -> Vec<Value> {
+            manifest
+                .attributes()
+                .iter()
+                .filter(|attribute| attribute.element == "data")
+                .map(|attribute| attribute.value.clone())
+                .collect()
+        };
+
+        let aab = zip::read(&repackage(SHELL_AAB, &app, &KEY).unwrap()).unwrap();
+        let apk = zip::read(&repackage(SHELL, &app, &KEY).unwrap()).unwrap();
+
+        let bundle = ProtoXml::parse(&file(&aab, "base/manifest/AndroidManifest.xml")).unwrap();
+        let binary = BinaryXml::parse(&file(&apk, "AndroidManifest.xml")).unwrap();
+        assert_eq!(schemes(&bundle), texts(&["myapp"]));
+        assert_eq!(schemes(&binary), texts(&["myapp"]));
+    }
+
+    #[test]
     fn keeps_the_native_libraries_for_the_apps_abis() {
         let abis = |abis: &[&str]| App {
             android: Android {

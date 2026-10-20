@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::App;
+use crate::config::{App, check_url_scheme};
 
 // The android: attributes OmniBuild reads or rewrites, by resource ID, as
 // Android itself identifies them (android.R.attr).
@@ -23,6 +23,7 @@ const VERSION_NAME: u32 = 0x0101_021c;
 const BACKUP_AGENT: u32 = 0x0101_027f;
 const PARENT_ACTIVITY_NAME: u32 = 0x0101_03a7;
 const ROUND_ICON: u32 = 0x0101_052c;
+const SCHEME: u32 = 0x0101_0027;
 
 /// The elements that start an app's components. The intent filters
 /// inside one come after it in document order, before the next one.
@@ -36,6 +37,12 @@ const COMPONENTS: [&str; 5] = [
 /// The intent of the activity a launcher shows.
 const MAIN: &str = "android.intent.action.MAIN";
 const LAUNCHER: &str = "android.intent.category.LAUNCHER";
+/// The intent a link opens an app with: to view what the URL names, from
+/// a browser (`BROWSABLE`), or from another app, whose intent Android gives
+/// the `DEFAULT` category.
+const VIEW: &str = "android.intent.action.VIEW";
+const DEFAULT: &str = "android.intent.category.DEFAULT";
+const BROWSABLE: &str = "android.intent.category.BROWSABLE";
 /// The elements that ask for a permission, the second only on Android 6.0
 /// and later.
 const PERMISSION_REQUESTS: [&str; 2] = ["uses-permission", "uses-permission-sdk-23"];
@@ -67,9 +74,31 @@ pub struct Attribute {
     pub value: Value,
 }
 
-/// Compiled XML whose attributes can be changed, and the root's children
-/// added and removed, in either format: a manifest, or a resource such as
-/// an adaptive icon.
+/// An element to add to a document: its name, its android: attributes,
+/// and the elements in it.
+#[derive(Debug, Default)]
+pub struct Element<'a> {
+    pub name: &'a str,
+    /// Each attribute's name and resource ID, such as `android:name`'s, and
+    /// its value, a string.
+    pub attributes: Vec<(&'a str, u32, &'a str)>,
+    pub children: Vec<Element<'a>>,
+}
+
+impl<'a> Element<'a> {
+    /// An element with one android: attribute, and nothing in it.
+    pub fn with(name: &'a str, attribute: (&'a str, u32), value: &'a str) -> Self {
+        Self {
+            name,
+            attributes: vec![(attribute.0, attribute.1, value)],
+            children: Vec::new(),
+        }
+    }
+}
+
+/// Compiled XML whose attributes can be changed, and elements added and
+/// removed, in either format: a manifest, or a resource such as an adaptive
+/// icon.
 pub trait Document {
     /// Every attribute, in document order.
     fn attributes(&self) -> &[Attribute];
@@ -78,9 +107,10 @@ pub trait Document {
     /// Removes the root's children named `name` whose attributes `remove`
     /// picks, with everything in them.
     fn remove_children(&mut self, name: &str, remove: &dyn Fn(&[&Attribute]) -> bool);
-    /// Adds a child named `name` to the root, with one android: attribute,
-    /// a string: by its name and resource ID, such as `android:name`'s.
-    fn add_child(&mut self, name: &str, attribute: (&str, u32), value: &str) -> Result<()>;
+    /// Adds `element`, and the elements in it, to the element `parent`, by
+    /// its place in document order: the root is 0. Where among the
+    /// parent's children it goes is each format's own.
+    fn add_element(&mut self, parent: usize, element: &Element) -> Result<()>;
     fn to_bytes(&self) -> Vec<u8>;
 }
 
@@ -118,6 +148,9 @@ pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
     if let Some(permissions) = &app.android.permissions {
         set_permissions(manifest, permissions)?;
     }
+    if let Some(schemes) = &app.url_schemes {
+        add_url_schemes(manifest, schemes)?;
+    }
     if let Some(version) = &app.version {
         let index = find(manifest, "manifest", VERSION_NAME)
             .context("it has no android:versionName to change")?;
@@ -139,7 +172,10 @@ pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
     if let Some(name) = &app.name {
         let index =
             find(manifest, "application", LABEL).context("it has no android:label to change")?;
-        for index in [index].into_iter().chain(launcher_labels(manifest)) {
+        let launcher_labels = launchers(manifest)
+            .into_iter()
+            .flat_map(|launcher| launcher.labels);
+        for index in [index].into_iter().chain(launcher_labels) {
             match manifest.attributes()[index].value {
                 Value::Reference(id) if name_resources.contains(&id) => {}
                 Value::Reference(id) => name_resources.push(id),
@@ -173,26 +209,28 @@ pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
     })
 }
 
-/// The labels a launcher shows in place of the application's: a launcher
-/// activity's (or alias's) own, and its intent filters'. An element's
-/// children follow it in document order, and components don't nest, so
-/// the elements after a component, up to the next, are in it.
-fn launcher_labels(manifest: &dyn Document) -> Vec<usize> {
-    /// A component, and what's been seen in it so far.
-    #[derive(Default)]
-    struct Component {
-        node: usize,
-        labels: Vec<usize>,
-        main: bool,
-        launcher: bool,
-    }
-    let mut launcher_labels = Vec::new();
+/// An activity, or an alias of one, and whether a launcher shows it: if
+/// one of its intent filters has the `MAIN` action and the `LAUNCHER`
+/// category.
+#[derive(Default)]
+struct Component {
+    /// Its place in document order.
+    node: usize,
+    /// The labels a launcher shows for it in place of the application's:
+    /// its own, and its intent filters'.
+    labels: Vec<usize>,
+    main: bool,
+    launcher: bool,
+}
+
+/// The activities and aliases a launcher shows, in document order. An
+/// element's children follow it in document order, and components don't
+/// nest, so the elements after a component, up to the next, are in it.
+fn launchers(manifest: &dyn Document) -> Vec<Component> {
+    let mut launchers = Vec::new();
     let mut current: Option<Component> = None;
     let mut finish = |component: Option<Component>| {
-        if let Some(component) = component.filter(|component| component.main && component.launcher)
-        {
-            launcher_labels.extend(component.labels);
-        }
+        launchers.extend(component.filter(|component| component.main && component.launcher));
     };
     for (index, attribute) in manifest.attributes().iter().enumerate() {
         let element = attribute.element.as_str();
@@ -223,7 +261,49 @@ fn launcher_labels(manifest: &dyn Document) -> Vec<usize> {
         }
     }
     finish(current);
-    launcher_labels
+    launchers
+}
+
+/// Has the launcher activity open the app's URLs with these schemes, as
+/// deep links: an intent filter for them, for those the manifest doesn't
+/// have already.
+fn add_url_schemes(manifest: &mut dyn Document, schemes: &[String]) -> Result<()> {
+    for scheme in schemes {
+        check_url_scheme(scheme)?;
+    }
+    let has = |scheme: &str| {
+        manifest.attributes().iter().any(|attribute| {
+            attribute.element == "data"
+                && attribute.resource_id == Some(SCHEME)
+                && attribute.value == Value::String(scheme.to_owned())
+        })
+    };
+    let mut data: Vec<Element> = Vec::new();
+    for scheme in schemes {
+        if !has(scheme) && !data.iter().any(|element| element.attributes[0].2 == scheme) {
+            data.push(Element::with("data", ("scheme", SCHEME), scheme));
+        }
+    }
+    if data.is_empty() {
+        return Ok(());
+    }
+    let launcher = launchers(manifest)
+        .first()
+        .map(|launcher| launcher.node)
+        .context("it has no launcher activity to open the app's URLs")?;
+    let filter = Element {
+        name: "intent-filter",
+        attributes: Vec::new(),
+        children: [
+            Element::with("action", ("name", NAME), VIEW),
+            Element::with("category", ("name", NAME), DEFAULT),
+            Element::with("category", ("name", NAME), BROWSABLE),
+        ]
+        .into_iter()
+        .chain(data)
+        .collect(),
+    };
+    manifest.add_element(launcher, &filter)
 }
 
 /// Gives the app the permissions it asks for, `android.permission.` and
@@ -269,7 +349,7 @@ fn set_permissions(manifest: &mut dyn Document, permissions: &[String]) -> Resul
         .iter()
         .filter(|name| !requested.contains(&Value::String((*name).clone())))
     {
-        manifest.add_child("uses-permission", ("name", NAME), name)?;
+        manifest.add_element(0, &Element::with("uses-permission", ("name", NAME), name))?;
     }
     Ok(())
 }
@@ -400,8 +480,8 @@ mod tests {
     use anyhow::Result;
 
     use super::{
-        AUTHORITIES, BACKUP_AGENT, Changes, Document, NAME, PERMISSION, TARGET_ACTIVITY,
-        VERSION_CODE, Value as Typed, rewrite,
+        AUTHORITIES, BACKUP_AGENT, Changes, Document, Element, NAME, PERMISSION, SCHEME,
+        TARGET_ACTIVITY, VERSION_CODE, Value as Typed, rewrite,
     };
     use crate::android::binary_xml::BinaryXml;
     use crate::android::binary_xml::tests::{
@@ -780,6 +860,85 @@ mod tests {
         );
     }
 
+    fn with_schemes(schemes: &[&str]) -> App {
+        App {
+            url_schemes: Some(schemes.iter().map(|&scheme| scheme.to_owned()).collect()),
+            ..App::default()
+        }
+    }
+
+    /// Each element in the manifest from the launcher activity on, and its
+    /// android:name or android:scheme.
+    fn from_the_activity(manifest: &[u8]) -> Vec<(String, Typed)> {
+        let xml = BinaryXml::parse(manifest).unwrap();
+        let activity = xml
+            .attributes()
+            .iter()
+            .position(|attribute| attribute.element == "activity")
+            .unwrap();
+        xml.attributes()[activity..]
+            .iter()
+            .filter(|attribute| matches!(attribute.resource_id, Some(NAME | SCHEME)))
+            .map(|attribute| (attribute.element.clone(), attribute.value.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn opens_the_apps_urls_in_the_launcher_activity() {
+        let shell = shell_manifest();
+
+        let manifest = rewritten(&shell, &with_schemes(&["myapp", "other", "myapp"]))
+            .unwrap()
+            .0;
+        // Again, as when an app is repackaged a second time.
+        let again = rewritten(&manifest, &with_schemes(&["other"])).unwrap().0;
+        let none = rewritten(&shell, &with_schemes(&[])).unwrap().0;
+
+        let text =
+            |element: &str, value: &str| (element.to_owned(), Typed::String(value.to_owned()));
+        let elements = from_the_activity(&manifest);
+        assert_eq!(
+            elements[..7],
+            [
+                text("activity", "dev.omnibuild.shell.MainActivity"),
+                text("action", "android.intent.action.VIEW"),
+                text("category", "android.intent.category.DEFAULT"),
+                text("category", "android.intent.category.BROWSABLE"),
+                text("data", "myapp"),
+                text("data", "other"),
+                text("action", "android.intent.action.MAIN"),
+            ]
+        );
+        assert_eq!(again, manifest);
+        assert_eq!(none, shell);
+    }
+
+    #[test]
+    fn says_why_it_cant_open_the_apps_urls() {
+        let no_launcher = binary_xml(&[(
+            "uses-sdk",
+            vec![("minSdkVersion", Some(super::MIN_SDK_VERSION), Int(24))],
+        )]);
+        let cases = [
+            (
+                shell_manifest(),
+                with_schemes(&["My App"]),
+                "\"My App\" isn't a URL scheme",
+            ),
+            (
+                no_launcher,
+                with_schemes(&["myapp"]),
+                "it has no launcher activity to open the app's URLs",
+            ),
+        ];
+
+        for (manifest, app, message) in cases {
+            let error = rewritten(&manifest, &app).unwrap_err().to_string();
+
+            assert!(error.starts_with(message), "{error}");
+        }
+    }
+
     fn with_permissions(id: Option<&str>, permissions: &[&str]) -> App {
         App {
             id: id.map(str::to_owned),
@@ -795,10 +954,13 @@ mod tests {
     fn asks_for_the_permissions_the_app_does() {
         let mut shell = BinaryXml::parse(&shell_manifest()).unwrap();
         shell
-            .add_child(
-                "uses-permission-sdk-23",
-                ("name", NAME),
-                "android.permission.CAMERA",
+            .add_element(
+                0,
+                &Element::with(
+                    "uses-permission-sdk-23",
+                    ("name", NAME),
+                    "android.permission.CAMERA",
+                ),
             )
             .unwrap();
         let shell = shell.to_bytes();

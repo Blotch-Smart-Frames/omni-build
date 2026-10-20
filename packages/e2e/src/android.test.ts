@@ -47,6 +47,7 @@ vi.mock('./repackage.ts', async () => {
       runMock('/repo/target/release/omni-build', [...args, '--json'], options),
     ),
     toolchainFree: () => ({ HOME: '/home/me' }),
+    OPEN_URL: 'omnibuild-e2e://report',
   };
 });
 
@@ -560,7 +561,7 @@ describe('runApp', () => {
       `${adb} uninstall ${appId}`,
       'omni-build install app.apk --device emulator-5584 --json',
       `${adb} logcat -c`,
-      `${adb} shell monkey -p ${appId} -c android.intent.category.LAUNCHER --pct-syskeys 0 1`,
+      `${adb} shell am start -W -a android.intent.action.VIEW -d omnibuild-e2e://report ${appId}`,
       `${adb} logcat -d -v raw -s OmniBuildE2E:I`,
       `${adb} logcat -d -v raw -s OmniBuildE2E:I`,
       `${adb} shell screencap -p /data/local/tmp/omni-build-e2e.png`,

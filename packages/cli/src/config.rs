@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 /// What the config gives is changed in the shell. What it leaves out stays
@@ -30,6 +30,12 @@ pub struct App {
     /// bundle: they go in the APK's `assets/`, or in the iOS app's bundle,
     /// replacing the shell's files of the same name.
     pub payload: Option<PathBuf>,
+    /// The URL schemes that open the app, such as `myapp` for
+    /// `myapp://path`, as deep links: an intent filter on the launcher
+    /// activity on Android, and a URL type in `Info.plist` on iOS. They're
+    /// added to any the shell has.
+    #[serde(rename = "urlSchemes")]
+    pub url_schemes: Option<Vec<String>>,
     /// What only Android apps have.
     #[serde(default)]
     pub android: Android,
@@ -105,6 +111,34 @@ pub struct Ios {
     pub usage_descriptions: Option<BTreeMap<String, String>>,
 }
 
+/// Checks a URL scheme the app config gives, as both platforms take one:
+/// RFC 3986's letters, in lowercase, which Android matches as they are
+/// while the RFC and iOS ignore their case. The web's are refused: a web
+/// link opens an app only once the app and its website vouch for each
+/// other (App Links, universal links).
+pub fn check_url_scheme(scheme: &str) -> Result<()> {
+    if matches!(scheme, "http" | "https") {
+        bail!(
+            "\"{scheme}\" is the web's: web links open an app as App Links and universal links, which OmniBuild doesn't set up yet"
+        );
+    }
+    let mut characters = scheme.chars();
+    let valid = characters
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase())
+        && characters.all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '+' | '-' | '.')
+        });
+    if !valid {
+        bail!(
+            "\"{scheme}\" isn't a URL scheme: it needs a lowercase letter first, then lowercase letters, digits, +, - or ., such as myapp"
+        );
+    }
+    Ok(())
+}
+
 impl App {
     /// Reads an app config from a JSON file. The paths in it are relative
     /// to the file's folder.
@@ -138,7 +172,7 @@ impl App {
 mod tests {
     use std::fs;
 
-    use super::{AdaptiveIcon, Android, App, Background, Ios};
+    use super::{AdaptiveIcon, Android, App, Background, Ios, check_url_scheme};
 
     #[test]
     fn reads_an_app_config() {
@@ -147,7 +181,7 @@ mod tests {
         fs::write(
             &path,
             r#"{ "id": "dev.example.app", "name": "Example", "version": "2.5.0", "build": 42,
-                "icon": "icon.png", "payload": "bundle",
+                "icon": "icon.png", "payload": "bundle", "urlSchemes": ["example"],
                 "android": {
                     "adaptiveIcon": { "foreground": "front.png", "background": "back.png", "monochrome": "mono.png" },
                     "permissions": ["CAMERA"], "abis": ["arm64-v8a"]
@@ -166,6 +200,7 @@ mod tests {
                 // Relative to the config's folder.
                 icon: Some(dir.path().join("icon.png")),
                 payload: Some(dir.path().join("bundle")),
+                url_schemes: Some(vec!["example".to_owned()]),
                 android: Android {
                     adaptive_icon: Some(AdaptiveIcon {
                         foreground: dir.path().join("front.png"),
@@ -202,6 +237,28 @@ mod tests {
 
         assert_eq!(icon.background, Background::Color([0x2f, 0x6f, 0xeb]));
         assert_eq!(icon.monochrome, None);
+    }
+
+    #[test]
+    fn takes_url_schemes_as_both_platforms_do() {
+        for scheme in ["myapp", "my-app.v2+beta", "x"] {
+            check_url_scheme(scheme).unwrap();
+        }
+        for (scheme, message) in [
+            ("MyApp", "isn't a URL scheme"),
+            ("2app", "isn't a URL scheme"),
+            ("my_app", "isn't a URL scheme"),
+            ("", "isn't a URL scheme"),
+            ("https", "is the web's"),
+            ("http", "is the web's"),
+        ] {
+            let error = check_url_scheme(scheme).unwrap_err().to_string();
+
+            assert!(
+                error.starts_with(&format!("\"{scheme}\" {message}")),
+                "{error}"
+            );
+        }
     }
 
     #[test]

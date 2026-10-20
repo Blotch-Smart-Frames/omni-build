@@ -8,7 +8,7 @@ use std::io::Cursor;
 use anyhow::{Context, Result, bail};
 use plist::{Dictionary, Value};
 
-use crate::config::App;
+use crate::config::{App, check_url_scheme};
 
 /// The start of a binary property list, the format Xcode writes an app's
 /// Info.plist in.
@@ -127,6 +127,9 @@ impl InfoPlist {
         if let Some(build) = app.build {
             self.set("CFBundleVersion", &build.to_string());
         }
+        if let Some(schemes) = &app.url_schemes {
+            self.add_url_schemes(schemes)?;
+        }
         for (key, description) in app.ios.usage_descriptions.iter().flatten() {
             if !is_usage_description(key) {
                 bail!(
@@ -134,6 +137,69 @@ impl InfoPlist {
                 );
             }
             self.set(key, description);
+        }
+        Ok(())
+    }
+
+    /// Has iOS open the app's URLs with these schemes, as deep links: a URL
+    /// type (`CFBundleURLTypes`) for those the shell's don't have, named
+    /// after the app's ID, as Xcode names one.
+    fn add_url_schemes(&mut self, schemes: &[String]) -> Result<()> {
+        for scheme in schemes {
+            check_url_scheme(scheme)?;
+        }
+        let existing: Vec<&str> = self
+            .dictionary
+            .get("CFBundleURLTypes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_dictionary)
+            .filter_map(|url_type| url_type.get("CFBundleURLSchemes"))
+            .filter_map(Value::as_array)
+            .flatten()
+            .filter_map(Value::as_string)
+            .collect();
+        let mut added: Vec<&str> = Vec::new();
+        for scheme in schemes {
+            if !existing.contains(&scheme.as_str()) && !added.contains(&scheme.as_str()) {
+                added.push(scheme);
+            }
+        }
+        if added.is_empty() {
+            return Ok(());
+        }
+        let url_type: Dictionary = [
+            ("CFBundleTypeRole", Value::String("Editor".to_owned())),
+            (
+                "CFBundleURLName",
+                Value::String(self.id().unwrap_or_default().to_owned()),
+            ),
+            (
+                "CFBundleURLSchemes",
+                Value::Array(
+                    added
+                        .iter()
+                        .map(|&scheme| Value::String(scheme.to_owned()))
+                        .collect(),
+                ),
+            ),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value))
+        .collect();
+        match self
+            .dictionary
+            .get_mut("CFBundleURLTypes")
+            .and_then(Value::as_array_mut)
+        {
+            Some(types) => types.push(Value::Dictionary(url_type)),
+            None => {
+                self.dictionary.insert(
+                    "CFBundleURLTypes".to_owned(),
+                    Value::Array(vec![Value::Dictionary(url_type)]),
+                );
+            }
         }
         Ok(())
     }
@@ -280,6 +346,68 @@ mod tests {
         assert_eq!(
             info.dictionary.get("CFBundleIdentifier"),
             Some(&Value::String("dev.omnibuild.shell".to_owned()))
+        );
+    }
+
+    /// The schemes of each URL type, and the type's name.
+    fn url_types(info: &InfoPlist) -> Vec<(String, Vec<String>)> {
+        info.dictionary
+            .get("CFBundleURLTypes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|url_type| {
+                let url_type = url_type.as_dictionary().unwrap();
+                let name = url_type.get("CFBundleURLName").and_then(Value::as_string);
+                let schemes = url_type["CFBundleURLSchemes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|scheme| scheme.as_string().unwrap().to_owned())
+                    .collect();
+                (name.unwrap_or_default().to_owned(), schemes)
+            })
+            .collect()
+    }
+
+    fn with_schemes(schemes: &[&str]) -> App {
+        App {
+            url_schemes: Some(schemes.iter().map(|&scheme| scheme.to_owned()).collect()),
+            ..app()
+        }
+    }
+
+    #[test]
+    fn opens_the_apps_urls() {
+        let mut info = InfoPlist::parse(XML.as_bytes()).unwrap();
+
+        info.rewrite(&with_schemes(&["myapp", "other", "myapp"]))
+            .unwrap();
+        let first = info.clone();
+        // Again, with one the app has now, and one it hasn't.
+        info.rewrite(&with_schemes(&["other", "third"])).unwrap();
+
+        assert_eq!(
+            url_types(&first),
+            [(
+                "dev.example.app".to_owned(),
+                vec!["myapp".to_owned(), "other".to_owned()]
+            )]
+        );
+        let role = &first.dictionary["CFBundleURLTypes"].as_array().unwrap()[0]
+            .as_dictionary()
+            .unwrap()["CFBundleTypeRole"];
+        assert_eq!(role.as_string(), Some("Editor"));
+        assert_eq!(url_types(&info)[1].1, ["third"]);
+        let mut unchanged = info.clone();
+        unchanged.rewrite(&with_schemes(&["third"])).unwrap();
+        assert_eq!(unchanged, info);
+        assert!(
+            info.clone()
+                .rewrite(&with_schemes(&["https"]))
+                .unwrap_err()
+                .to_string()
+                .starts_with("\"https\" is the web's")
         );
     }
 

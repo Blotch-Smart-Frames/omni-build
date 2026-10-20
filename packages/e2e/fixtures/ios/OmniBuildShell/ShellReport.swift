@@ -18,6 +18,9 @@ struct ShellReport: Encodable {
     let icon: String?
     /// Why the app asks for the camera, as iOS shows it.
     let cameraUsage: String?
+    /// The URL schemes whose links open the app, which iOS reads from its
+    /// Info.plist's URL types.
+    let urlSchemes: String?
     /// The embedded framework's name, which the app only knows if the
     /// framework loaded.
     let framework: String
@@ -37,6 +40,9 @@ struct ShellReport: Encodable {
         // The name under the icon on the home screen.
         name = (shown["CFBundleDisplayName"] ?? shown["CFBundleName"]) as? String
         cameraUsage = shown["NSCameraUsageDescription"] as? String
+        urlSchemes = (info["CFBundleURLTypes"] as? [[String: Any]])?
+            .flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
+            .joined(separator: ", ")
         framework = ShellKit.name
         extensionId = bundle.builtInPlugInsURL
             .flatMap {
