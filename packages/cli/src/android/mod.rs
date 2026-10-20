@@ -35,7 +35,8 @@ pub struct Layout {
     resources: &'static str,
     /// What the resource table's file paths, and `assets/`, are under.
     base: &'static str,
-    bundle: bool,
+    /// Whether it's an AAB, which only Google Play installs from.
+    pub bundle: bool,
 }
 
 const APK: Layout = Layout {

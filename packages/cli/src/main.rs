@@ -1,5 +1,6 @@
 //! The `omni-build` command line.
 
+mod adb;
 mod android;
 mod bytes;
 mod config;
@@ -17,6 +18,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 
+use adb::AdbKey;
 use config::App;
 use key::{ALIAS, SigningKey, debug_key_path};
 use x509_cert::name::Name;
@@ -39,6 +41,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Repackage(Repackage),
+    Install(Install),
     Key(Key),
 }
 
@@ -73,6 +76,21 @@ struct Repackage {
     /// the app's ID.
     #[arg(long)]
     profile: Option<PathBuf>,
+}
+
+/// Install an APK on an Android device or emulator, over ADB, with no
+/// Android SDK.
+#[derive(Debug, Args)]
+struct Install {
+    /// The app: an APK. Google Play makes the APKs a device installs from
+    /// an app bundle (AAB).
+    app: PathBuf,
+    /// The device to install on: an emulator, by its name (`emulator-5554`),
+    /// or a device on the network, by its address and port
+    /// (`192.168.1.20:5555`). Without it, the one emulator running on this
+    /// computer.
+    #[arg(long, short)]
+    device: Option<String>,
 }
 
 /// Manage signing keys.
@@ -113,6 +131,7 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Repackage(args) => repackage(&args),
+        Command::Install(args) => install(&args),
         Command::Key(Key {
             command: KeyCommand::Create(args),
         }) => create_key(&args),
@@ -164,6 +183,37 @@ fn repackage(args: &Repackage) -> Result<()> {
     };
     fs::write(&args.out, repackaged)
         .with_context(|| format!("couldn't write the app to {}", args.out.display()))
+}
+
+fn install(args: &Install) -> Result<()> {
+    let path = args.app.display();
+    let app = fs::read(&args.app).with_context(|| format!("couldn't read the app {path}"))?;
+    match zip::read(&app).ok().as_deref().and_then(android::layout) {
+        Some(layout) if !layout.bundle => {}
+        Some(_) => bail!(
+            "{path} is an app bundle (AAB), which is for Google Play: it makes the APKs a device installs from it. Repackage an APK shell to install the app on a device"
+        ),
+        None => bail!("{path} isn't an APK"),
+    }
+    let key = adb_key()?;
+    let mut device = adb::Device::connect(args.device.as_deref(), &adb::emulator_ports(), &key)?;
+    device.install(&app)?;
+    println!("Installed {path} on {device}");
+    Ok(())
+}
+
+/// The key OmniBuild proves itself to Android devices with: adb's, which
+/// OmniBuild creates where adb keeps it if adb hasn't yet.
+fn adb_key() -> Result<AdbKey> {
+    let path = adb::key_path();
+    let (key, created) = AdbKey::at(&path, &adb::owner(|name| std::env::var(name).ok()))?;
+    if created {
+        eprintln!(
+            "Created a key for ADB, which devices ask you to allow: {}",
+            path.display()
+        );
+    }
+    Ok(key)
 }
 
 fn create_key(args: &CreateKey) -> Result<()> {

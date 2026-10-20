@@ -9,6 +9,7 @@ const sidebars: SidebarsConfig = {
     'how-it-works',
     'installation',
     'repackaging',
+    'installing',
     'roadmap',
     'contributing',
   ],

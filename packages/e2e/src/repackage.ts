@@ -74,7 +74,7 @@ const KEPT_VARIABLES = [
   'SystemRoot',
 ];
 
-const toolchainFree = () =>
+export const toolchainFree = () =>
   Object.fromEntries(
     KEPT_VARIABLES.filter((name) => process.env[name] !== undefined).map(
       (name) => [name, process.env[name]],
@@ -85,7 +85,7 @@ const toolchainFree = () =>
  * The binary under test: the one OMNI_BUILD_BINARY names (as for the npm
  * launcher), or the release build in this repository's target/.
  */
-const omniBuildBinary = () => {
+export const omniBuildBinary = () => {
   const binary =
     process.env.OMNI_BUILD_BINARY ??
     path.join(

@@ -3,10 +3,14 @@
 //! counts binaries that tests start, but no unit test can call `main()`.
 
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Command, Output};
+use std::thread::JoinHandle;
 
 const SHELL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/shell.apk");
+const SHELL_AAB: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/shell.aab");
 const SHELL_APP: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/shell.app.zip");
 const SHELL_IPA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/shell.ipa");
 /// A key and certificate, and a provisioning profile allowing it: see
@@ -45,6 +49,9 @@ fn omni_build_with_password(home: &Path, password: Option<&str>, args: &[&str]) 
         .output()
         .expect("the omni-build binary should start")
 }
+
+/// adb's key, as `adb keygen` makes one.
+const ADB_KEY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/adb/adbkey");
 
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
@@ -400,5 +407,177 @@ fn repackage_reports_a_debug_key_it_cant_read() {
         stderr(&output).starts_with("error: couldn't read "),
         "{}",
         stderr(&output)
+    );
+}
+
+/// What a device was asked to install: the command that installs it, and
+/// the app.
+type Install = (String, Vec<u8>);
+
+/// A stand-in for a device's adbd, on a port of this computer, which takes
+/// a connection for each of `answers`: it connects without checking the
+/// key, and installs an app as Android 14 does, with that answer. Returns
+/// its port, and what each connection sent.
+fn fake_device(answers: &[&'static [u8]]) -> (u16, JoinHandle<Vec<Install>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let answers = answers.to_vec();
+    let device = std::thread::spawn(move || {
+        answers
+            .into_iter()
+            .map(|answer| {
+                let (mut stream, _) = listener.accept().unwrap();
+                assert_eq!(&receive(&mut stream).0, b"CNXN");
+                let banner = b"device::ro.product.model=Pixel 8;features=shell_v2,cmd\0";
+                send(&mut stream, *b"CNXN", 0x0100_0001, 4096, banner);
+                let (open, local, _, service) = receive(&mut stream);
+                assert_eq!(&open, b"OPEN");
+                let service = String::from_utf8(service).unwrap();
+                let service = service.trim_end_matches('\0').to_owned();
+                let size: usize = service.rsplit(' ').next().unwrap().parse().unwrap();
+                send(&mut stream, *b"OKAY", 100, local, b"");
+                let mut app = Vec::new();
+                while app.len() < size {
+                    let (write, _, _, data) = receive(&mut stream);
+                    assert_eq!(&write, b"WRTE");
+                    app.extend(data);
+                    send(&mut stream, *b"OKAY", 100, local, b"");
+                }
+                send(&mut stream, *b"WRTE", 100, local, answer);
+                send(&mut stream, *b"CLSE", 100, local, b"");
+                // Until omni-build hangs up, as a device does: hanging up
+                // first would make its OKAY for the answer reset the
+                // connection.
+                stream.read_to_end(&mut Vec::new()).unwrap();
+                (service, app)
+            })
+            .collect()
+    });
+    (port, device)
+}
+
+/// An ADB message: its command, its two arguments and its payload.
+fn receive(stream: &mut TcpStream) -> ([u8; 4], u32, u32, Vec<u8>) {
+    let mut header = [0; 24];
+    stream.read_exact(&mut header).unwrap();
+    let word = |index: usize| u32::from_le_bytes(header[index * 4..][..4].try_into().unwrap());
+    let mut data = vec![0; word(3) as usize];
+    stream.read_exact(&mut data).unwrap();
+    (header[..4].try_into().unwrap(), word(1), word(2), data)
+}
+
+fn send(stream: &mut TcpStream, command: [u8; 4], arg0: u32, arg1: u32, data: &[u8]) {
+    let command = u32::from_le_bytes(command);
+    let len = u32::try_from(data.len()).unwrap();
+    let mut message = Vec::new();
+    // No checksum: devices since Android 9 send none.
+    for word in [command, arg0, arg1, len, 0, !command] {
+        message.extend(word.to_le_bytes());
+    }
+    message.extend(data);
+    stream.write_all(&message).unwrap();
+}
+
+#[test]
+fn installs_an_apk_with_an_adb_key_it_creates_once() {
+    let home = tempfile::tempdir().unwrap();
+    let (port, device) = fake_device(&[b"Success\n", b"Success\n"]);
+    let address = format!("127.0.0.1:{port}");
+
+    let first = omni_build_at_home(home.path(), &["install", SHELL, "--device", &address]);
+    let second = omni_build_at_home(home.path(), &["install", SHELL, "-d", &address]);
+
+    assert!(first.status.success(), "{}", stderr(&first));
+    assert!(
+        stderr(&first).starts_with("Created a key for ADB, which devices ask you to allow: "),
+        "{}",
+        stderr(&first)
+    );
+    assert!(home.path().join(".android/adbkey").is_file());
+    assert!(home.path().join(".android/adbkey.pub").is_file());
+    assert!(second.status.success(), "{}", stderr(&second));
+    assert_eq!(stderr(&second), "");
+    assert_eq!(
+        String::from_utf8_lossy(&second.stdout),
+        format!("Installed {SHELL} on Pixel 8 ({address})\n")
+    );
+    let apk = fs::read(SHELL).unwrap();
+    for (service, app) in device.join().unwrap() {
+        assert_eq!(
+            service,
+            format!("exec:cmd package install -r -S {}", apk.len())
+        );
+        assert_eq!(app, apk);
+    }
+}
+
+#[test]
+fn install_reports_what_went_wrong() {
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir(home.path().join(".android")).unwrap();
+    fs::copy(ADB_KEY, home.path().join(".android/adbkey")).unwrap();
+    let not_apk = home.path().join("not.apk");
+    fs::write(&not_apk, "not a zip").unwrap();
+    let not_apk = not_apk.to_str().unwrap();
+    let cases = [
+        (
+            vec!["install", "missing.apk"],
+            "error: couldn't read the app missing.apk: ".to_owned(),
+        ),
+        (
+            vec!["install", not_apk],
+            format!("error: {not_apk} isn't an APK\n"),
+        ),
+        (
+            vec!["install", SHELL_AAB],
+            format!("error: {SHELL_AAB} is an app bundle (AAB), which is for Google Play: "),
+        ),
+        (
+            vec!["install", SHELL, "--device", "R5CT1234"],
+            "error: \"R5CT1234\" isn't a device OmniBuild can reach: ".to_owned(),
+        ),
+    ];
+
+    for (args, message) in cases {
+        let output = omni_build_at_home(home.path(), &args);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(stderr(&output).starts_with(&message), "{}", stderr(&output));
+    }
+}
+
+#[test]
+fn install_reports_an_adb_key_it_cant_read() {
+    let home = tempfile::tempdir().unwrap();
+    // A folder where the key should be.
+    fs::create_dir_all(home.path().join(".android/adbkey")).unwrap();
+
+    let output = omni_build_at_home(home.path(), &["install", SHELL]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).starts_with("error: couldn't read "),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn install_reports_why_the_device_refused_the_app() {
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir(home.path().join(".android")).unwrap();
+    fs::copy(ADB_KEY, home.path().join(".android/adbkey")).unwrap();
+    let (port, _) =
+        fake_device(&[b"Failure [INSTALL_FAILED_OLDER_SDK: Requires newer sdk version #37]\n"]);
+    let address = format!("127.0.0.1:{port}");
+
+    let output = omni_build_at_home(home.path(), &["install", SHELL, "--device", &address]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "error: Pixel 8 ({address}) didn't install the app: Failure [INSTALL_FAILED_OLDER_SDK: Requires newer sdk version #37]\n"
+        )
     );
 }

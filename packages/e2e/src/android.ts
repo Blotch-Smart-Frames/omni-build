@@ -16,6 +16,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { Artifacts, Platform } from './run.ts';
 import { type RunOptions, poll, run } from './process.ts';
+import { omniBuildBinary, toolchainFree } from './repackage.ts';
 
 const PROJECT = fileURLToPath(new URL('../fixtures/android/', import.meta.url));
 const BUILD_DIR = fileURLToPath(new URL('../build/', import.meta.url));
@@ -357,6 +358,15 @@ const waitForDevice: Platform<Started, Device>['waitForDevice'] = async (
 };
 
 /**
+ * Whether omni-build reaches a device by its adb serial: an emulator's
+ * (`emulator-5554`) or a device's on the network (its address and port). A
+ * phone on USB has a serial of its own, and adb installs on it until
+ * omni-build speaks USB.
+ */
+const reachable = (serial: string) =>
+  /^emulator-\d+$/.test(serial) || serial.includes(':');
+
+/**
  * The crash from the app's log, for when it never reports: the lines from
  * the last FATAL EXCEPTION on.
  */
@@ -383,7 +393,16 @@ const runApp: Platform<Started, Device>['runApp'] = async ({
   // A fresh install, so the device can't run an earlier build, and so a
   // shell signed with another key replaces one already installed.
   await onDevice(['uninstall', appId], { allowFailure: true });
-  await onDevice(['install', app]);
+  if (reachable(device.serial)) {
+    // As a user without the Android SDK installs it: with omni-build, which
+    // gets no PATH and no toolchain variables, as in the repackage stage.
+    await run(omniBuildBinary(), ['install', app, '--device', device.serial], {
+      log,
+      env: toolchainFree(),
+    });
+  } else {
+    await onDevice(['install', app]);
+  }
   await onDevice(['logcat', '-c'], { allowFailure: true });
   // The launcher activity's name, which the application ID doesn't give.
   const resolved = await onDevice([
