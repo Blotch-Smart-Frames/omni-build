@@ -173,13 +173,44 @@ const verify: Platform['verify'] = ({ app, log }) =>
         )
       ).stdout,
     );
-    const entitlements = (
-      await run(
-        'codesign',
-        ['--display', '--entitlements', '-', '--xml', bundle],
-        { log },
-      )
-    ).stdout;
+    const entitlements = async (signed: string) =>
+      (
+        await run(
+          'codesign',
+          ['--display', '--entitlements', '-', '--xml', signed],
+          { log },
+        )
+      ).stdout.match(
+        /<key>application-identifier<\/key>\s*<string>(.*?)<\/string>/,
+      )?.[1];
+    // The app's extension: its own ID, and what its profile allowed its
+    // signature.
+    const plugIns = path.join(bundle, 'PlugIns');
+    const extension = existsSync(plugIns)
+      ? readdirSync(plugIns).find((name) => name.endsWith('.appex'))
+      : undefined;
+    const extensionReport = extension
+      ? {
+          extensionId: JSON.parse(
+            (
+              await run(
+                'plutil',
+                [
+                  '-convert',
+                  'json',
+                  '-o',
+                  '-',
+                  path.join(plugIns, extension, 'Info.plist'),
+                ],
+                { log },
+              )
+            ).stdout,
+          ).CFBundleIdentifier,
+          extensionApplicationIdentifier: await entitlements(
+            path.join(plugIns, extension),
+          ),
+        }
+      : {};
     // What iOS shows in English: the strings the app has in English, over
     // Info.plist's.
     const strings = path.join(bundle, 'en.lproj', 'InfoPlist.strings');
@@ -204,9 +235,8 @@ const verify: Platform['verify'] = ({ app, log }) =>
         version: info.CFBundleShortVersionString,
         build: info.CFBundleVersion,
         payload: readFileSync(path.join(bundle, 'payload.txt'), 'utf8'),
-        applicationIdentifier: entitlements.match(
-          /<key>application-identifier<\/key>\s*<string>(.*?)<\/string>/,
-        )?.[1],
+        applicationIdentifier: await entitlements(bundle),
+        ...extensionReport,
       },
     };
   });

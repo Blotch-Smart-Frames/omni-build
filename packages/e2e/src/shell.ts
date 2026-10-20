@@ -2,9 +2,10 @@
  * The values the fixture shells are built with, and so what they must
  * report on launch. They're set in:
  *
- * - iOS: `fixtures/ios/OmniBuildShell.xcodeproj` (bundle ID, version, build)
- *   and `OmniBuildShell/Info.plist` (name, camera usage), which
- *   `en.lproj/InfoPlist.strings` translates into English
+ * - iOS: `fixtures/ios/OmniBuildShell.xcodeproj` (bundle ID, version, build,
+ *   and the app extension's bundle ID) and `OmniBuildShell/Info.plist`
+ *   (name, camera usage), which `en.lproj/InfoPlist.strings` translates
+ *   into English
  * - Android: `fixtures/android/app/build.gradle.kts` (application ID,
  *   version, build), `res/values/strings.xml` (name, as the application's
  *   label and the launcher activity's), and the manifest (provider,
@@ -33,6 +34,7 @@ export const SHELL = {
   // iOS's.
   cameraUsage: "The shell's camera.",
   framework: 'ShellKit',
+  extensionId: 'dev.omnibuild.shell.ShellNotifications',
 };
 
 /**

@@ -196,6 +196,10 @@ fn repackage_signs_with_the_key_it_is_given() {
             SHELL_IPA,
             "--signing-key",
             IDENTITY,
+            // One for the app and one for its extension, as they'd be
+            // without a wildcard App ID.
+            "--profile",
+            PROFILE,
             "--profile",
             PROFILE,
             "--out",
@@ -211,9 +215,14 @@ fn repackage_signs_with_the_key_it_is_given() {
         |bytes: &[u8], text: &[u8]| bytes.windows(text.len()).any(|window| window == text);
     assert!(contains(&fs::read(apk).unwrap(), b"OmniBuild Test"));
     // Zip entry names aren't compressed.
+    let ipa = fs::read(ipa).unwrap();
     assert!(contains(
-        &fs::read(ipa).unwrap(),
+        &ipa,
         b"Payload/OmniBuildShell.app/embedded.mobileprovision"
+    ));
+    assert!(contains(
+        &ipa,
+        b"Payload/OmniBuildShell.app/PlugIns/ShellNotifications.appex/embedded.mobileprovision"
     ));
 }
 

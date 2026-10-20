@@ -138,6 +138,32 @@ impl InfoPlist {
         Ok(())
     }
 
+    /// Gives an app extension what follows from the app's values, as Xcode
+    /// would have built it for the app: its ID under the app's in place of
+    /// the shell's (`dev.example.app.Share` for `dev.omnibuild.shell.Share`),
+    /// which iOS requires, and the app's version and build number, which
+    /// App Store validation requires. `shell_id` is the shell's ID.
+    pub fn rewrite_extension(&mut self, shell_id: &str, app: &App) -> Result<()> {
+        if let Some(id) = &app.id {
+            let suffix = self
+                .id()
+                .and_then(|own| own.strip_prefix(shell_id))
+                .filter(|suffix| suffix.starts_with('.'))
+                .with_context(|| {
+                    format!("its bundle ID (CFBundleIdentifier) isn't under the app's, {shell_id}")
+                })?;
+            let id = format!("{id}{suffix}");
+            self.set("CFBundleIdentifier", &id);
+        }
+        if let Some(version) = &app.version {
+            self.set("CFBundleShortVersionString", version);
+        }
+        if let Some(build) = app.build {
+            self.set("CFBundleVersion", &build.to_string());
+        }
+        Ok(())
+    }
+
     /// The keys whose translations iOS would show in place of the app's
     /// values: its name's, and its purpose strings'.
     pub fn translated(app: &App) -> Vec<&str> {
@@ -255,6 +281,61 @@ mod tests {
             info.dictionary.get("CFBundleIdentifier"),
             Some(&Value::String("dev.omnibuild.shell".to_owned()))
         );
+    }
+
+    /// An app extension's Info.plist, with this bundle ID.
+    fn extension(id: &str) -> InfoPlist {
+        InfoPlist::parse(XML.replace("dev.omnibuild.shell", id).as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn gives_an_extension_an_id_under_the_apps_and_its_version() {
+        let mut info = extension("dev.omnibuild.shell.ShellNotifications");
+
+        info.rewrite_extension("dev.omnibuild.shell", &app())
+            .unwrap();
+
+        assert_eq!(
+            entries(&info.to_bytes()),
+            [
+                (
+                    "CFBundleIdentifier".to_owned(),
+                    Value::String("dev.example.app.ShellNotifications".to_owned())
+                ),
+                (
+                    "CFBundleName".to_owned(),
+                    Value::String("OmniBuildShell".to_owned())
+                ),
+                (
+                    "CFBundleShortVersionString".to_owned(),
+                    Value::String("2.5.0".to_owned())
+                ),
+                ("CFBundleVersion".to_owned(), Value::String("42".to_owned())),
+            ]
+        );
+        // Without the app's values, as the shell has it.
+        let mut unchanged = extension("dev.omnibuild.shell.ShellNotifications");
+        unchanged
+            .rewrite_extension("dev.omnibuild.shell", &App::default())
+            .unwrap();
+        assert_eq!(
+            unchanged,
+            extension("dev.omnibuild.shell.ShellNotifications")
+        );
+    }
+
+    #[test]
+    fn refuses_an_extension_whose_id_isnt_under_the_apps() {
+        for id in ["dev.omnibuild.other", "dev.omnibuild.shellfish"] {
+            let error = extension(id)
+                .rewrite_extension("dev.omnibuild.shell", &app())
+                .unwrap_err();
+
+            assert_eq!(
+                error.to_string(),
+                "its bundle ID (CFBundleIdentifier) isn't under the app's, dev.omnibuild.shell"
+            );
+        }
     }
 
     #[test]

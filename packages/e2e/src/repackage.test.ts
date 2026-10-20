@@ -112,6 +112,7 @@ describe('expected', () => {
       icon: '#E8590C',
       cameraUsage: "Scans the codes on OmniBuild's test cards.",
       framework: SHELL.framework,
+      extensionId: 'dev.omnibuild.e2e.app.ShellNotifications',
       signer: 'ad hoc',
     });
   });
@@ -122,6 +123,9 @@ describe('expected', () => {
       cameraUsage: "Scans the codes on OmniBuild's test cards.",
       signer: 'OmniBuild E2E',
       applicationIdentifier: 'OMNIBUILD0.dev.omnibuild.e2e.app',
+      extensionId: 'dev.omnibuild.e2e.app.ShellNotifications',
+      extensionApplicationIdentifier:
+        'OMNIBUILD0.dev.omnibuild.e2e.app.ShellNotifications',
     });
   });
 });
@@ -159,7 +163,7 @@ describe('repackage', () => {
     );
   });
 
-  it('signs an iOS build for devices with the test key and profile', async () => {
+  it("signs an iOS build for devices with the test key, and the app's and its extension's profiles", async () => {
     const shell = path.join('shells', 'OmniBuildShell.ipa');
     onPlatform('darwin');
 
@@ -178,6 +182,10 @@ describe('repackage', () => {
         '--profile',
         fileURLToPath(
           new URL('../app/OmniBuildE2E.mobileprovision', import.meta.url),
+        ),
+        '--profile',
+        fileURLToPath(
+          new URL('../app/ShellNotifications.mobileprovision', import.meta.url),
         ),
         '--out',
         app,

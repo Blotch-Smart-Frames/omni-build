@@ -65,8 +65,26 @@ impl Profile {
         })
     }
 
-    /// The entitlements to sign the app `bundle_id` with, signed with
-    /// `certificate` (DER), if the profile allows both.
+    /// The App ID, as `TEAM.dev.example.app` or `TEAM.dev.example.*`.
+    pub fn app_id(&self) -> &str {
+        &self.application_identifier
+    }
+
+    /// How closely the App ID fits the bundle `bundle_id`, if it includes
+    /// it: an exact App ID most, and then a wildcard the longer what it
+    /// matches before its `*`, so that `TEAM.dev.example.*` fits closer
+    /// than `TEAM.*`. Xcode picks the profile that fits a bundle closest.
+    pub fn fit(&self, bundle_id: &str) -> Option<usize> {
+        let (_, allowed) = self.application_identifier.split_once('.')?;
+        match allowed.strip_suffix('*') {
+            Some(start) => bundle_id.starts_with(start).then_some(start.len()),
+            None => (allowed == bundle_id).then_some(usize::MAX),
+        }
+    }
+
+    /// The entitlements to sign the bundle `bundle_id` with, whose ID the
+    /// profile includes, signed with `certificate` (DER), if the profile
+    /// allows it.
     ///
     /// Only the entitlements every app has: its App ID and team, and
     /// whether it may be debugged (a development profile) or report to
@@ -74,19 +92,10 @@ impl Profile {
     /// capability its App ID may use, such as push notifications, but an
     /// app claims one only if it uses it.
     pub fn entitlements(&self, bundle_id: &str, certificate: &[u8]) -> Result<Entitlements> {
-        let (prefix, allowed) = self
+        let (prefix, _) = self
             .application_identifier
             .split_once('.')
             .unwrap_or_default();
-        let fits = allowed
-            .strip_suffix('*')
-            .map_or(allowed == bundle_id, |start| bundle_id.starts_with(start));
-        if !fits {
-            bail!(
-                "it's for the App ID {}, which doesn't include {bundle_id}",
-                self.application_identifier
-            );
-        }
         if !self
             .certificates
             .iter()
@@ -156,7 +165,7 @@ pub mod tests {
 
     /// A profile for this App ID, allowing the test identity's certificate,
     /// with a distribution profile's entitlements.
-    fn profile_for(app_id: &str) -> Profile {
+    pub fn profile_for(app_id: &str) -> Profile {
         let certificate = data(identity().certificate());
         Profile::parse(&profile_of(&format!(
             "<plist><dict>
@@ -215,30 +224,31 @@ pub mod tests {
     }
 
     #[test]
-    fn reports_a_profile_that_doesnt_fit() {
-        let certificate = identity().certificate().to_vec();
-        let cases = [
-            (
-                profile_for("TEAM.dev.example.app").entitlements("dev.example.other", &certificate),
-                "it's for the App ID TEAM.dev.example.app, which doesn't include dev.example.other",
-            ),
-            (
-                profile_for("TEAM.dev.other.*").entitlements("dev.example.app", &certificate),
-                "it's for the App ID TEAM.dev.other.*, which doesn't include dev.example.app",
-            ),
-            (
-                profile_for("no prefix").entitlements("no prefix", &certificate),
-                "it's for the App ID no prefix, which doesn't include no prefix",
-            ),
-            (
-                profile_for("TEAM.*").entitlements("dev.example.app", b"another certificate"),
-                "it doesn't allow the signing key's certificate (DeveloperCertificates)",
-            ),
-        ];
+    fn fits_a_bundle_closer_the_more_its_app_id_says() {
+        let fit = |app_id: &str, bundle_id: &str| profile_for(app_id).fit(bundle_id);
 
-        for (result, message) in cases {
-            assert_eq!(result.unwrap_err().to_string(), message);
-        }
+        assert_eq!(
+            fit("TEAM.dev.example.app", "dev.example.app"),
+            Some(usize::MAX)
+        );
+        assert_eq!(fit("TEAM.dev.example.*", "dev.example.app"), Some(12));
+        assert_eq!(fit("TEAM.*", "dev.example.app"), Some(0));
+        assert_eq!(fit("TEAM.dev.example.app", "dev.example.app.Share"), None);
+        assert_eq!(fit("TEAM.dev.other.*", "dev.example.app"), None);
+        assert_eq!(fit("no prefix", "no prefix"), None);
+        assert_eq!(profile_for("TEAM.*").app_id(), "TEAM.*");
+    }
+
+    #[test]
+    fn reports_a_profile_that_doesnt_allow_the_certificate() {
+        let error = profile_for("TEAM.*")
+            .entitlements("dev.example.app", b"another certificate")
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "it doesn't allow the signing key's certificate (DeveloperCertificates)"
+        );
     }
 
     #[test]

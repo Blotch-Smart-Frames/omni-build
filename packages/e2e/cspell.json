@@ -12,6 +12,7 @@
   "words": [
     "androidx",
     "apks",
+    "appex",
     "armeabi",
     "avds",
     "bootstatus",
@@ -26,6 +27,7 @@
     "syskeys",
     "UDID",
     "Unretained",
+    "usernotifications",
     "xcodeproj",
     "xcuserdata"
   ]
