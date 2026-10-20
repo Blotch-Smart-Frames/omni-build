@@ -498,6 +498,53 @@ describe('verify', () => {
     });
   });
 
+  it("reads its app extension's own ID and what its profile allowed it", async () => {
+    const bundle = path.join(unzipped, 'Payload', 'OmniBuildShell.app');
+    const plugIns = path.join(bundle, 'PlugIns');
+    const extension = path.join(plugIns, 'ShellNotifications.appex');
+    vi.mocked(readdirSync).mockImplementation(
+      (folder) =>
+        (folder === plugIns
+          ? ['README', 'ShellNotifications.appex']
+          : ['OmniBuildShell.app']) as never,
+    );
+    vi.mocked(existsSync).mockImplementation((file) => file === plugIns);
+    vi.mocked(readFileSync).mockReturnValue('the payload');
+    const identifier = (id: string) =>
+      `<dict><key>application-identifier</key><string>${id}</string></dict>`;
+    respond = (program, args) => {
+      if (program === 'plutil') {
+        return {
+          stdout: JSON.stringify({
+            CFBundleIdentifier: args.includes(
+              path.join(extension, 'Info.plist'),
+            )
+              ? 'dev.omnibuild.e2e.app.ShellNotifications'
+              : 'dev.omnibuild.e2e.app',
+          }),
+        };
+      }
+      if (args.includes('--entitlements')) {
+        return {
+          stdout: args.includes(extension)
+            ? identifier('TEAM.dev.omnibuild.e2e.app.ShellNotifications')
+            : identifier('TEAM.dev.omnibuild.e2e.app'),
+        };
+      }
+      return args[0] === '--display' ? { output: '' } : undefined;
+    };
+
+    const verified = await ios.verify({ ...artifacts, app: 'app.ipa' });
+
+    expect(verified.report).toMatchObject({
+      id: 'dev.omnibuild.e2e.app',
+      applicationIdentifier: 'TEAM.dev.omnibuild.e2e.app',
+      extensionId: 'dev.omnibuild.e2e.app.ShellNotifications',
+      extensionApplicationIdentifier:
+        'TEAM.dev.omnibuild.e2e.app.ShellNotifications',
+    });
+  });
+
   it('reads what iOS shows in English, over what Info.plist says', async () => {
     vi.mocked(readdirSync).mockReturnValue(['OmniBuildShell.app'] as never);
     vi.mocked(readFileSync).mockReturnValue('the payload');

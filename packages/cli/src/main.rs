@@ -78,11 +78,13 @@ struct Repackage {
     /// ad hoc.
     #[arg(long)]
     signing_key: Option<PathBuf>,
-    /// The provisioning profile for an iOS build for devices
+    /// A provisioning profile for an iOS build for devices
     /// (`.mobileprovision`), which allows the signing key's certificate and
-    /// the app's ID.
+    /// the app's ID. Give one for each of the app's extensions too, which
+    /// have IDs of their own, unless a wildcard App ID covers them: each
+    /// takes the profile that fits its ID closest, as Xcode picks them.
     #[arg(long)]
-    profile: Option<PathBuf>,
+    profile: Vec<PathBuf>,
 }
 
 /// Install an APK on an Android device or emulator, over ADB, with no
@@ -166,15 +168,15 @@ fn repackage(args: &Repackage, reporter: &Reporter) -> Result<()> {
         .as_deref()
         .map(|path| SigningKey::read(path, &key_password()))
         .transpose()?;
-    let profile = args
+    let profiles = args
         .profile
-        .as_ref()
+        .iter()
         .map(|path| {
             fs::read(path).with_context(|| {
                 format!("couldn't read the provisioning profile {}", path.display())
             })
         })
-        .transpose()?;
+        .collect::<Result<Vec<_>>>()?;
     let entries = zip::read(&shell).context(NOT_A_SHELL)?;
     let (repackaged, platform, format) = if let Some(bundle) = ios::bundle(&entries) {
         let format = if bundle.starts_with("Payload/") {
@@ -182,10 +184,10 @@ fn repackage(args: &Repackage, reporter: &Reporter) -> Result<()> {
         } else {
             Format::App
         };
-        let repackaged = ios::repackage(entries, &bundle, &app, key.as_ref(), profile.as_deref())?;
+        let repackaged = ios::repackage(entries, &bundle, &app, key.as_ref(), &profiles)?;
         (repackaged, Platform::Ios, format)
     } else if let Some(layout) = android::layout(&entries) {
-        if profile.is_some() {
+        if !profiles.is_empty() {
             bail!("a provisioning profile is for iOS apps, and the shell is an Android app");
         }
         let key = match key {

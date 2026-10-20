@@ -34,7 +34,7 @@ The Rust tests find files in both Android shells by name, and resources by their
 
 ## `shell.app.zip`
 
-The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. Its executable and its framework's (`Frameworks/ShellKit.framework`) are tiny programs instead of the shell's Swift, linked for the Simulator's two architectures and signed by the linker: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, its English translation (`en.lproj/InfoPlist.strings`), its icon, in the asset catalog (`Assets.car`) and the PNGs beside it, and its signatures, but never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
+The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. Its executable, its framework's (`Frameworks/ShellKit.framework`) and its app extension's (`PlugIns/ShellNotifications.appex`) are tiny programs instead of the shell's Swift, linked for the Simulator's two architectures and signed by the linker: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, its English translation (`en.lproj/InfoPlist.strings`), its icon, in the asset catalog (`Assets.car`) and the PNGs beside it, and its signatures, but never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
 
 ```sh
 node packages/e2e/src/cli.ts build --platform ios
@@ -46,12 +46,14 @@ xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-versio
 xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-version-min=17.0 \
   -dynamiclib -install_name @rpath/ShellKit.framework/ShellKit -Wl,-adhoc_codesign lib.c \
   -o trimmed/OmniBuildShell.app/Frameworks/ShellKit.framework/ShellKit
+xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-version-min=17.0 \
+  -Wl,-adhoc_codesign main.c -o trimmed/OmniBuildShell.app/PlugIns/ShellNotifications.appex/ShellNotifications
 ditto -c -k --norsrc --keepParent trimmed/OmniBuildShell.app packages/cli/tests/fixtures/shell.app.zip
 ```
 
 ## `shell.ipa`
 
-The same shell built for devices, as the E2E tests build it (unsigned, with room for a signature), in an `.ipa`, with a tiny program for its executable, linked for arm64 and signed by the linker. Its PNGs are Apple's variant, as Xcode writes them for devices.
+The same shell built for devices, as the E2E tests build it (unsigned, with room for a signature), in an `.ipa`, with tiny programs for its executables, linked for arm64 and signed by the linker. Its PNGs are Apple's variant, as Xcode writes them for devices.
 
 ```sh
 ditto -x -k packages/e2e/build/shells/ios/OmniBuildShell.ipa trimmed-ipa
@@ -60,10 +62,12 @@ xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -Wl,-adhoc_codesign
 xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -dynamiclib \
   -install_name @rpath/ShellKit.framework/ShellKit -Wl,-adhoc_codesign lib.c \
   -o trimmed-ipa/Payload/OmniBuildShell.app/Frameworks/ShellKit.framework/ShellKit
+xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -Wl,-adhoc_codesign main.c \
+  -o trimmed-ipa/Payload/OmniBuildShell.app/PlugIns/ShellNotifications.appex/ShellNotifications
 cd trimmed-ipa && ditto -c -k --norsrc --keepParent Payload ../packages/cli/tests/fixtures/shell.ipa
 ```
 
-The tests compare what OmniBuild signs with what `codesign` signs from the same files, framework first and then the app, as Xcode signs them: ad hoc, with `codesign --sign - --force` on each unzipped shell, and with the identity below, from a keychain, with `codesign --sign "OmniBuild Test" --timestamp=none`, adding for the app `--entitlements` the entitlements the profile gives `dev.omnibuild.shell`, and the profile copied in as `embedded.mobileprovision`. For the device shell, where `codesign` pads the framework's signature with what the linker's left there and OmniBuild with zeros, the app is signed again around OmniBuild's framework. A remade shell needs those values in the tests made again.
+The tests compare what OmniBuild signs with what `codesign` signs from the same files, the framework first, then the extension, then the app, as Xcode signs them: ad hoc, with `codesign --sign - --force` on each bundle of each unzipped shell, and with the identity below, from a keychain, with `codesign --sign "OmniBuild Test" --timestamp=none`. That adds, for the extension and the app, `--entitlements` with the entitlements the profile gives each ID (`dev.omnibuild.shell.ShellNotifications` and `dev.omnibuild.shell`), and the profile copied into each as `embedded.mobileprovision`. In the device shell, `codesign` pads each signature with what the linker's left there, and OmniBuild with zeros. So the tests compare each executable up to the end of its signature, and the app is signed again around the framework and the extension with their padding zeroed. A remade shell needs those values in the tests made again.
 
 ## `packed-icons.car`
 

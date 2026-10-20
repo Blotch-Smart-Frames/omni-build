@@ -49,14 +49,15 @@ pub fn bundle(entries: &[Entry]) -> Option<String> {
 
 /// Repackages an iOS app shell, given its entries and the folder in them
 /// that holds the app, into the app `app` describes. A build for devices is
-/// signed with `key` and the provisioning profile `profile`, which a
+/// signed with `key` and provisioning profiles, `profiles`, one for the app
+/// and each of its extensions, or one that covers them all, which a
 /// Simulator build doesn't need.
 pub fn repackage(
     mut entries: Vec<Entry>,
     bundle: &str,
     app: &App,
     key: Option<&SigningKey>,
-    profile: Option<&[u8]>,
+    profiles: &[Vec<u8>],
 ) -> Result<Vec<u8>> {
     let name = format!("{bundle}Info.plist");
     let index = entries
@@ -68,15 +69,19 @@ pub fn repackage(
         .and_then(|contents| InfoPlist::parse(&contents))
         .with_context(|| format!("couldn't read the shell's {name}"))?;
     let platforms = info.platforms();
-    let profile = if platforms.contains(&SIMULATOR) {
-        None
+    let profiles = if platforms.contains(&SIMULATOR) {
+        Vec::new()
     } else if platforms.contains(&DEVICES) {
-        let (Some(_), Some(profile)) = (key, profile) else {
+        if key.is_none() || profiles.is_empty() {
             bail!(
                 "a build for devices has to be signed with a key Apple issued a certificate for, and a provisioning profile allowing it: give them with --signing-key and --profile"
             );
-        };
-        Some(Profile::parse(profile).context("couldn't read the provisioning profile")?)
+        }
+        profiles
+            .iter()
+            .map(|profile| Profile::parse(profile))
+            .collect::<Result<Vec<_>>>()
+            .context("couldn't read a provisioning profile")?
     } else {
         bail!(
             "the shell isn't built for iOS devices or the Simulator: its CFBundleSupportedPlatforms is [{}]",
@@ -90,6 +95,10 @@ pub fn repackage(
     if info != shell {
         entries[index] = entries[index].with_contents(&info.to_bytes());
     }
+    let shell_id = shell
+        .id()
+        .context("the shell's Info.plist has no bundle ID (CFBundleIdentifier)")?;
+    rewrite_extensions(&mut entries, bundle, shell_id, app)?;
     drop_translations(&mut entries, bundle, &InfoPlist::translated(app))?;
     if let Some(path) = &app.icon {
         set_icon(&mut entries, bundle, &shell, &icon::load(path)?)?;
@@ -97,12 +106,51 @@ pub fn repackage(
     if let Some(payload) = &app.payload {
         add_payload(&mut entries, bundle, payload)?;
     }
-    let identity = profile
-        .as_ref()
-        .zip(key)
-        .map(|(profile, key)| Identity { key, profile });
+    let identity = key.filter(|_| !profiles.is_empty()).map(|key| Identity {
+        key,
+        profiles: &profiles,
+    });
     let entries = signing::sign(entries, bundle, &info, identity.as_ref())?;
     Ok(zip::write(&entries).bytes)
+}
+
+/// Gives each app extension in the shell's `PlugIns/` an ID under the
+/// app's, in place of the shell's (`shell_id`), and the app's version and
+/// build number.
+fn rewrite_extensions(
+    entries: &mut [Entry],
+    bundle: &str,
+    shell_id: &str,
+    app: &App,
+) -> Result<()> {
+    let plugins = format!("{bundle}PlugIns/");
+    for entry in entries.iter_mut() {
+        let is_extension = entry
+            .name
+            .strip_prefix(&plugins)
+            .and_then(|file| file.strip_suffix("/Info.plist"))
+            .is_some_and(|extension| {
+                !extension.contains('/')
+                    && Path::new(extension)
+                        .extension()
+                        .is_some_and(|kind| kind == "appex")
+            });
+        if !is_extension {
+            continue;
+        }
+        let shell = entry
+            .contents()
+            .and_then(|contents| InfoPlist::parse(&contents))
+            .with_context(|| format!("couldn't read the shell's {}", entry.name))?;
+        let mut info = shell.clone();
+        info.rewrite_extension(shell_id, app)
+            .with_context(|| format!("couldn't rewrite the shell's {}", entry.name))?;
+        // Left as it was when nothing changed, rather than written again.
+        if info != shell {
+            *entry = entry.with_contents(&info.to_bytes());
+        }
+    }
+    Ok(())
 }
 
 /// Takes the keys out of the shell's translations of its Info.plist,
@@ -220,6 +268,7 @@ pub mod tests {
     const CATALOG: &str = "OmniBuildShell.app/Assets.car";
     /// The shell's English translation of its Info.plist.
     const STRINGS: &str = "OmniBuildShell.app/en.lproj/InfoPlist.strings";
+    const EXTENSION_INFO: &str = "OmniBuildShell.app/PlugIns/ShellNotifications.appex/Info.plist";
     /// The colour of every pixel of the app's icon in the tests.
     const ICON: Rgba<u8> = Rgba([0xe8, 0x59, 0x0c, 0xff]);
 
@@ -324,18 +373,18 @@ pub mod tests {
             "OmniBuildShell.app/",
             &App::default(),
             None,
-            None,
+            &[],
         )
         .unwrap();
 
         let app = zip::read(&app).unwrap();
-        // Signed ad hoc, as Xcode signed it: its executable and the
-        // framework's, and the app's seal, which covers the framework's
-        // executable. The framework's seal is the same as Xcode's, for the
-        // same files.
+        // Signed ad hoc, as Xcode signed it: its executable, the
+        // framework's and the extension's, and the app's seal, which covers
+        // theirs. Their seals are the same as Xcode's, for the same files.
         let signed = [
             EXECUTABLE,
             "OmniBuildShell.app/Frameworks/ShellKit.framework/ShellKit",
+            "OmniBuildShell.app/PlugIns/ShellNotifications.appex/ShellNotifications",
             "OmniBuildShell.app/_CodeSignature/CodeResources",
         ];
         for (entry, shell_entry) in app.iter().zip(&shell) {
@@ -382,7 +431,7 @@ pub mod tests {
         };
         let shell = zip::read(SHELL_APP).unwrap();
 
-        let repackaged = repackage(shell.clone(), "OmniBuildShell.app/", &app, None, None).unwrap();
+        let repackaged = repackage(shell.clone(), "OmniBuildShell.app/", &app, None, &[]).unwrap();
 
         let entries = zip::read(&repackaged).unwrap();
         let mut expected = InfoPlist::parse(&shell_info_plist()).unwrap();
@@ -418,6 +467,17 @@ pub mod tests {
         };
         assert_eq!(names(&entries)[..shell.len()], names(&shell));
         assert_eq!(mode(file(&entries, EXECUTABLE)), 0o100_755);
+        // The extension's ID under the app's, and the app's version and
+        // build.
+        let extension =
+            InfoPlist::parse(&file(&entries, EXTENSION_INFO).contents().unwrap()).unwrap();
+        let mut expected =
+            InfoPlist::parse(&file(&shell, EXTENSION_INFO).contents().unwrap()).unwrap();
+        expected
+            .rewrite_extension("dev.omnibuild.shell", &app)
+            .unwrap();
+        assert_eq!(extension, expected);
+        assert_eq!(extension.id(), Some("dev.example.app.ShellNotifications"));
     }
 
     #[test]
@@ -449,7 +509,7 @@ pub mod tests {
         ));
 
         let entries =
-            zip::read(&repackage(shell, "OmniBuildShell.app/", &app, None, None).unwrap()).unwrap();
+            zip::read(&repackage(shell, "OmniBuildShell.app/", &app, None, &[]).unwrap()).unwrap();
 
         let strings = file(&entries, STRINGS).contents().unwrap();
         assert!(strings.starts_with(b"<?xml"));
@@ -481,7 +541,7 @@ pub mod tests {
                 "OmniBuildShell.app/",
                 &nfc,
                 None,
-                None,
+                &[],
             )
             .unwrap(),
         )
@@ -513,13 +573,13 @@ pub mod tests {
             ..App::default()
         };
 
-        let unread = repackage(text, "OmniBuildShell.app/", &named, None, None).unwrap_err();
+        let unread = repackage(text, "OmniBuildShell.app/", &named, None, &[]).unwrap_err();
         let unset = repackage(
             zip::read(SHELL_APP).unwrap(),
             "OmniBuildShell.app/",
             &not_a_purpose,
             None,
-            None,
+            &[],
         )
         .unwrap_err();
 
@@ -543,7 +603,7 @@ pub mod tests {
             "OmniBuildShell.app/",
             &app_with_icon(dir.path()),
             None,
-            None,
+            &[],
         )
         .unwrap();
 
@@ -576,7 +636,7 @@ pub mod tests {
             "Payload/OmniBuildShell.app/",
             &app,
             Some(&identity()),
-            Some(PROFILE),
+            &[PROFILE.to_vec()],
         )
         .unwrap();
 
@@ -592,16 +652,31 @@ pub mod tests {
         );
         let executable = file(&entries, "Payload/OmniBuildShell.app/OmniBuildShell");
         assert_eq!(mode(executable), 0o100_755);
-        // The signature's entitlements are for the app's own ID.
-        let executable = executable.contents().unwrap();
-        let signature = Reader::at(&executable, 784 + 8).u32() as usize;
-        let (_, entitlements) = blobs(&executable[signature..])
-            .into_iter()
-            .find(|(slot, _)| *slot == 5)
-            .unwrap();
+        // The signatures' entitlements are for the app's own ID, and the
+        // extension's, which is under it.
+        let entitlements = |executable: &str| {
+            let executable = file(&entries, executable).contents().unwrap();
+            let signature = Reader::at(&executable, 784 + 8).u32() as usize;
+            let (_, entitlements) = blobs(&executable[signature..])
+                .into_iter()
+                .find(|(slot, _)| *slot == 5)
+                .unwrap();
+            String::from_utf8_lossy(&entitlements).into_owned()
+        };
         assert!(
-            String::from_utf8_lossy(&entitlements)
+            entitlements("Payload/OmniBuildShell.app/OmniBuildShell")
                 .contains("<string>ABCDE12345.dev.example.app</string>")
+        );
+        let extension = "Payload/OmniBuildShell.app/PlugIns/ShellNotifications.appex/";
+        assert!(
+            entitlements(&format!("{extension}ShellNotifications"))
+                .contains("<string>ABCDE12345.dev.example.app.ShellNotifications</string>")
+        );
+        assert_eq!(
+            file(&entries, &format!("{extension}embedded.mobileprovision"))
+                .contents()
+                .unwrap(),
+            PROFILE
         );
     }
 
@@ -616,28 +691,70 @@ pub mod tests {
             );
         }));
         let cases = [
-            (zip::read(SHELL_IPA).unwrap(), None, None, device),
-            (zip::read(SHELL_IPA).unwrap(), Some(&key), None, device),
+            (zip::read(SHELL_IPA).unwrap(), None, vec![], device),
+            (zip::read(SHELL_IPA).unwrap(), Some(&key), vec![], device),
+            (
+                zip::read(SHELL_IPA).unwrap(),
+                None,
+                vec![PROFILE.to_vec()],
+                device,
+            ),
             (
                 zip::read(SHELL_IPA).unwrap(),
                 Some(&key),
-                Some(&b"not a profile"[..]),
-                "couldn't read the provisioning profile: it isn't a provisioning profile, a property list in CMS signed data",
+                vec![PROFILE.to_vec(), b"not a profile".to_vec()],
+                "couldn't read a provisioning profile: it isn't a provisioning profile, a property list in CMS signed data",
             ),
             (
                 mac,
                 None,
-                None,
+                vec![],
                 "the shell isn't built for iOS devices or the Simulator: its CFBundleSupportedPlatforms is [MacOSX]",
             ),
         ];
 
-        for (shell, key, profile, message) in cases {
+        for (shell, key, profiles, message) in cases {
             let bundle = super::bundle(&shell).unwrap();
 
-            let error = repackage(shell, &bundle, &App::default(), key, profile).unwrap_err();
+            let error = repackage(shell, &bundle, &App::default(), key, &profiles).unwrap_err();
 
             assert_eq!(format!("{error:#}"), message);
+        }
+    }
+
+    #[test]
+    fn reports_an_app_extension_it_cant_rewrite() {
+        let cases = [
+            (
+                with_file(&info_plist_with(|info| {
+                    info.remove("CFBundleIdentifier");
+                })),
+                App::default(),
+                "the shell's Info.plist has no bundle ID (CFBundleIdentifier)",
+            ),
+            (
+                with_file(&Entry::new(EXTENSION_INFO, Method::Stored, b"not a plist")),
+                App::default(),
+                "couldn't read the shell's OmniBuildShell.app/PlugIns/ShellNotifications.appex/Info.plist: it isn't a property list",
+            ),
+            (
+                with_file(&Entry::new(
+                    EXTENSION_INFO,
+                    Method::Stored,
+                    b"<plist><dict><key>CFBundleIdentifier</key><string>dev.other</string></dict></plist>",
+                )),
+                App {
+                    id: Some("dev.example.app".to_owned()),
+                    ..App::default()
+                },
+                "couldn't rewrite the shell's OmniBuildShell.app/PlugIns/ShellNotifications.appex/Info.plist: its bundle ID (CFBundleIdentifier) isn't under the app's, dev.omnibuild.shell",
+            ),
+        ];
+
+        for (shell, app, message) in cases {
+            let error = repackage(shell, "OmniBuildShell.app/", &app, None, &[]).unwrap_err();
+
+            assert!(format!("{error:#}").starts_with(message), "{error:#}");
         }
     }
 
@@ -716,7 +833,7 @@ pub mod tests {
         ];
 
         for (shell, app, message) in cases {
-            let error = repackage(shell, "OmniBuildShell.app/", &app, None, None).unwrap_err();
+            let error = repackage(shell, "OmniBuildShell.app/", &app, None, &[]).unwrap_err();
 
             // The first ends with the plist parser's own description.
             assert!(format!("{error:#}").starts_with(message), "{error:#}");
@@ -730,7 +847,7 @@ pub mod tests {
             "OmniBuildShell.app/",
             &missing_payload,
             None,
-            None,
+            &[],
         )
         .unwrap_err();
         assert!(

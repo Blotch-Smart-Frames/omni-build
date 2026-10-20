@@ -43,6 +43,16 @@ const SIGNING_KEY = fileURLToPath(
 const PROFILE = fileURLToPath(
   new URL('../app/OmniBuildE2E.mobileprovision', import.meta.url),
 );
+/**
+ * A profile for the app's extension, whose ID is under the app's: the
+ * app's profile is for the app's ID alone, as a profile without a wildcard
+ * App ID is.
+ */
+const EXTENSION_PROFILE = fileURLToPath(
+  new URL('../app/ShellNotifications.mobileprovision', import.meta.url),
+);
+/** The app extension in the iOS shell, under the shell's ID and the app's. */
+const EXTENSION = 'ShellNotifications';
 const SIGNER = 'OmniBuild E2E';
 const TEAM = 'OMNIBUILD0';
 /** The keystores' password, the iOS key's and the upload key's. */
@@ -190,14 +200,18 @@ export const expected = (
       cameraUsage,
       signer: SIGNER,
       applicationIdentifier: `${TEAM}.${APP.id}`,
+      extensionId: `${APP.id}.${EXTENSION}`,
+      extensionApplicationIdentifier: `${TEAM}.${APP.id}.${EXTENSION}`,
     };
   }
   // Signed ad hoc, as Xcode signs a simulator build, and its framework,
-  // which only loads with a signature of its own, too.
+  // which only loads with a signature of its own, too. Its extension's ID
+  // is under the app's, or the simulator wouldn't install it.
   return {
     ...values,
     cameraUsage,
     framework: SHELL.framework,
+    extensionId: `${APP.id}.${EXTENSION}`,
     signer: 'ad hoc',
   };
 };
@@ -230,8 +244,16 @@ export const repackage = async ({
   try {
     let signing: string[] = [];
     if (extension === '.ipa') {
-      // A build for devices has to be signed with a key and a profile.
-      signing = ['--signing-key', SIGNING_KEY, '--profile', PROFILE];
+      // A build for devices has to be signed with a key and a profile, and
+      // its extension with one of its own.
+      signing = [
+        '--signing-key',
+        SIGNING_KEY,
+        '--profile',
+        PROFILE,
+        '--profile',
+        EXTENSION_PROFILE,
+      ];
     } else if (extension === '.aab') {
       // An app bundle is signed as Google Play takes one: with an upload
       // key, which omni-build creates first, as a developer without a JDK

@@ -21,6 +21,9 @@ struct ShellReport: Encodable {
     /// The embedded framework's name, which the app only knows if the
     /// framework loaded.
     let framework: String
+    /// The app extension's bundle ID, which iOS only installs the app with
+    /// if it's under the app's.
+    let extensionId: String?
 
 
     init(bundle: Bundle) {
@@ -35,6 +38,13 @@ struct ShellReport: Encodable {
         name = (shown["CFBundleDisplayName"] ?? shown["CFBundleName"]) as? String
         cameraUsage = shown["NSCameraUsageDescription"] as? String
         framework = ShellKit.name
+        extensionId = bundle.builtInPlugInsURL
+            .flatMap {
+                try? FileManager.default.contentsOfDirectory(
+                    at: $0, includingPropertiesForKeys: nil)
+            }?
+            .first { $0.pathExtension == "appex" }
+            .flatMap { Bundle(url: $0)?.bundleIdentifier }
         version = info["CFBundleShortVersionString"] as? String
         build = info["CFBundleVersion"] as? String
         payload = bundle.url(forResource: "payload", withExtension: "txt")

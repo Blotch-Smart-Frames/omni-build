@@ -17,6 +17,7 @@ omni-build repackage shell.aab --config app.json --out app.aab
 omni-build repackage shell.zip --config app.json --out app.zip   # a zipped iOS .app, for the Simulator
 omni-build repackage shell.ipa --config app.json --out app.ipa \
   --signing-key key.pem --profile app.mobileprovision            # for devices
+  # and --profile again for each app extension, unless app.mobileprovision's App ID is a wildcard
 ```
 
 `repackage` reads a prebuilt app shell, gives it your app's values, and signs it. The shell is an APK, which installs on a device, an Android App Bundle (AAB), which you upload to Google Play, or an iOS app: an `.ipa` for devices, or a zipped `.app` for the Simulator. OmniBuild tells which from its contents, and writes the app in the same form. Nothing else is installed or run: no JDK, no Android SDK, no Gradle, no Xcode.
@@ -83,7 +84,7 @@ omni-build repackage shell.aab --config app.json --out app.aab --signing-key upl
 
 `--signing-key` takes a PKCS #12 keystore, whose password OmniBuild reads from `OMNI_BUILD_KEY_PASSWORD` rather than a flag, which anyone listing your processes could see. That includes `.p12` files from Keychain Access or OpenSSL, and the `.jks` files keytool and Android Studio have made since Java 9; an older `.jks` is in Java's own format, which keytool converts (`keytool -importkeystore -srckeystore old.jks -destkeystore new.p12 -deststoretype pkcs12`). `--signing-key` also takes a PEM file with the private key (PKCS #8) and its certificate. Either way, the key is RSA, as Google Play's upload keys and Apple's signing certificates are.
 
-An iOS app gets Apple's code signature, as `codesign` writes it: every file sealed in `_CodeSignature/CodeResources`, and the executable signed over the seal, `Info.plist` and the entitlements. Each framework in its `Frameworks/` is signed first, the same way but without entitlements, as Xcode signs them.
+An iOS app gets Apple's code signature, as `codesign` writes it: every file sealed in `_CodeSignature/CodeResources`, and the executable signed over the seal, `Info.plist` and the entitlements. Each framework in its `Frameworks/` is signed first, the same way but without entitlements, and then each app extension in its `PlugIns/`, with entitlements of its own, as Xcode signs them. An extension's ID stays under the app's, as iOS requires: `dev.example.app.Share` for the shell's `dev.omnibuild.shell.Share`. It also takes the app's version and build number, which App Store validation requires.
 
 - **For the Simulator**, it's signed ad hoc, with no certificate, as Xcode signs a Simulator build. To run one, unzip it and install the `.app`:
 
@@ -91,7 +92,7 @@ An iOS app gets Apple's code signature, as `codesign` writes it: every file seal
   ditto -x -k app.zip app && xcrun simctl install booted app/*.app
   ```
 
-- **For devices**, it's signed with a key Apple issued a certificate for (`--signing-key`), and a provisioning profile that allows the certificate and the app's ID (`--profile`). Export the key from Keychain Access as a `.p12` and give it as it is: OmniBuild adds the certificates above it, Apple's Worldwide Developer Relations authority (G3) and Apple's root, as `codesign` does. The profile goes in the app as `embedded.mobileprovision`, and its App ID, team and `get-task-allow` or `beta-reports-active` become the app's entitlements. Other capabilities, such as push notifications, come later.
+- **For devices**, it's signed with a key Apple issued a certificate for (`--signing-key`), and a provisioning profile that allows the certificate and the app's ID (`--profile`). Export the key from Keychain Access as a `.p12` and give it as it is: OmniBuild adds the certificates above it, Apple's Worldwide Developer Relations authority (G3) and Apple's root, as `codesign` does. The profile goes in the app as `embedded.mobileprovision`, and its App ID, team and `get-task-allow` or `beta-reports-active` become the app's entitlements. Each app extension has an ID of its own, and needs a profile of its own too, unless a wildcard App ID covers it (`TEAM.*`), so give `--profile` once for each. Each bundle takes the profile whose App ID fits it closest, as Xcode picks them: its own App ID over a wildcard, and `TEAM.dev.example.*` over `TEAM.*`. Other capabilities, such as push notifications, come later.
 
 ## What a shell needs
 
@@ -104,6 +105,6 @@ On iOS:
 
 - A build for the Simulator (`iPhoneSimulator` in its `Info.plist`'s `CFBundleSupportedPlatforms`), or for devices (`iPhoneOS`).
 - A signature in its executable, if only ad hoc, for OmniBuild to replace: Xcode signs a Simulator build, and the linker reserves one in a build for devices with `OTHER_LDFLAGS=-Wl,-adhoc_codesign`, even with `CODE_SIGNING_ALLOWED=NO`.
-- No code nested in its bundle besides frameworks in `Frameworks/`: app extensions (`PlugIns/`), a watch app, App Clips and libraries outside a framework need signing on their own, which OmniBuild can't do yet.
+- No code nested in its bundle besides frameworks in `Frameworks/` and app extensions in `PlugIns/`, with no code nested in either. A watch app, App Clips, ExtensionKit's extensions (`Extensions/`) and libraries outside a framework need signing on their own, which OmniBuild can't do yet.
 - The `.app` zipped with its files' modes, so that its executable can still run: `ditto -c -k --keepParent Shell.app shell.zip`, or `Payload/Shell.app` the same way for an `.ipa`, keeps them.
 - Its translations of `Info.plist` (`InfoPlist.strings`) as property lists, as Xcode writes them unless told to keep them as text.
