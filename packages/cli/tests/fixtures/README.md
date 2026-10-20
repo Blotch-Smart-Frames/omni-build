@@ -75,3 +75,7 @@ PKCS #12 keystores, as each tool writes one, with the password `omnibuild`: the 
 | `no-key.p12`      | OpenSSL, with the certificate alone                                   | `openssl pkcs12 -export -nokeys -in cert.pem -out no-key.p12 -passout pass:omnibuild`                                |
 
 And with keys of their own, from a JDK's keytool: `keytool.p12` (`keytool -genkeypair -keystore keytool.p12 -storetype PKCS12 -storepass omnibuild -alias upload -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Upload, O=OmniBuild"`), `two-keys.p12` (the same twice, with the aliases `first` and `second`), and `ec.p12` (one key, `-keyalg EC -groupname secp256r1`).
+
+## `adb/`
+
+A key pair as adb makes one, `adbkey` (PKCS #8) and `adbkey.pub` (Android's own format, in base64, then who the key belongs to): `adb keygen adbkey`, with the name of the user and computer that made it at the end of `adbkey.pub` replaced by `omnibuild@test`. The ADB tests check that OmniBuild writes the public key as adb did, byte for byte, and connect with the private key.

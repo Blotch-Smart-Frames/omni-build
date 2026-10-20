@@ -214,10 +214,10 @@ jobs:
   #    variables that lead to a JDK, the Android SDK or Xcode.
   # 3. e2e-ios, e2e-android: every repackaged app installed and launched on
   #    the iOS Simulator and an Android emulator, each checked against the
-  #    values it reports. An Android app bundle is installed as the APK
-  #    bundletool makes from it. An iOS build for devices, which the
-  #    Simulator can't run, is checked with codesign and by what its files
-  #    say.
+  #    values it reports. omni-build installs each Android app, an app
+  #    bundle as the APK bundletool makes from it. An iOS build for devices,
+  #    which the Simulator can't run, is checked with codesign and by what
+  #    its files say.
   #
   # The harness uses only Node's built-in modules, and Node runs its TypeScript
   # by stripping the types, so these jobs skip `npm ci`.
@@ -368,15 +368,26 @@ jobs:
           retention-days: 7
 
   e2e-android:
-    needs: e2e-repackage
+    needs: [build, e2e-repackage]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # The release binary the build job made for Linux, which installs each
+      # app on the emulator, as it would for a user without the Android SDK.
+      OMNI_BUILD_BINARY: ${{ github.workspace }}/omni-build-bin/omni-build
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: omni-build-x86_64-unknown-linux-musl
+          path: omni-build-bin
+      # Workflow artifacts don't keep file modes.
+      - name: Make the binary executable
+        run: chmod +x "$OMNI_BUILD_BINARY"
       # For apksigner, and for the app bundles: jarsigner checks their
       # signature, and bundletool makes the APK to install from each, as
       # Google Play does.

@@ -263,7 +263,7 @@ fn pem_blocks<'a>(pem: &'a str, label: &str) -> impl Iterator<Item = &'a str> {
 
 /// Writes a key where only the user can read it, and never over another
 /// file: anyone with the key can sign updates to the apps signed with it.
-fn save(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+pub fn save(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]

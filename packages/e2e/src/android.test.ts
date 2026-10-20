@@ -37,6 +37,10 @@ vi.mock('./process.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./process.ts')>()),
   run: vi.fn(),
 }));
+vi.mock('./repackage.ts', () => ({
+  omniBuildBinary: () => '/repo/target/release/omni-build',
+  toolchainFree: () => ({ HOME: '/home/me' }),
+}));
 
 const PROJECT = fileURLToPath(new URL('../fixtures/android/', import.meta.url));
 const BUILD_DIR = fileURLToPath(new URL('../build/', import.meta.url));
@@ -527,7 +531,7 @@ describe('runApp', () => {
     const adb = 'adb -s emulator-5584';
     expect(commands()).toEqual([
       `${adb} uninstall ${appId}`,
-      `${adb} install app.apk`,
+      'omni-build install app.apk --device emulator-5584',
       `${adb} logcat -c`,
       `${adb} shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER ${appId}`,
       `${adb} shell am start -W -n ${activity}`,
@@ -541,6 +545,42 @@ describe('runApp', () => {
       path.join('artifacts', 'logcat.log'),
       'the whole log\n',
     );
+  });
+
+  it('installs with omni-build without a PATH or toolchain variables', async () => {
+    logging(['{}\n']);
+
+    await android.runApp(options);
+
+    expect(vi.mocked(run).mock.calls[1]).toEqual([
+      '/repo/target/release/omni-build',
+      ['install', 'app.apk', '--device', 'emulator-5584'],
+      { log: 'commands.log', env: { HOME: '/home/me' } },
+    ]);
+  });
+
+  it('installs on a device on the network with omni-build', async () => {
+    logging(['{}\n']);
+
+    await android.runApp({
+      ...options,
+      device: { serial: '192.168.1.20:5555', started: false },
+    });
+
+    expect(commands()[1]).toBe(
+      'omni-build install app.apk --device 192.168.1.20:5555',
+    );
+  });
+
+  it('installs on a phone on USB with adb, until omni-build speaks USB', async () => {
+    logging(['{}\n']);
+
+    await android.runApp({
+      ...options,
+      device: { serial: 'R58M123ABC', started: false },
+    });
+
+    expect(commands()[1]).toBe('adb -s R58M123ABC install app.apk');
   });
 
   it('adds the crash to the error when the app never reports', async () => {
