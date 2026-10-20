@@ -20,6 +20,15 @@ const TIMEOUT: Duration = Duration::from_secs(120);
 /// How long OmniBuild waits to connect to a port on this computer, where
 /// nothing listening refuses at once.
 const LOCAL_TIMEOUT: Duration = Duration::from_millis(500);
+/// Where an APK goes on a device before Android 7.0, for the package
+/// manager to install it from: a folder adb's shell can write to and the
+/// package manager read, where adb puts it too.
+const PUSHED_APK: &str = "/data/local/tmp/omni-build.apk";
+/// The pushed APK's mode, as `adb push` sends it: a regular file anyone may
+/// read, so the package manager can.
+const PUSHED_MODE: u32 = 0o100_644;
+/// The most a sync DATA request carries.
+const SYNC_DATA_MAX: usize = 64 * 1024;
 
 /// The ports where emulators on this computer listen for ADB, and where
 /// adb looks for them: each emulator takes two ports from 5554 on, its
@@ -74,27 +83,29 @@ impl Device {
     }
 
     /// Installs an APK, or updates the app with its ID, as `adb install`
-    /// does from Android 7.0 on: streamed to the package manager's install
-    /// command, which the device's `cmd` runs. Earlier versions have no
-    /// `cmd`, and need a v1 signature, which OmniBuild doesn't sign apps
-    /// with.
+    /// does: from Android 7.0 on, streamed to the package manager's install
+    /// command, which the device's `cmd` runs, and before, pushed to the
+    /// device for `pm` to install.
     pub fn install(&mut self, apk: &[u8]) -> Result<()> {
-        if !self.connection.has_feature("cmd") {
-            bail!("{self} runs Android before 7.0, which OmniBuild can't install apps on");
-        }
-        let output = self
-            .connection
-            .run(
+        let output = if self.connection.has_feature("cmd") {
+            self.connection.run(
                 &format!("exec:cmd package install -r -S {}", apk.len()),
                 apk,
             )
-            .with_context(|| format!("couldn't install the app on {self}"))?;
+        } else {
+            self.push_and_install(apk)
+        }
+        .with_context(|| format!("couldn't install the app on {self}"))?;
         // "Success", or "Failure [INSTALL_FAILED_...: why]".
         let output = String::from_utf8_lossy(&output);
         if output.lines().any(|line| line.starts_with("Success")) {
             return Ok(());
         }
-        let reason = output.trim();
+        // pm, before Android 7.0, names the file it installs first.
+        let reason = output
+            .lines()
+            .find(|line| line.starts_with("Failure"))
+            .unwrap_or(output.trim());
         // What a developer meets first: the device has the app as Gradle
         // built it, signed with the Android SDK's debug key, not
         // OmniBuild's.
@@ -111,6 +122,48 @@ impl Device {
                 reason
             }
         );
+    }
+
+    /// Installs the APK as adb does before Android 7.0, where `cmd` isn't:
+    /// pushes it to a file on the device, which `pm` installs, then deletes
+    /// the file. Returns what `pm` said.
+    fn push_and_install(&mut self, apk: &[u8]) -> Result<Vec<u8>> {
+        self.push(PUSHED_APK, apk)?;
+        let output = self
+            .connection
+            .run(&format!("shell:pm install -r {PUSHED_APK}"), &[])?;
+        self.connection
+            .run(&format!("shell:rm -f {PUSHED_APK}"), &[])?;
+        Ok(output)
+    }
+
+    /// Writes `contents` to the file at `path` on the device, as `adb push`
+    /// does, through the device's sync service: requests of an ID and a
+    /// length, the file's path and mode first, then its contents in pieces,
+    /// then its time, to which the device answers OKAY or FAIL and why, and
+    /// then one that ends the session.
+    fn push(&mut self, path: &str, contents: &[u8]) -> Result<()> {
+        let request = |id: &[u8; 4], data: &[u8]| {
+            let len = u32::try_from(data.len()).expect("a request is under 4 GiB");
+            [&id[..], &len.to_le_bytes(), data].concat()
+        };
+        let mut requests = request(b"SEND", format!("{path},{PUSHED_MODE}").as_bytes());
+        for piece in contents.chunks(SYNC_DATA_MAX) {
+            requests.extend(request(b"DATA", piece));
+        }
+        // DONE's length is the file's time, which doesn't matter for a file
+        // deleted once it's installed.
+        requests.extend(request(b"DONE", &[]));
+        requests.extend(request(b"QUIT", &[]));
+        let reply = self.connection.run("sync:", &requests)?;
+        match reply.get(..4) {
+            Some(b"OKAY") => Ok(()),
+            Some(b"FAIL") => bail!(
+                "the device couldn't save the app to {path}: {}",
+                String::from_utf8_lossy(reply.get(8..).unwrap_or_default())
+            ),
+            _ => bail!("the device didn't take the app"),
+        }
     }
 }
 
@@ -184,9 +237,11 @@ mod tests {
     use std::cell::RefCell;
     use std::net::TcpListener;
     use std::path::Path;
-    use std::sync::LazyLock;
+    use std::sync::{Arc, LazyLock, Mutex};
 
-    use super::connection::tests::{BANNER, asking, exec_device, serve};
+    use super::connection::tests::{
+        Answer, BANNER, Respond, asking, exec_device, serve, service_device,
+    };
     use super::{AdbKey, Device, emulator_ports};
 
     const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/adb/adbkey");
@@ -357,10 +412,164 @@ mod tests {
             install(BANNER, b""),
             "Pixel 8 (127.0.0.1:PORT) didn't install the app: it gave no reason"
         );
-        assert_eq!(
-            install(b"device::ro.product.model=Nexus 5;features=shell_v2\0", b""),
-            "Nexus 5 (127.0.0.1:PORT) runs Android before 7.0, which OmniBuild can't install apps on"
+    }
+
+    /// A banner as a device before Android 7.0 sends it: with no features,
+    /// so no `cmd`.
+    const LEGACY_BANNER: &[u8] =
+        b"device::ro.product.name=hammerhead;ro.product.model=Nexus 5;ro.product.device=hammerhead;\0";
+    const PM_INSTALL: &str = "shell:pm install -r /data/local/tmp/omni-build.apk";
+    const RM: &str = "shell:rm -f /data/local/tmp/omni-build.apk";
+    const SYNC_OKAY: &[u8] = b"OKAY\0\0\0\0";
+
+    /// The services a device was asked for, each with what was written to
+    /// it.
+    type Log = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+
+    /// What a device before Android 7.0 answers a service with: its
+    /// output, or with none, it hangs up.
+    type Answers = &'static [(&'static str, Option<&'static [u8]>)];
+
+    /// A device before Android 7.0, which takes writes of 4 KiB at most, as
+    /// those versions do, and answers each service as `answers` says, or
+    /// with nothing: a sync session once it's been ended. Logs each service
+    /// it answers in `log`, with what was written to it.
+    fn legacy_device(answers: Answers, log: &Log) -> impl Respond {
+        let log = Arc::clone(log);
+        service_device(4096, LEGACY_BANNER, move |service, input| {
+            let answer = answers
+                .iter()
+                .find(|(name, _)| *name == service)
+                .map_or(Some(&b""[..]), |(_, answer)| *answer);
+            let Some(output) = answer else {
+                return Answer::HangUp;
+            };
+            if service == "sync:" && !input.ends_with(b"QUIT\0\0\0\0") {
+                return Answer::Waiting;
+            }
+            log.lock()
+                .unwrap()
+                .push((service.to_owned(), input.to_vec()));
+            Answer::Done(output.to_vec())
+        })
+    }
+
+    /// The services the device was asked for.
+    fn services(log: &Log) -> Vec<String> {
+        log.lock()
+            .unwrap()
+            .iter()
+            .map(|(service, _)| service.clone())
+            .collect()
+    }
+
+    /// A sync request: its ID, the length of its data, and the data.
+    fn request(id: &[u8], data: &[u8]) -> Vec<u8> {
+        let len = u32::try_from(data.len()).unwrap();
+        [id, &len.to_le_bytes(), data].concat()
+    }
+
+    #[test]
+    fn installs_on_a_device_before_android_7() {
+        let (listener, port) = listening();
+        let log = Log::default();
+        serve(
+            listener,
+            legacy_device(
+                &[
+                    ("sync:", Some(SYNC_OKAY)),
+                    (
+                        PM_INSTALL,
+                        Some(b"\tpkg: /data/local/tmp/omni-build.apk\r\nSuccess\r\n"),
+                    ),
+                ],
+                &log,
+            ),
         );
+        let apk: Vec<u8> = (0..100_000u32).map(|n| n.to_le_bytes()[0]).collect();
+
+        let mut device = connect(Some(&format!("127.0.0.1:{port}")), &[]).unwrap();
+        device.install(&apk).unwrap();
+
+        assert_eq!(services(&log), ["sync:", PM_INSTALL, RM]);
+        // The file's path and mode, its contents in pieces of 64 KiB, its
+        // time, and the end of the session.
+        let expected = [
+            request(b"SEND", b"/data/local/tmp/omni-build.apk,33188"),
+            request(b"DATA", &apk[..65_536]),
+            request(b"DATA", &apk[65_536..]),
+            request(b"DONE", b""),
+            request(b"QUIT", b""),
+        ]
+        .concat();
+        assert_eq!(log.lock().unwrap()[0].1, expected);
+    }
+
+    #[test]
+    fn says_why_a_device_before_android_7_didnt_install_the_app() {
+        let install = |answers: Answers| {
+            let (listener, port) = listening();
+            let log = Log::default();
+            serve(listener, legacy_device(answers, &log));
+            let mut device = connect(Some(&format!("127.0.0.1:{port}")), &[]).unwrap();
+            let error = device.install(b"apk").err().unwrap();
+            let error = format!("{error:#}").replace(&port.to_string(), "PORT");
+            (error, services(&log))
+        };
+
+        assert_eq!(
+            install(&[("sync:", Some(b"FAIL\x17\0\0\0No space left on device"))]),
+            (
+                "couldn't install the app on Nexus 5 (127.0.0.1:PORT): the device couldn't save the app to /data/local/tmp/omni-build.apk: No space left on device".to_owned(),
+                vec!["sync:".to_owned()]
+            )
+        );
+        assert_eq!(
+            install(&[]).0,
+            "couldn't install the app on Nexus 5 (127.0.0.1:PORT): the device didn't take the app"
+        );
+        // The file goes, installed or not.
+        assert_eq!(
+            install(&[
+                ("sync:", Some(SYNC_OKAY)),
+                (
+                    PM_INSTALL,
+                    Some(b"\tpkg: /data/local/tmp/omni-build.apk\r\nFailure [INSTALL_FAILED_OLDER_SDK]\r\n")
+                ),
+            ]),
+            (
+                "Nexus 5 (127.0.0.1:PORT) didn't install the app: Failure [INSTALL_FAILED_OLDER_SDK]".to_owned(),
+                vec!["sync:".to_owned(), PM_INSTALL.to_owned(), RM.to_owned()]
+            )
+        );
+    }
+
+    #[test]
+    fn says_when_a_device_before_android_7_goes_away_during_an_install() {
+        // Hanging up on each service in turn.
+        let answers: [Answers; 3] = [
+            &[("sync:", None)],
+            &[("sync:", Some(SYNC_OKAY)), (PM_INSTALL, None)],
+            &[
+                ("sync:", Some(SYNC_OKAY)),
+                (PM_INSTALL, Some(b"Success\r\n")),
+                (RM, None),
+            ],
+        ];
+        for answers in answers {
+            let (listener, port) = listening();
+            serve(listener, legacy_device(answers, &Log::default()));
+            let mut device = connect(Some(&format!("127.0.0.1:{port}")), &[]).unwrap();
+
+            let error = device.install(b"apk").err().unwrap();
+
+            assert_eq!(
+                format!("{error:#}"),
+                format!(
+                    "couldn't install the app on Nexus 5 (127.0.0.1:{port}): the device closed the connection"
+                )
+            );
+        }
     }
 
     #[test]

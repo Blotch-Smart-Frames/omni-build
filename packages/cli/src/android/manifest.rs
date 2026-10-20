@@ -40,10 +40,6 @@ const LAUNCHER: &str = "android.intent.category.LAUNCHER";
 /// and later.
 const PERMISSION_REQUESTS: [&str; 2] = ["uses-permission", "uses-permission-sdk-23"];
 
-/// Android 7.0, the first to verify APK Signature Scheme v2. Earlier
-/// versions only verify a v1 (JAR) signature, which OmniBuild doesn't write
-/// for APKs.
-const MIN_SDK: u32 = 24;
 /// The highest version code Google Play accepts.
 const MAX_VERSION_CODE: u32 = 2_100_000_000;
 
@@ -91,6 +87,9 @@ pub trait Document {
 /// Where else the app's values go, besides the manifest.
 #[derive(Debug)]
 pub struct Changes {
+    /// The oldest Android version the app runs on, by API level: its
+    /// `minSdkVersion`, which decides how an APK is signed.
+    pub min_sdk: u32,
     /// The string resources the app's name goes in, where the shell's
     /// labels are ones rather than text in the manifest: the application's,
     /// and any the launcher shows in its place.
@@ -103,17 +102,16 @@ pub struct Changes {
 /// Gives the manifest the app's ID, name, version, build number and
 /// permissions.
 pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
-    let min_sdk = find(manifest, "uses-sdk", MIN_SDK_VERSION)
-        .and_then(|index| match manifest.attributes()[index].value {
-            Value::Int(value) => Some(value),
-            _ => None,
-        })
-        .unwrap_or(1);
-    if min_sdk < MIN_SDK {
-        bail!(
-            "the shell runs on Android versions before 7.0 (its minSdkVersion is {min_sdk}), which need a v1 signature. OmniBuild only signs with v2 and v3, for Android 7.0 (API 24) and later"
-        );
-    }
+    let min_sdk = match find(manifest, "uses-sdk", MIN_SDK_VERSION)
+        .map(|index| &manifest.attributes()[index].value)
+    {
+        Some(Value::Int(level)) => *level,
+        // A preview's codename, such as "Baklava": the app runs only on
+        // that preview, which is newer than every Android released.
+        Some(Value::String(_)) => u32::MAX,
+        // Without one, Android's default: every version.
+        _ => 1,
+    };
     if let Some(id) = &app.id {
         set_package(manifest, id)?;
     }
@@ -169,6 +167,7 @@ pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
         }
     }
     Ok(Changes {
+        min_sdk,
         name_resources,
         icon_resources,
     })
@@ -634,27 +633,28 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_shell_for_android_before_7() {
-        for uses_sdk in [
-            vec![("minSdkVersion", Some(super::MIN_SDK_VERSION), Int(21))],
+    fn reads_the_oldest_android_the_shell_runs_on() {
+        for (uses_sdk, min_sdk) in [
+            (
+                vec![("minSdkVersion", Some(super::MIN_SDK_VERSION), Int(21))],
+                21,
+            ),
             // A preview's codename.
-            vec![(
-                "minSdkVersion",
-                Some(super::MIN_SDK_VERSION),
-                Str("Baklava"),
-            )],
-            vec![],
+            (
+                vec![(
+                    "minSdkVersion",
+                    Some(super::MIN_SDK_VERSION),
+                    Str("Baklava"),
+                )],
+                u32::MAX,
+            ),
+            (vec![], 1),
         ] {
             let manifest = binary_xml(&[("uses-sdk", uses_sdk)]);
 
-            let error = rewritten(&manifest, &App::default()).unwrap_err();
+            let changes = rewritten(&manifest, &App::default()).unwrap().1;
 
-            assert!(
-                error
-                    .to_string()
-                    .starts_with("the shell runs on Android versions before 7.0"),
-                "{error}"
-            );
+            assert_eq!(changes.min_sdk, min_sdk);
         }
     }
 

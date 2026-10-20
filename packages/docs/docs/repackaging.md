@@ -72,7 +72,7 @@ Paths are relative to the config file. A field you leave out keeps the shell's v
 
 ## Signing
 
-An APK is signed with APK Signature Schemes v2 and v3, which Android 7.0 and later verify. An app bundle gets a JAR signature, which is how Google Play checks an upload before it signs the APKs it makes from the bundle with the app's own key. With no key given, OmniBuild uses a debug key it creates the first time, in `~/.omni-build/android-debug-key.pem`, the way the Android SDK keeps its own in `~/.android`. APKs signed with it install on devices and emulators. Google Play takes an app signed with your own key, which you give with `--signing-key`.
+An APK is signed with APK Signature Schemes v2 and v3, which Android 7.0 and later verify, as `apksigner` signs it. When the shell runs on earlier versions too, which verify only a v1 (JAR) signature, it gets one of those as well. An app bundle gets a JAR signature, which is how Google Play checks an upload before it signs the APKs it makes from the bundle with the app's own key. With no key given, OmniBuild uses a debug key it creates the first time, in `~/.omni-build/android-debug-key.pem`, the way the Android SDK keeps its own in `~/.android`. APKs signed with it install on devices and emulators. Google Play takes an app signed with your own key, which you give with `--signing-key`.
 
 ```sh
 export OMNI_BUILD_KEY_PASSWORD='a password'
@@ -98,7 +98,7 @@ An iOS app gets Apple's code signature, as `codesign` writes it: every file seal
 
 On Android:
 
-- A `minSdkVersion` of 24 (Android 7.0) or later. Earlier versions need a v1 signature, which OmniBuild doesn't write.
+- A `minSdkVersion` of 18 (Android 4.3) or later, for an APK. Earlier versions need a v1 signature made with SHA-1, which OmniBuild doesn't write. An app bundle can have any: Google Play signs the APKs it makes from it.
 - An application label and icon in its manifest. The icon's bitmaps are PNG or WebP, and an adaptive icon names a drawable for each of its layers, as Android Studio's templates make them.
 
 On iOS:

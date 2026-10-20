@@ -10,7 +10,10 @@ android {
 
     defaultConfig {
         applicationId = "dev.omnibuild.shell"
-        minSdk = 24
+        // Android 5.0, as low as the AndroidX libraries go, rather than the
+        // template's 24 (Android 7.0): an APK for earlier versions than 7.0
+        // needs a v1 signature, and installs another way.
+        minSdk = 21
         targetSdk = 37
         versionCode = 1
         versionName = "1.0.0"

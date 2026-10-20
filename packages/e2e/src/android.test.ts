@@ -189,6 +189,16 @@ describe('verify', () => {
   describe('an APK', () => {
     const buildTools = path.join('/sdk', 'build-tools');
 
+    /** apksigner's verdict on each scheme, for an APK it verifies. */
+    const schemes = (v1 = true) =>
+      [
+        'Verifies',
+        `Verified using v1 scheme (JAR signing): ${v1}`,
+        'Verified using v2 scheme (APK Signature Scheme v2): true',
+        'Verified using v3 scheme (APK Signature Scheme v3): true',
+        'Verified using v3.1 scheme (APK Signature Scheme v3.1): false',
+      ].join('\n');
+
     beforeEach(() => {
       existing.add(buildTools);
       vi.mocked(readdirSync).mockReturnValue([
@@ -206,7 +216,7 @@ describe('verify', () => {
       async (_, line) => {
         respond = (program) =>
           program === 'apksigner'
-            ? { stdout: `Verifies\nVerified using v2 scheme: true\n${line}\n` }
+            ? { stdout: `${schemes()}\n${line}\n` }
             : undefined;
 
         expect(await android.verify({ ...artifacts, app: 'app.apk' })).toEqual({
@@ -224,9 +234,22 @@ describe('verify', () => {
     );
 
     it('has no signer when apksigner names none', async () => {
+      respond = () => ({ stdout: schemes() });
+
       expect(await android.verify({ ...artifacts, app: 'app.apk' })).toEqual({
         signer: undefined,
       });
+    });
+
+    it.each([
+      ['without v1, which Android before 7.0 needs', schemes(false), 'v1'],
+      ['without any', 'Verifies\n', 'v1, v2, v3'],
+    ])('says which signatures it lacks, %s', async (_, stdout, missing) => {
+      respond = () => ({ stdout });
+
+      await expect(
+        android.verify({ ...artifacts, app: 'app.apk' }),
+      ).rejects.toThrow(`apksigner found no ${missing} signature in app.apk.`);
     });
 
     it.each([
@@ -508,7 +531,6 @@ describe('waitForDevice', () => {
 describe('runApp', () => {
   const device = { serial: 'emulator-5584', started: true };
   const appId = 'dev.omnibuild.e2e.app';
-  const activity = `${appId}/dev.omnibuild.shell.MainActivity`;
   const options = { ...artifacts, device, app: 'app.apk', appId };
 
   /**
@@ -517,9 +539,6 @@ describe('runApp', () => {
    */
   const logging = (dumps: string[], log = 'the whole log\n') => {
     respond = (_, args) => {
-      if (args.includes('resolve-activity')) {
-        return { stdout: `priority=0 preferredOrder=0\n${activity}\n` };
-      }
       if (args.includes('raw')) {
         return { stdout: dumps.shift() ?? '' };
       }
@@ -541,8 +560,7 @@ describe('runApp', () => {
       `${adb} uninstall ${appId}`,
       'omni-build install app.apk --device emulator-5584 --json',
       `${adb} logcat -c`,
-      `${adb} shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER ${appId}`,
-      `${adb} shell am start -W -n ${activity}`,
+      `${adb} shell monkey -p ${appId} -c android.intent.category.LAUNCHER --pct-syskeys 0 1`,
       `${adb} logcat -d -v raw -s OmniBuildE2E:I`,
       `${adb} logcat -d -v raw -s OmniBuildE2E:I`,
       `${adb} shell screencap -p /data/local/tmp/omni-build-e2e.png`,

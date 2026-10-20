@@ -50,6 +50,14 @@ const APK: Layout = Layout {
 /// The path field of a `TargetedNativeDirectory`, in an app bundle's
 /// `native.pb` (bundletool's `files.proto`).
 const NATIVE_PATH: u32 = 1;
+/// Android 7.0, the first to verify APK Signature Scheme v2. An APK for
+/// earlier versions needs a v1 (JAR) signature too, which is all they
+/// verify.
+const V2_MIN_SDK: u32 = 24;
+/// Android 4.3, the first to verify a v1 signature made with SHA-256, as
+/// OmniBuild's are. Earlier versions need SHA-1, which OmniBuild doesn't
+/// sign with: no Android the AndroidX libraries support is that old.
+const V1_MIN_SDK: u32 = 18;
 
 const AAB: Layout = Layout {
     manifest: "base/manifest/AndroidManifest.xml",
@@ -72,8 +80,8 @@ pub fn layout(entries: &[Entry]) -> Option<&'static Layout> {
 
 /// Repackages an APK or AAB shell, given its entries and their layout, into
 /// the app `app` describes, and signs it with `key`: an APK with schemes v2
-/// and v3, for devices, and an AAB with a JAR signature, as Google Play
-/// checks an upload.
+/// and v3, for devices, and v1 too if it runs on Android before 7.0, and an
+/// AAB with a JAR signature, as Google Play checks an upload.
 pub fn repackage(
     entries: Vec<Entry>,
     layout: &Layout,
@@ -94,6 +102,14 @@ pub fn repackage(
     let contents = entries[index].contents()?;
     let (manifest, changes) = rewrite_manifest(&contents, layout, app)
         .with_context(|| format!("couldn't rewrite the shell's {}", layout.manifest))?;
+    // Google Play signs the APKs it makes from an app bundle itself, for
+    // whichever versions the app runs on.
+    if !layout.bundle && changes.min_sdk < V1_MIN_SDK {
+        bail!(
+            "the shell runs on Android before 4.3 (its minSdkVersion is {}), whose v1 signatures need SHA-1: OmniBuild signs APKs for Android 4.3 (API 18) and later",
+            changes.min_sdk
+        );
+    }
     // Left as it was when nothing changed, rather than compressed again.
     if manifest != contents {
         entries[index] = entries[index].with_contents(&manifest);
@@ -108,10 +124,13 @@ pub fn repackage(
         add_payload(&mut entries, layout, payload)?;
     }
     if layout.bundle {
-        Ok(zip::write(&jar_signing::sign(entries, key)?).bytes)
-    } else {
-        Ok(signing::sign(&zip::write(&entries), key))
+        return Ok(zip::write(&jar_signing::sign_bundle(entries, key)?).bytes);
     }
+    // v1 first, so that v2 and v3, which sign the whole file, sign it too.
+    if changes.min_sdk < V2_MIN_SDK {
+        entries = jar_signing::sign_apk(entries, key)?;
+    }
+    Ok(signing::sign(&zip::write(&entries), key))
 }
 
 fn rewrite_manifest(contents: &[u8], layout: &Layout, app: &App) -> Result<(Vec<u8>, Changes)> {
@@ -324,6 +343,73 @@ mod tests {
         let app = repackage(&shell, &App::default(), &KEY).unwrap();
 
         assert_eq!(zip::read(&app).unwrap(), zip::read(SHELL).unwrap());
+    }
+
+    /// The shell, APK or AAB, with `min_sdk` as its minSdkVersion.
+    fn shell_for(shell: &[u8], min_sdk: u32) -> Vec<u8> {
+        let entries = zip::read(shell).unwrap();
+        let layout = layout(&entries).unwrap();
+        let contents = file(&entries, layout.manifest);
+        let mut manifest: Box<dyn Document> = if layout.bundle {
+            Box::new(ProtoXml::parse(&contents).unwrap())
+        } else {
+            Box::new(BinaryXml::parse(&contents).unwrap())
+        };
+        let index = manifest
+            .attributes()
+            .iter()
+            .position(|attribute| attribute.name == "minSdkVersion")
+            .unwrap();
+        manifest.set_int(index, min_sdk);
+        changed(shell, &[(layout.manifest, manifest.to_bytes())], &[])
+    }
+
+    #[test]
+    fn signs_an_apk_for_android_before_7_with_v1_too() {
+        let shell = shell_for(SHELL, 21);
+
+        let apk = repackage(&shell, &App::default(), &KEY).unwrap();
+
+        let entries = zip::read(&apk).unwrap();
+        let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
+        assert_eq!(
+            names[..3],
+            [
+                "META-INF/MANIFEST.MF",
+                "META-INF/CERT.SF",
+                "META-INF/CERT.RSA"
+            ]
+        );
+        assert_eq!(entries[3..], zip::read(&shell).unwrap());
+        let signature_file = String::from_utf8(file(&entries, "META-INF/CERT.SF")).unwrap();
+        assert!(signature_file.contains("\r\nX-Android-APK-Signed: 2, 3\r\n"));
+        // And v2 and v3 after it, over the whole file.
+        assert!(apk.windows(16).any(|window| window == b"APK Sig Block 42"));
+    }
+
+    #[test]
+    fn reports_an_entry_it_cant_sign_for_android_before_7() {
+        let mut entries = zip::read(&shell_for(SHELL, 21)).unwrap();
+        let mut corrupt = entry("assets/corrupt.bin", Method::Deflated, b"data");
+        corrupt.data = vec![0xff; 8];
+        entries.push(corrupt);
+        let layout = layout(&entries).unwrap();
+
+        let error = super::repackage(entries, layout, &App::default(), &KEY).unwrap_err();
+
+        assert_eq!(error.to_string(), "assets/corrupt.bin is corrupt");
+    }
+
+    #[test]
+    fn refuses_an_apk_for_android_before_4_3() {
+        let error = repackage(&shell_for(SHELL, 17), &App::default(), &KEY).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "the shell runs on Android before 4.3 (its minSdkVersion is 17), whose v1 signatures need SHA-1: OmniBuild signs APKs for Android 4.3 (API 18) and later"
+        );
+        // Google Play signs the APKs it makes from an app bundle itself.
+        repackage(&shell_for(SHELL_AAB, 17), &App::default(), &KEY).unwrap();
     }
 
     /// The contents of the entry `name`.

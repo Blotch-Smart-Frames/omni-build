@@ -17,7 +17,7 @@ omni-build install app.apk --device emulator-5556       # on one of several
 omni-build install app.apk --device 192.168.1.20:5555   # on a device on the network
 ```
 
-`install` sends an APK to a device over ADB, the protocol the Android SDK's `adb` speaks to devices, and has the device's package manager install it, as `adb install` does. Nothing else is installed or run: no Android SDK, no `adb`. The device runs Android 7.0 or later, as the apps OmniBuild signs need. An app with the same ID is updated, keeping its data, when it's signed with the same key.
+`install` sends an APK to a device over ADB, the protocol the Android SDK's `adb` speaks to devices, and has the device's package manager install it, as `adb install` does. Nothing else is installed or run: no Android SDK, no `adb`. From Android 7.0 on, the APK goes straight to the package manager. Earlier versions can't take it that way, so it's copied to `/data/local/tmp` first, installed from there and deleted, as `adb` does with them. An app with the same ID is updated, keeping its data, when it's signed with the same key.
 
 ## Finding the device
 
