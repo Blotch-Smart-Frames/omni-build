@@ -4,11 +4,12 @@
 //! the seal, `Info.plist` and the entitlements. The code nested in the app
 //! is signed the same way first, as bundles of their own, so the app's seal
 //! covers what they became, as Xcode signs them: each framework in its
-//! `Frameworks/`, with no entitlements, and then each app extension in its
-//! `PlugIns/`, with a profile and entitlements of its own.
+//! `Frameworks/`, with no entitlements, and then each app extension, in its
+//! `PlugIns/` or `Extensions/`, with a profile and entitlements of its own.
 
 use anyhow::{Context, Result, bail};
 
+use super::EXTENSION_FOLDERS;
 use super::code_resources::code_resources;
 use super::code_signature::Signer;
 use super::entitlements::Entitlements;
@@ -19,12 +20,9 @@ use crate::key::SigningKey;
 use crate::zip::{Entry, Method};
 
 const FRAMEWORKS: &str = "Frameworks/";
-/// Where iOS looks for app extensions, each `Name.appex/`.
-const PLUGINS: &str = "PlugIns/";
-/// Where else in a bundle iOS looks for code of its own: the extensions
-/// `ExtensionKit` loads, a watch app and App Clips, which OmniBuild doesn't
-/// sign yet.
-const OTHER_CODE: [&str; 3] = ["Extensions/", "Watch/", "AppClips/"];
+/// Where else in a bundle iOS looks for code of its own: a watch app and
+/// App Clips, which OmniBuild doesn't sign yet.
+const OTHER_CODE: [&str; 2] = ["Watch/", "AppClips/"];
 /// What a nested bundle's own folders would hold of code nested in it in
 /// turn, which would have to be signed before it.
 const NESTED_CODE: [&str; 2] = [".framework/", ".appex/"];
@@ -162,7 +160,8 @@ pub fn sign(
 }
 
 /// The code nested in the app in the folder `bundle`, which is signed
-/// before it: its frameworks, and then its app extensions, each a folder.
+/// before it: its frameworks, and then its app extensions, in both the
+/// folders they go in, each a folder.
 /// Refuses what OmniBuild can't sign, or seal: any other code, and symbolic
 /// links.
 fn nested_code(entries: &[Entry], bundle: &str) -> Result<(Vec<String>, Vec<String>)> {
@@ -176,8 +175,10 @@ fn nested_code(entries: &[Entry], bundle: &str) -> Result<(Vec<String>, Vec<Stri
         if let Some(framework) = nested_bundle(&entry.name, file, FRAMEWORKS, ".framework")? {
             frameworks.push(format!("{bundle}{FRAMEWORKS}{framework}/"));
         }
-        if let Some(extension) = nested_bundle(&entry.name, file, PLUGINS, ".appex")? {
-            extensions.push(format!("{bundle}{PLUGINS}{extension}/"));
+        for folder in EXTENSION_FOLDERS {
+            if let Some(extension) = nested_bundle(&entry.name, file, folder, ".appex")? {
+                extensions.push(format!("{bundle}{folder}{extension}/"));
+            }
         }
         if entry.attributes >> 16 & FILE_TYPE == SYMBOLIC_LINK {
             bail!(
@@ -358,7 +359,7 @@ mod tests {
         let signed = sign(shell.clone(), SIMULATOR, &info(&shell, SIMULATOR), None).unwrap();
 
         // What `codesign --sign -` wrote for the same app, signing its
-        // framework and its extension first.
+        // framework and its extensions first.
         let hash = |name: &str| sha256(&file(&signed, &format!("{SIMULATOR}{name}")));
         assert_eq!(
             hash("Frameworks/ShellKit.framework/ShellKit"),
@@ -377,12 +378,20 @@ mod tests {
             "7658aade53eacf49ded0e617f0291389e76888bffd7c199d50a94b46ff3f77dc"
         );
         assert_eq!(
+            hash("Extensions/ShellIntents.appex/ShellIntents"),
+            "4486f72b0c553be9c15e9d0d35b5ef2bc0358aa260e3447f4bb5d61e8ecd9687"
+        );
+        assert_eq!(
+            hash("Extensions/ShellIntents.appex/_CodeSignature/CodeResources"),
+            "2457e2567324ae0b2782bc3994aef4892eef6c5cc7c059a3e1181f0b56323ce0"
+        );
+        assert_eq!(
             hash("OmniBuildShell"),
-            "bb4cf5b7cf4bd5b6f29323ec0cda32a773f8fa511556fa46b04ee34a6796d7ff"
+            "8dc4e7e1077ad5e384cade7deeaedcace9a4d8c45135c33d1cc4e78d7569ae02"
         );
         assert_eq!(
             hash("_CodeSignature/CodeResources"),
-            "ce6b2584415252af06b34694852e39895f4509333a3076eab495aaa2e313a35e"
+            "fb4f5937ed25968b32fe67085980a0c664c90d47fc34042bd1ab002801e6ecba"
         );
         let names = |entries: &[Entry]| -> Vec<String> {
             entries.iter().map(|entry| entry.name.clone()).collect()
@@ -397,7 +406,7 @@ mod tests {
         let ad_hoc = sign(shell.clone(), DEVICE, &info(&shell, DEVICE), None).unwrap();
 
         let app = |name: &str| file(&ad_hoc, &format!("{DEVICE}{name}"));
-        // The framework's and the extension's, as codesign signs them, up
+        // The framework's and the extensions', as codesign signs them, up
         // to the end of their signatures. codesign pads each with what the
         // linker's signature left there, OmniBuild with zeros: nothing
         // covers the padding.
@@ -414,9 +423,15 @@ mod tests {
             "60676ed08a0c2d4ecee6b1e15feff304897d5127cf7859fe9f672193a1ccc619"
         );
         assert_eq!(extension_code[33_319..], [0; 9]);
+        let intents = app("Extensions/ShellIntents.appex/ShellIntents");
+        assert_eq!(
+            sha256(&intents[..33_313]),
+            "7dbc8e4902edcff1ccca086fbc055ad663d645fb472de8f35e42c56b32c1b441"
+        );
+        assert_eq!(intents[33_313..], [0; 15]);
         // Their seals, and the app's executable, up to the end of its
         // signature, and seal, as codesign signs the app around that
-        // framework and extension.
+        // framework and those extensions.
         let seal = "Frameworks/ShellKit.framework/_CodeSignature/CodeResources";
         assert_eq!(
             sha256(&app(seal)),
@@ -427,15 +442,21 @@ mod tests {
             sha256(&app(extension_seal)),
             "fe8436aba8da57b0e838863d3977e0f20252e335c54980436b47fa9ab0eabaf3"
         );
+        assert_eq!(
+            sha256(&app(
+                "Extensions/ShellIntents.appex/_CodeSignature/CodeResources"
+            )),
+            "b81a25462ebf381000f24bbf2fc2618c316c88a85feebbf40f3d77d39ce8b37d"
+        );
         let executable = app("OmniBuildShell");
         assert_eq!(
             sha256(&executable[..33_300]),
-            "0ed5251069d2f9acc877bcb7c8fed91ca3597638d9fb1b33d56e0100b372470c"
+            "b1e7b9abdce4d2afa81d8f703edcb4fac6b63e5b06f590a00b4d7c1c3b790bcd"
         );
         assert_eq!(executable[33_300..], [0; 12]);
         assert_eq!(
             sha256(&app("_CodeSignature/CodeResources")),
-            "428c9c735a59b6350ad70b712089f4933086b1acd0a0044c06af8004af8550e4"
+            "4edfb64094908380096ee2a13516b380bf3a0ee96a74677895d78ec789707c29"
         );
     }
 
@@ -461,9 +482,10 @@ mod tests {
         let seal = "Frameworks/ShellKit.framework/_CodeSignature/CodeResources";
         let extension = "PlugIns/ShellNotifications.appex/ShellNotifications";
         let extension_seal = "PlugIns/ShellNotifications.appex/_CodeSignature/CodeResources";
-        // codesign signing with the test identity, and the extension and the
-        // app with the entitlements the profile gives each, wrote the
-        // framework's and the extension's seals, and these code directories
+        let intents = "Extensions/ShellIntents.appex/ShellIntents";
+        // codesign signing with the test identity, and the extensions and
+        // the app with the entitlements the profile gives each, wrote the
+        // framework's and the extensions' seals, and these code directories
         // but for the hash of the first page. That page has the
         // load commands, which say how much room the signature has:
         // codesign leaves 16 KB more than it needs, OmniBuild none. A CMS
@@ -471,13 +493,15 @@ mod tests {
         // executable differs each time, and with it the app's seal, which
         // the app's code directory hashes in turn.
         assert_eq!(app(&signed, "embedded.mobileprovision"), PROFILE);
-        assert_eq!(
-            app(
-                &signed,
-                "PlugIns/ShellNotifications.appex/embedded.mobileprovision"
-            ),
-            PROFILE
-        );
+        for extension in [
+            "PlugIns/ShellNotifications.appex/",
+            "Extensions/ShellIntents.appex/",
+        ] {
+            assert_eq!(
+                app(&signed, &format!("{extension}embedded.mobileprovision")),
+                PROFILE
+            );
+        }
         assert_eq!(
             sha256(&app(&signed, seal)),
             "b1bbabcd35a08d9d16e15144633ab1a9ff54ffdefc49a9885235bf4c847615e7"
@@ -485,6 +509,13 @@ mod tests {
         assert_eq!(
             sha256(&app(&signed, extension_seal)),
             "b3e87bc4f5618828de99e2b6c47979b9c4810a58426b4d2373cb2cb6b81484ce"
+        );
+        assert_eq!(
+            sha256(&app(
+                &signed,
+                "Extensions/ShellIntents.appex/_CodeSignature/CodeResources"
+            )),
+            "f0ef23e2b0ac2897e4105e1d6d29ee4c092a4ec9da21f3d3dfff5b82610e0e5c"
         );
         let files: Vec<(String, Vec<u8>)> = signed
             .iter()
@@ -503,8 +534,8 @@ mod tests {
         );
         // Each with its LC_CODE_SIGNATURE where it is, and its first page's
         // hash after the 88-byte header, the identifier, and the special
-        // slots: 7 of the app's and the extension's, the third from last
-        // their seal's, and 3 of the framework's. The extension's seal is
+        // slots: 7 of the app's and each extension's, the third from last
+        // their seal's, and 3 of the framework's. The extensions' seals are
         // the same each time.
         let without = |executable: &[u8], load_command: usize, hashes: &[usize]| {
             let mut directory = code_directory(executable, load_command);
@@ -520,6 +551,10 @@ mod tests {
         assert_eq!(
             without(&app(&signed, extension), 784, &[351]),
             "9e67240f78e7b810c6be8d9ab374e42cb0a6daba21f26e15fa293e34540263ea"
+        );
+        assert_eq!(
+            without(&app(&signed, intents), 784, &[345]),
+            "4b6ee1211feb0b840209977b8efe24765274b08e4c0af49fab5fa7f156f694c9"
         );
         assert_eq!(
             without(
@@ -550,7 +585,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "none of the provisioning profiles includes dev.omnibuild.shell.ShellNotifications, as their App IDs say (ABCDE12345.dev.omnibuild.shell): give one that does with --profile"
+            "none of the provisioning profiles includes dev.omnibuild.shell.ShellIntents, as their App IDs say (ABCDE12345.dev.omnibuild.shell): give one that does with --profile"
         );
     }
 
@@ -573,7 +608,7 @@ mod tests {
         )
         .unwrap();
 
-        // The app's own App ID over the wildcard, which the extension has.
+        // The app's own App ID over the wildcard, which the extensions have.
         let embedded = |folder: &str| {
             file(
                 &signed,
@@ -582,6 +617,7 @@ mod tests {
         };
         assert_eq!(embedded(""), profiles[1].bytes);
         assert_eq!(embedded("PlugIns/ShellNotifications.appex/"), PROFILE);
+        assert_eq!(embedded("Extensions/ShellIntents.appex/"), PROFILE);
     }
 
     #[test]
@@ -603,7 +639,7 @@ mod tests {
                 &signed,
                 "OmniBuildShell.app/_CodeSignature/CodeResources"
             )),
-            "ce6b2584415252af06b34694852e39895f4509333a3076eab495aaa2e313a35e"
+            "fb4f5937ed25968b32fe67085980a0c664c90d47fc34042bd1ab002801e6ecba"
         );
         assert_eq!(signed.len(), shell.len() - 3);
     }
@@ -650,8 +686,20 @@ mod tests {
                 not_a_framework("OmniBuildShell.app/Watch/Watch.app/Watch"),
             ),
             (
+                code("OmniBuildShell.app/AppClips/Clip.app/Clip"),
+                not_a_framework("OmniBuildShell.app/AppClips/Clip.app/Clip"),
+            ),
+            (
                 code("OmniBuildShell.app/PlugIns/Share.bundle/Share"),
                 not_a_framework("OmniBuildShell.app/PlugIns/Share.bundle/Share"),
+            ),
+            (
+                code("OmniBuildShell.app/Extensions/Intents.bundle/Intents"),
+                not_a_framework("OmniBuildShell.app/Extensions/Intents.bundle/Intents"),
+            ),
+            (
+                code("OmniBuildShell.app/Extensions/ShellIntents.appex/PlugIns/A.appex/A"),
+                not_a_framework("OmniBuildShell.app/Extensions/ShellIntents.appex/PlugIns/A.appex/A"),
             ),
             (
                 code("OmniBuildShell.app/PlugIns/ShellNotifications.appex/Frameworks/A.framework/A"),

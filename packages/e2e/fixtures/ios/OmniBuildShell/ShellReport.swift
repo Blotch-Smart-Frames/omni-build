@@ -27,6 +27,9 @@ struct ShellReport: Encodable {
     /// The app extension's bundle ID, which iOS only installs the app with
     /// if it's under the app's.
     let extensionId: String?
+    /// The same for the ExtensionKit extension, which Xcode puts in the
+    /// app's Extensions/ rather than PlugIns/.
+    let intentsExtensionId: String?
 
 
     init(bundle: Bundle) {
@@ -44,13 +47,9 @@ struct ShellReport: Encodable {
             .flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
             .joined(separator: ", ")
         framework = ShellKit.name
-        extensionId = bundle.builtInPlugInsURL
-            .flatMap {
-                try? FileManager.default.contentsOfDirectory(
-                    at: $0, includingPropertiesForKeys: nil)
-            }?
-            .first { $0.pathExtension == "appex" }
-            .flatMap { Bundle(url: $0)?.bundleIdentifier }
+        extensionId = bundle.builtInPlugInsURL.flatMap(Self.extensionId(in:))
+        intentsExtensionId = Self.extensionId(
+            in: bundle.bundleURL.appendingPathComponent("Extensions"))
         version = info["CFBundleShortVersionString"] as? String
         build = info["CFBundleVersion"] as? String
         payload = bundle.url(forResource: "payload", withExtension: "txt")
@@ -72,6 +71,13 @@ struct ShellReport: Encodable {
             catalogIcon == fileIcon
             ? catalogIcon
             : "Assets.car: \(catalogIcon ?? "none"), PNGs: \(fileIcon ?? "none")"
+    }
+
+    /// The bundle ID of the first extension in `folder`.
+    static func extensionId(in folder: URL) -> String? {
+        (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil))?
+            .first { $0.pathExtension == "appex" }
+            .flatMap { Bundle(url: $0)?.bundleIdentifier }
     }
 
     /// The iPhone icon named `name` in the bundle's Assets.car, as CoreUI
