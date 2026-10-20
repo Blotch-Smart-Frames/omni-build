@@ -204,6 +204,66 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The npm packages a release will publish, packed from the build job's
+  # binaries without publishing them (see packages/release): the launcher,
+  # and one package per platform holding its binary. Packed once, on Linux,
+  # whose file modes npm keeps in the tarballs.
+  npm-pack:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w omni-build
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: omni-build-*
+          path: binaries
+      - run: node packages/release/src/cli.ts pack --binaries binaries --out npm-packages
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-packages
+          path: npm-packages
+          if-no-files-found: error
+          retention-days: 7
+
+  # `npm install omni-build` on each OS and CPU the build job builds for, from
+  # a registry on the runner that has the packed packages: npm has to install
+  # that machine's binary and no other, and both the command and the API a
+  # build tool imports have to run it. Node only: the check uses nothing
+  # else, so no `npm ci`.
+  npm-install:
+    name: npm-install (${{ matrix.runner }})
+    needs: npm-pack
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - macos-latest
+          - macos-15-intel
+          - ubuntu-24.04-arm
+          - ubuntu-latest
+          - windows-11-arm
+          - windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-packages
+          path: npm-packages
+      - run: node packages/release/src/cli.ts check --packages npm-packages
+
   # End to end, in the three stages OmniBuild is used in (see packages/e2e):
   #
   # 1. e2e-shell-*: the real Swift and Kotlin app shells in
@@ -450,6 +510,8 @@ jobs:
       - coverage
       - test
       - build
+      - npm-pack
+      - npm-install
       - e2e-shell-ios
       - e2e-shell-android
       - e2e-repackage
