@@ -51,15 +51,22 @@ const PROFILE = fileURLToPath(
   new URL('../app/OmniBuildE2E.mobileprovision', import.meta.url),
 );
 /**
- * A profile for the app's extension, whose ID is under the app's: the
- * app's profile is for the app's ID alone, as a profile without a wildcard
- * App ID is.
+ * A profile for each of the app's extensions, whose IDs are under the
+ * app's: the app's profile is for the app's ID alone, as a profile without
+ * a wildcard App ID is.
  */
 const EXTENSION_PROFILE = fileURLToPath(
   new URL('../app/ShellNotifications.mobileprovision', import.meta.url),
 );
-/** The app extension in the iOS shell, under the shell's ID and the app's. */
+const INTENTS_EXTENSION_PROFILE = fileURLToPath(
+  new URL('../app/ShellIntents.mobileprovision', import.meta.url),
+);
+/**
+ * The extensions in the iOS shell, under the shell's ID and the app's: an
+ * app extension in PlugIns/, and an ExtensionKit extension in Extensions/.
+ */
 const EXTENSION = 'ShellNotifications';
+const INTENTS_EXTENSION = 'ShellIntents';
 const SIGNER = 'OmniBuild E2E';
 const TEAM = 'OMNIBUILD0';
 /** The keystores' password, the iOS key's and the upload key's. */
@@ -211,17 +218,20 @@ export const expected = (
       urlSchemes: APP.urlSchemes.join(', '),
       extensionId: `${APP.id}.${EXTENSION}`,
       extensionApplicationIdentifier: `${TEAM}.${APP.id}.${EXTENSION}`,
+      intentsExtensionId: `${APP.id}.${INTENTS_EXTENSION}`,
+      intentsExtensionApplicationIdentifier: `${TEAM}.${APP.id}.${INTENTS_EXTENSION}`,
     };
   }
   // Signed ad hoc, as Xcode signs a simulator build, and its framework,
-  // which only loads with a signature of its own, too. Its extension's ID
-  // is under the app's, or the simulator wouldn't install it.
+  // which only loads with a signature of its own, too. Its extensions' IDs
+  // are under the app's, or the simulator wouldn't install it.
   return {
     ...values,
     cameraUsage,
     framework: SHELL.framework,
     urlSchemes: APP.urlSchemes.join(', '),
     extensionId: `${APP.id}.${EXTENSION}`,
+    intentsExtensionId: `${APP.id}.${INTENTS_EXTENSION}`,
     signer: 'ad hoc',
   };
 };
@@ -255,7 +265,7 @@ export const repackage = async ({
     let signing: string[] = [];
     if (extension === '.ipa') {
       // A build for devices has to be signed with a key and a profile, and
-      // its extension with one of its own.
+      // each extension with one of its own.
       signing = [
         '--signing-key',
         SIGNING_KEY,
@@ -263,6 +273,8 @@ export const repackage = async ({
         PROFILE,
         '--profile',
         EXTENSION_PROFILE,
+        '--profile',
+        INTENTS_EXTENSION_PROFILE,
       ];
     } else if (extension === '.aab') {
       // An app bundle is signed as Google Play takes one: with an upload

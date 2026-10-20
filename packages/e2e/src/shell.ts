@@ -3,7 +3,7 @@
  * report on launch. They're set in:
  *
  * - iOS: `fixtures/ios/OmniBuildShell.xcodeproj` (bundle ID, version, build,
- *   and the app extension's bundle ID) and `OmniBuildShell/Info.plist`
+ *   and the app extensions' bundle IDs) and `OmniBuildShell/Info.plist`
  *   (name, camera usage), which `en.lproj/InfoPlist.strings` translates
  *   into English
  * - Android: `fixtures/android/app/build.gradle.kts` (application ID,
@@ -35,6 +35,7 @@ export const SHELL = {
   cameraUsage: "The shell's camera.",
   framework: 'ShellKit',
   extensionId: 'dev.omnibuild.shell.ShellNotifications',
+  intentsExtensionId: 'dev.omnibuild.shell.ShellIntents',
 };
 
 /**

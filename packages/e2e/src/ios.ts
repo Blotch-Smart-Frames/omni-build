@@ -183,34 +183,33 @@ const verify: Platform['verify'] = ({ app, log }) =>
       ).stdout.match(
         /<key>application-identifier<\/key>\s*<string>(.*?)<\/string>/,
       )?.[1];
-    // The app's extension: its own ID, and what its profile allowed its
-    // signature.
-    const plugIns = path.join(bundle, 'PlugIns');
-    const extension = existsSync(plugIns)
-      ? readdirSync(plugIns).find((name) => name.endsWith('.appex'))
-      : undefined;
-    const extensionReport = extension
-      ? {
-          extensionId: JSON.parse(
-            (
-              await run(
-                'plutil',
-                [
-                  '-convert',
-                  'json',
-                  '-o',
-                  '-',
-                  path.join(plugIns, extension, 'Info.plist'),
-                ],
-                { log },
-              )
-            ).stdout,
-          ).CFBundleIdentifier,
-          extensionApplicationIdentifier: await entitlements(
-            path.join(plugIns, extension),
-          ),
-        }
-      : {};
+    // The extension in one of the app's folders for them: its own ID, and
+    // what its profile allowed its signature.
+    const extensionIn = async (folder: string) => {
+      const extension = existsSync(folder)
+        ? readdirSync(folder).find((name) => name.endsWith('.appex'))
+        : undefined;
+      if (!extension) {
+        return undefined;
+      }
+      const signed = path.join(folder, extension);
+      return {
+        id: JSON.parse(
+          (
+            await run(
+              'plutil',
+              ['-convert', 'json', '-o', '-', path.join(signed, 'Info.plist')],
+              { log },
+            )
+          ).stdout,
+        ).CFBundleIdentifier,
+        applicationIdentifier: await entitlements(signed),
+      };
+    };
+    // An app extension, and an ExtensionKit extension, which Xcode puts in
+    // a folder of its own.
+    const plugIn = await extensionIn(path.join(bundle, 'PlugIns'));
+    const intents = await extensionIn(path.join(bundle, 'Extensions'));
     // What iOS shows in English: the strings the app has in English, over
     // Info.plist's.
     const strings = path.join(bundle, 'en.lproj', 'InfoPlist.strings');
@@ -241,7 +240,10 @@ const verify: Platform['verify'] = ({ app, log }) =>
         )
           .flatMap((type) => type.CFBundleURLSchemes ?? [])
           .join(', '),
-        ...extensionReport,
+        extensionId: plugIn?.id,
+        extensionApplicationIdentifier: plugIn?.applicationIdentifier,
+        intentsExtensionId: intents?.id,
+        intentsExtensionApplicationIdentifier: intents?.applicationIdentifier,
       },
     };
   });

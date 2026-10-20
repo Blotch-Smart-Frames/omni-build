@@ -10,6 +10,7 @@
 		0B5E11000000000000000045 /* ShellKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0B5E11000000000000000040 /* ShellKit.framework */; };
 		0B5E11000000000000000047 /* ShellKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0B5E11000000000000000040 /* ShellKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		0B5E11000000000000000069 /* ShellNotifications.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0B5E11000000000000000060 /* ShellNotifications.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		0B5E11000000000000000089 /* ShellIntents.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 0B5E11000000000000000080 /* ShellIntents.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -26,6 +27,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 0B5E11000000000000000066;
 			remoteInfo = ShellNotifications;
+		};
+		0B5E11000000000000000087 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0B5E11000000000000000009 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0B5E11000000000000000086;
+			remoteInfo = ShellIntents;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -52,12 +60,24 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0B5E1100000000000000008A /* Embed ExtensionKit Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(EXTENSIONS_FOLDER_PATH)";
+			dstSubfolderSpec = 16;
+			files = (
+				0B5E11000000000000000089 /* ShellIntents.appex in Embed ExtensionKit Extensions */,
+			);
+			name = "Embed ExtensionKit Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		0B5E11000000000000000001 /* OmniBuildShell.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OmniBuildShell.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0B5E11000000000000000040 /* ShellKit.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ShellKit.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		0B5E11000000000000000060 /* ShellNotifications.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShellNotifications.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		0B5E11000000000000000080 /* ShellIntents.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = ShellIntents.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -74,6 +94,13 @@
 				Info.plist,
 			);
 			target = 0B5E11000000000000000066 /* ShellNotifications */;
+		};
+		0B5E11000000000000000082 /* Exceptions for "ShellIntents" folder in "ShellIntents" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 0B5E11000000000000000086 /* ShellIntents */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -97,6 +124,14 @@
 				0B5E11000000000000000062 /* Exceptions for "ShellNotifications" folder in "ShellNotifications" target */,
 			);
 			path = ShellNotifications;
+			sourceTree = "<group>";
+		};
+		0B5E11000000000000000081 /* ShellIntents */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				0B5E11000000000000000082 /* Exceptions for "ShellIntents" folder in "ShellIntents" target */,
+			);
+			path = ShellIntents;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -124,6 +159,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0B5E11000000000000000084 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -133,6 +175,7 @@
 				0B5E11000000000000000003 /* OmniBuildShell */,
 				0B5E11000000000000000041 /* ShellKit */,
 				0B5E11000000000000000061 /* ShellNotifications */,
+				0B5E11000000000000000081 /* ShellIntents */,
 				0B5E11000000000000000006 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -143,6 +186,7 @@
 				0B5E11000000000000000001 /* OmniBuildShell.app */,
 				0B5E11000000000000000040 /* ShellKit.framework */,
 				0B5E11000000000000000060 /* ShellNotifications.appex */,
+				0B5E11000000000000000080 /* ShellIntents.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -159,12 +203,14 @@
 				0B5E11000000000000000008 /* Resources */,
 				0B5E11000000000000000046 /* Embed Frameworks */,
 				0B5E1100000000000000006A /* Embed Foundation Extensions */,
+				0B5E1100000000000000008A /* Embed ExtensionKit Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				0B5E11000000000000000044 /* PBXTargetDependency */,
 				0B5E11000000000000000068 /* PBXTargetDependency */,
+				0B5E11000000000000000088 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				0B5E11000000000000000003 /* OmniBuildShell */,
@@ -212,6 +258,25 @@
 			productReference = 0B5E11000000000000000060 /* ShellNotifications.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		0B5E11000000000000000086 /* ShellIntents */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0B5E11000000000000000090 /* Build configuration list for PBXNativeTarget "ShellIntents" */;
+			buildPhases = (
+				0B5E11000000000000000083 /* Sources */,
+				0B5E11000000000000000084 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0B5E11000000000000000081 /* ShellIntents */,
+			);
+			name = ShellIntents;
+			productName = ShellIntents;
+			productReference = 0B5E11000000000000000080 /* ShellIntents.appex */;
+			productType = "com.apple.product-type.extensionkit-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -229,6 +294,9 @@
 						CreatedOnToolsVersion = 27.0;
 					};
 					0B5E11000000000000000066 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					0B5E11000000000000000086 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -250,6 +318,7 @@
 				0B5E11000000000000000010 /* OmniBuildShell */,
 				0B5E11000000000000000048 /* ShellKit */,
 				0B5E11000000000000000066 /* ShellNotifications */,
+				0B5E11000000000000000086 /* ShellIntents */,
 			);
 		};
 /* End PBXProject section */
@@ -286,6 +355,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0B5E11000000000000000083 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -298,6 +374,11 @@
 			isa = PBXTargetDependency;
 			target = 0B5E11000000000000000066 /* ShellNotifications */;
 			targetProxy = 0B5E11000000000000000067 /* PBXContainerItemProxy */;
+		};
+		0B5E11000000000000000088 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0B5E11000000000000000086 /* ShellIntents */;
+			targetProxy = 0B5E11000000000000000087 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -478,6 +559,50 @@
 			};
 			name = Release;
 		};
+		0B5E11000000000000000091 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ShellIntents/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ShellIntents;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.omnibuild.shell.ShellIntents;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		0B5E11000000000000000092 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ShellIntents/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ShellIntents;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.omnibuild.shell.ShellIntents;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -513,6 +638,15 @@
 			buildConfigurations = (
 				0B5E11000000000000000071 /* Debug */,
 				0B5E11000000000000000072 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0B5E11000000000000000090 /* Build configuration list for PBXNativeTarget "ShellIntents" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0B5E11000000000000000091 /* Debug */,
+				0B5E11000000000000000092 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

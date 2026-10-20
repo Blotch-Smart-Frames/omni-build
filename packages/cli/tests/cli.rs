@@ -196,8 +196,10 @@ fn repackage_signs_with_the_key_it_is_given() {
             SHELL_IPA,
             "--signing-key",
             IDENTITY,
-            // One for the app and one for its extension, as they'd be
+            // One for the app and one for each extension, as they'd be
             // without a wildcard App ID.
+            "--profile",
+            PROFILE,
             "--profile",
             PROFILE,
             "--profile",
@@ -223,6 +225,10 @@ fn repackage_signs_with_the_key_it_is_given() {
     assert!(contains(
         &ipa,
         b"Payload/OmniBuildShell.app/PlugIns/ShellNotifications.appex/embedded.mobileprovision"
+    ));
+    assert!(contains(
+        &ipa,
+        b"Payload/OmniBuildShell.app/Extensions/ShellIntents.appex/embedded.mobileprovision"
     ));
 }
 

@@ -34,6 +34,12 @@ use signing::Identity;
 /// Simulator, and of one for devices.
 const SIMULATOR: &str = "iPhoneSimulator";
 const DEVICES: &str = "iPhoneOS";
+/// Where in its bundle an app has its extensions, each `Name.appex/`: app
+/// extensions in `PlugIns/`, and in `Extensions/` those `ExtensionKit`
+/// loads, as Xcode's templates now make many (App Intents, Background
+/// Assets). iOS treats both alike as far as repackaging goes: each needs
+/// an ID under the app's, and a signature of its own.
+const EXTENSION_FOLDERS: [&str; 2] = ["PlugIns/", "Extensions/"];
 
 /// The folder in the shell's entries that holds the app, if it's an iOS
 /// app: `Name.app/`, in a zipped `.app`, or `Payload/Name.app/`, in an
@@ -114,27 +120,28 @@ pub fn repackage(
     Ok(zip::write(&entries).bytes)
 }
 
-/// Gives each app extension in the shell's `PlugIns/` an ID under the
-/// app's, in place of the shell's (`shell_id`), and the app's version and
-/// build number.
+/// Gives each app extension in the shell an ID under the app's, in place
+/// of the shell's (`shell_id`), and the app's version and build number.
 fn rewrite_extensions(
     entries: &mut [Entry],
     bundle: &str,
     shell_id: &str,
     app: &App,
 ) -> Result<()> {
-    let plugins = format!("{bundle}PlugIns/");
     for entry in entries.iter_mut() {
-        let is_extension = entry
-            .name
-            .strip_prefix(&plugins)
-            .and_then(|file| file.strip_suffix("/Info.plist"))
-            .is_some_and(|extension| {
-                !extension.contains('/')
-                    && Path::new(extension)
-                        .extension()
-                        .is_some_and(|kind| kind == "appex")
-            });
+        let is_extension = EXTENSION_FOLDERS.iter().any(|folder| {
+            entry
+                .name
+                .strip_prefix(bundle)
+                .and_then(|file| file.strip_prefix(folder))
+                .and_then(|file| file.strip_suffix("/Info.plist"))
+                .is_some_and(|extension| {
+                    !extension.contains('/')
+                        && Path::new(extension)
+                            .extension()
+                            .is_some_and(|kind| kind == "appex")
+                })
+        });
         if !is_extension {
             continue;
         }
@@ -269,6 +276,8 @@ pub mod tests {
     /// The shell's English translation of its Info.plist.
     const STRINGS: &str = "OmniBuildShell.app/en.lproj/InfoPlist.strings";
     const EXTENSION_INFO: &str = "OmniBuildShell.app/PlugIns/ShellNotifications.appex/Info.plist";
+    /// The `ExtensionKit` extension's, in Extensions/.
+    const INTENTS_INFO: &str = "OmniBuildShell.app/Extensions/ShellIntents.appex/Info.plist";
     /// The colour of every pixel of the app's icon in the tests.
     const ICON: Rgba<u8> = Rgba([0xe8, 0x59, 0x0c, 0xff]);
 
@@ -379,12 +388,13 @@ pub mod tests {
 
         let app = zip::read(&app).unwrap();
         // Signed ad hoc, as Xcode signed it: its executable, the
-        // framework's and the extension's, and the app's seal, which covers
+        // framework's and the extensions', and the app's seal, which covers
         // theirs. Their seals are the same as Xcode's, for the same files.
         let signed = [
             EXECUTABLE,
             "OmniBuildShell.app/Frameworks/ShellKit.framework/ShellKit",
             "OmniBuildShell.app/PlugIns/ShellNotifications.appex/ShellNotifications",
+            "OmniBuildShell.app/Extensions/ShellIntents.appex/ShellIntents",
             "OmniBuildShell.app/_CodeSignature/CodeResources",
         ];
         for (entry, shell_entry) in app.iter().zip(&shell) {
@@ -467,17 +477,20 @@ pub mod tests {
         };
         assert_eq!(names(&entries)[..shell.len()], names(&shell));
         assert_eq!(mode(file(&entries, EXECUTABLE)), 0o100_755);
-        // The extension's ID under the app's, and the app's version and
-        // build.
-        let extension =
-            InfoPlist::parse(&file(&entries, EXTENSION_INFO).contents().unwrap()).unwrap();
-        let mut expected =
-            InfoPlist::parse(&file(&shell, EXTENSION_INFO).contents().unwrap()).unwrap();
-        expected
-            .rewrite_extension("dev.omnibuild.shell", &app)
-            .unwrap();
-        assert_eq!(extension, expected);
-        assert_eq!(extension.id(), Some("dev.example.app.ShellNotifications"));
+        // Each extension's ID under the app's, and the app's version and
+        // build, in PlugIns/ and in Extensions/ alike.
+        for (info, id) in [
+            (EXTENSION_INFO, "dev.example.app.ShellNotifications"),
+            (INTENTS_INFO, "dev.example.app.ShellIntents"),
+        ] {
+            let extension = InfoPlist::parse(&file(&entries, info).contents().unwrap()).unwrap();
+            let mut expected = InfoPlist::parse(&file(&shell, info).contents().unwrap()).unwrap();
+            expected
+                .rewrite_extension("dev.omnibuild.shell", &app)
+                .unwrap();
+            assert_eq!(extension, expected);
+            assert_eq!(extension.id(), Some(id));
+        }
     }
 
     #[test]
@@ -652,7 +665,7 @@ pub mod tests {
         );
         let executable = file(&entries, "Payload/OmniBuildShell.app/OmniBuildShell");
         assert_eq!(mode(executable), 0o100_755);
-        // The signatures' entitlements are for the app's own ID, and the
+        // The signatures' entitlements are for the app's own ID, and each
         // extension's, which is under it.
         let entitlements = |executable: &str| {
             let executable = file(&entries, executable).contents().unwrap();
@@ -667,17 +680,23 @@ pub mod tests {
             entitlements("Payload/OmniBuildShell.app/OmniBuildShell")
                 .contains("<string>ABCDE12345.dev.example.app</string>")
         );
-        let extension = "Payload/OmniBuildShell.app/PlugIns/ShellNotifications.appex/";
-        assert!(
-            entitlements(&format!("{extension}ShellNotifications"))
-                .contains("<string>ABCDE12345.dev.example.app.ShellNotifications</string>")
-        );
-        assert_eq!(
-            file(&entries, &format!("{extension}embedded.mobileprovision"))
-                .contents()
-                .unwrap(),
-            PROFILE
-        );
+        for (extension, name) in [
+            ("PlugIns/ShellNotifications.appex/", "ShellNotifications"),
+            ("Extensions/ShellIntents.appex/", "ShellIntents"),
+        ] {
+            let extension = format!("Payload/OmniBuildShell.app/{extension}");
+            assert!(
+                entitlements(&format!("{extension}{name}")).contains(&format!(
+                    "<string>ABCDE12345.dev.example.app.{name}</string>"
+                ))
+            );
+            assert_eq!(
+                file(&entries, &format!("{extension}embedded.mobileprovision"))
+                    .contents()
+                    .unwrap(),
+                PROFILE
+            );
+        }
     }
 
     #[test]
@@ -748,6 +767,18 @@ pub mod tests {
                     ..App::default()
                 },
                 "couldn't rewrite the shell's OmniBuildShell.app/PlugIns/ShellNotifications.appex/Info.plist: its bundle ID (CFBundleIdentifier) isn't under the app's, dev.omnibuild.shell",
+            ),
+            (
+                with_file(&Entry::new(
+                    INTENTS_INFO,
+                    Method::Stored,
+                    b"<plist><dict><key>CFBundleIdentifier</key><string>dev.omnibuild.shellIntents</string></dict></plist>",
+                )),
+                App {
+                    id: Some("dev.example.app".to_owned()),
+                    ..App::default()
+                },
+                "couldn't rewrite the shell's OmniBuildShell.app/Extensions/ShellIntents.appex/Info.plist: its bundle ID (CFBundleIdentifier) isn't under the app's, dev.omnibuild.shell",
             ),
         ];
 

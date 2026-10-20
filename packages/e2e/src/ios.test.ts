@@ -503,38 +503,39 @@ describe('verify', () => {
     });
   });
 
-  it("reads its app extension's own ID and what its profile allowed it", async () => {
+  it("reads each extension's own ID and what its profile allowed it", async () => {
     const bundle = path.join(unzipped, 'Payload', 'OmniBuildShell.app');
-    const plugIns = path.join(bundle, 'PlugIns');
-    const extension = path.join(plugIns, 'ShellNotifications.appex');
-    vi.mocked(readdirSync).mockImplementation(
-      (folder) =>
-        (folder === plugIns
-          ? ['README', 'ShellNotifications.appex']
-          : ['OmniBuildShell.app']) as never,
+    // An app extension, and an ExtensionKit extension in a folder of its
+    // own.
+    const folders: Record<string, string[]> = {
+      [path.join(bundle, 'PlugIns')]: ['README', 'ShellNotifications.appex'],
+      [path.join(bundle, 'Extensions')]: ['ShellIntents.appex'],
+    };
+    const extensions = Object.entries(folders).map(([folder, names]) =>
+      path.join(folder, names.at(-1) ?? ''),
     );
-    vi.mocked(existsSync).mockImplementation((file) => file === plugIns);
+    vi.mocked(readdirSync).mockImplementation(
+      (folder) => (folders[String(folder)] ?? ['OmniBuildShell.app']) as never,
+    );
+    vi.mocked(existsSync).mockImplementation((file) => String(file) in folders);
     vi.mocked(readFileSync).mockReturnValue('the payload');
     const identifier = (id: string) =>
       `<dict><key>application-identifier</key><string>${id}</string></dict>`;
+    /** The ID of the bundle a command names, by the extension it names. */
+    const id = (args: string[]) => {
+      const extension = extensions.find((folder) =>
+        args.some((arg) => arg.startsWith(folder)),
+      );
+      return extension
+        ? `dev.omnibuild.e2e.app.${path.basename(extension, '.appex')}`
+        : 'dev.omnibuild.e2e.app';
+    };
     respond = (program, args) => {
       if (program === 'plutil') {
-        return {
-          stdout: JSON.stringify({
-            CFBundleIdentifier: args.includes(
-              path.join(extension, 'Info.plist'),
-            )
-              ? 'dev.omnibuild.e2e.app.ShellNotifications'
-              : 'dev.omnibuild.e2e.app',
-          }),
-        };
+        return { stdout: JSON.stringify({ CFBundleIdentifier: id(args) }) };
       }
       if (args.includes('--entitlements')) {
-        return {
-          stdout: args.includes(extension)
-            ? identifier('TEAM.dev.omnibuild.e2e.app.ShellNotifications')
-            : identifier('TEAM.dev.omnibuild.e2e.app'),
-        };
+        return { stdout: identifier(`TEAM.${id(args)}`) };
       }
       return args[0] === '--display' ? { output: '' } : undefined;
     };
@@ -547,6 +548,9 @@ describe('verify', () => {
       extensionId: 'dev.omnibuild.e2e.app.ShellNotifications',
       extensionApplicationIdentifier:
         'TEAM.dev.omnibuild.e2e.app.ShellNotifications',
+      intentsExtensionId: 'dev.omnibuild.e2e.app.ShellIntents',
+      intentsExtensionApplicationIdentifier:
+        'TEAM.dev.omnibuild.e2e.app.ShellIntents',
     });
   });
 

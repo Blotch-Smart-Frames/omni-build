@@ -115,6 +115,7 @@ describe('expected', () => {
       framework: SHELL.framework,
       urlSchemes: 'omnibuild-e2e',
       extensionId: 'dev.omnibuild.e2e.app.ShellNotifications',
+      intentsExtensionId: 'dev.omnibuild.e2e.app.ShellIntents',
       signer: 'ad hoc',
     });
   });
@@ -129,6 +130,9 @@ describe('expected', () => {
       extensionId: 'dev.omnibuild.e2e.app.ShellNotifications',
       extensionApplicationIdentifier:
         'OMNIBUILD0.dev.omnibuild.e2e.app.ShellNotifications',
+      intentsExtensionId: 'dev.omnibuild.e2e.app.ShellIntents',
+      intentsExtensionApplicationIdentifier:
+        'OMNIBUILD0.dev.omnibuild.e2e.app.ShellIntents',
     });
   });
 });
@@ -166,7 +170,7 @@ describe('repackage', () => {
     );
   });
 
-  it("signs an iOS build for devices with the test key, and the app's and its extension's profiles", async () => {
+  it("signs an iOS build for devices with the test key, and the app's and its extensions' profiles", async () => {
     const shell = path.join('shells', 'OmniBuildShell.ipa');
     onPlatform('darwin');
 
@@ -189,6 +193,10 @@ describe('repackage', () => {
         '--profile',
         fileURLToPath(
           new URL('../app/ShellNotifications.mobileprovision', import.meta.url),
+        ),
+        '--profile',
+        fileURLToPath(
+          new URL('../app/ShellIntents.mobileprovision', import.meta.url),
         ),
         '--out',
         app,
