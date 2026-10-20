@@ -20,6 +20,7 @@
   "ignoreRegExpList": ["/\\b\\w+n&rsquo;t\\b/g"],
   "words": [
     "apktool",
+    "appclip",
     "atrule",
     "Cascadia",
     "Consolas",

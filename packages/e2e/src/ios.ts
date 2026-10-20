@@ -173,6 +173,8 @@ const verify: Platform['verify'] = ({ app, log }) =>
         )
       ).stdout,
     );
+    // The entitlements in a bundle's signature, and the first App ID in
+    // one of them, which is a string or an array of them.
     const entitlements = async (signed: string) =>
       (
         await run(
@@ -180,19 +182,23 @@ const verify: Platform['verify'] = ({ app, log }) =>
           ['--display', '--entitlements', '-', '--xml', signed],
           { log },
         )
-      ).stdout.match(
-        /<key>application-identifier<\/key>\s*<string>(.*?)<\/string>/,
+      ).stdout;
+    const appId = (xml: string, key: string) =>
+      xml.match(
+        new RegExp(
+          `<key>${key.replaceAll('.', '\\.')}</key>\\s*(?:<array>\\s*)?<string>(.*?)</string>`,
+        ),
       )?.[1];
-    // The extension in one of the app's folders for them: its own ID, and
-    // what its profile allowed its signature.
-    const extensionIn = async (folder: string) => {
-      const extension = existsSync(folder)
-        ? readdirSync(folder).find((name) => name.endsWith('.appex'))
+    // The bundle of this kind in one of the app's folders for them: its
+    // own ID, and the entitlements its profile allowed its signature.
+    const bundleIn = async (folder: string, kind: string) => {
+      const nested = existsSync(folder)
+        ? readdirSync(folder).find((name) => name.endsWith(kind))
         : undefined;
-      if (!extension) {
+      if (!nested) {
         return undefined;
       }
-      const signed = path.join(folder, extension);
+      const signed = path.join(folder, nested);
       return {
         id: JSON.parse(
           (
@@ -203,13 +209,15 @@ const verify: Platform['verify'] = ({ app, log }) =>
             )
           ).stdout,
         ).CFBundleIdentifier,
-        applicationIdentifier: await entitlements(signed),
+        entitlements: await entitlements(signed),
       };
     };
-    // An app extension, and an ExtensionKit extension, which Xcode puts in
-    // a folder of its own.
-    const plugIn = await extensionIn(path.join(bundle, 'PlugIns'));
-    const intents = await extensionIn(path.join(bundle, 'Extensions'));
+    // An app extension, an ExtensionKit extension, which Xcode puts in a
+    // folder of its own, and an App Clip.
+    const plugIn = await bundleIn(path.join(bundle, 'PlugIns'), '.appex');
+    const intents = await bundleIn(path.join(bundle, 'Extensions'), '.appex');
+    const appClip = await bundleIn(path.join(bundle, 'AppClips'), '.app');
+    const own = await entitlements(bundle);
     // What iOS shows in English: the strings the app has in English, over
     // Info.plist's.
     const strings = path.join(bundle, 'en.lproj', 'InfoPlist.strings');
@@ -234,16 +242,36 @@ const verify: Platform['verify'] = ({ app, log }) =>
         version: info.CFBundleShortVersionString,
         build: info.CFBundleVersion,
         payload: readFileSync(path.join(bundle, 'payload.txt'), 'utf8'),
-        applicationIdentifier: await entitlements(bundle),
+        applicationIdentifier: appId(own, 'application-identifier'),
         urlSchemes: (
           (info.CFBundleURLTypes ?? []) as { CFBundleURLSchemes?: string[] }[]
         )
           .flatMap((type) => type.CFBundleURLSchemes ?? [])
           .join(', '),
         extensionId: plugIn?.id,
-        extensionApplicationIdentifier: plugIn?.applicationIdentifier,
+        extensionApplicationIdentifier: appId(
+          plugIn?.entitlements ?? '',
+          'application-identifier',
+        ),
         intentsExtensionId: intents?.id,
-        intentsExtensionApplicationIdentifier: intents?.applicationIdentifier,
+        intentsExtensionApplicationIdentifier: appId(
+          intents?.entitlements ?? '',
+          'application-identifier',
+        ),
+        appClipId: appClip?.id,
+        appClipApplicationIdentifier: appId(
+          appClip?.entitlements ?? '',
+          'application-identifier',
+        ),
+        // The App Clip and the app each name the other.
+        appClipParent: appId(
+          appClip?.entitlements ?? '',
+          'com.apple.developer.parent-application-identifiers',
+        ),
+        associatedAppClip: appId(
+          own,
+          'com.apple.developer.associated-appclip-app-identifiers',
+        ),
       },
     };
   });

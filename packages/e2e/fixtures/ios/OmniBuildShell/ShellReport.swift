@@ -30,6 +30,8 @@ struct ShellReport: Encodable {
     /// The same for the ExtensionKit extension, which Xcode puts in the
     /// app's Extensions/ rather than PlugIns/.
     let intentsExtensionId: String?
+    /// The App Clip's bundle ID, which Apple requires under the app's.
+    let appClipId: String?
 
 
     init(bundle: Bundle) {
@@ -47,9 +49,11 @@ struct ShellReport: Encodable {
             .flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
             .joined(separator: ", ")
         framework = ShellKit.name
-        extensionId = bundle.builtInPlugInsURL.flatMap(Self.extensionId(in:))
-        intentsExtensionId = Self.extensionId(
-            in: bundle.bundleURL.appendingPathComponent("Extensions"))
+        extensionId = bundle.builtInPlugInsURL.flatMap { Self.bundleId(in: $0, kind: "appex") }
+        intentsExtensionId = Self.bundleId(
+            in: bundle.bundleURL.appendingPathComponent("Extensions"), kind: "appex")
+        appClipId = Self.bundleId(
+            in: bundle.bundleURL.appendingPathComponent("AppClips"), kind: "app")
         version = info["CFBundleShortVersionString"] as? String
         build = info["CFBundleVersion"] as? String
         payload = bundle.url(forResource: "payload", withExtension: "txt")
@@ -73,10 +77,11 @@ struct ShellReport: Encodable {
             : "Assets.car: \(catalogIcon ?? "none"), PNGs: \(fileIcon ?? "none")"
     }
 
-    /// The bundle ID of the first extension in `folder`.
-    static func extensionId(in folder: URL) -> String? {
+    /// The bundle ID of the first bundle of this kind (`appex`, `app`) in
+    /// `folder`.
+    static func bundleId(in folder: URL, kind: String) -> String? {
         (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil))?
-            .first { $0.pathExtension == "appex" }
+            .first { $0.pathExtension == kind }
             .flatMap { Bundle(url: $0)?.bundleIdentifier }
     }
 

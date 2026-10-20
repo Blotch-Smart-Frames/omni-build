@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 
 use plist::{Dictionary, Value};
 
-/// The entitlements OmniBuild signs with, which are strings and booleans.
-/// In order of their keys, which is the order DER needs.
+/// The entitlements OmniBuild signs with, which are strings, booleans and
+/// arrays of strings. In order of their keys, which is the order DER needs.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Entitlements(BTreeMap<String, Entitlement>);
 
@@ -16,6 +16,8 @@ pub struct Entitlements(BTreeMap<String, Entitlement>);
 pub enum Entitlement {
     String(String),
     Boolean(bool),
+    /// Such as the App IDs an App Clip and its app name each other by.
+    Strings(Vec<String>),
 }
 
 impl Entitlements {
@@ -37,6 +39,9 @@ impl Entitlements {
                 let value = match value {
                     Entitlement::String(string) => Value::String(string.clone()),
                     Entitlement::Boolean(boolean) => Value::Boolean(*boolean),
+                    Entitlement::Strings(strings) => {
+                        Value::Array(strings.iter().cloned().map(Value::String).collect())
+                    }
                 };
                 (key.clone(), value)
             })
@@ -62,6 +67,14 @@ impl Entitlements {
                     Entitlement::Boolean(boolean) => {
                         der(BOOLEAN, &[if *boolean { 0xff } else { 0 }])
                     }
+                    // A sequence of its strings, as codesign writes one.
+                    Entitlement::Strings(strings) => der(
+                        SEQUENCE,
+                        &strings
+                            .iter()
+                            .flat_map(|string| der(UTF8_STRING, string.as_bytes()))
+                            .collect::<Vec<u8>>(),
+                    ),
                 };
                 der(
                     SEQUENCE,
@@ -161,6 +174,69 @@ pub mod tests {
                 "656c6c30310c23636f6d2e6170706c652e646576656c6f7065722e7465616d2d",
                 "6964656e7469666965720c0a4142434445313233343530130c0e6765742d7461",
                 "736b2d616c6c6f770101ff"
+            ))
+        );
+    }
+
+    #[test]
+    fn writes_arrays_as_codesign_does() {
+        // An App Clip's, and arrays of two strings and of none.
+        let mut entitlements = Entitlements::default();
+        entitlements.insert(
+            "application-identifier",
+            Entitlement::String("ABCDE12345.dev.omnibuild.shell.Clip".to_owned()),
+        );
+        entitlements.insert(
+            "com.apple.developer.on-demand-install-capable",
+            Entitlement::Boolean(true),
+        );
+        entitlements.insert(
+            "com.apple.developer.parent-application-identifiers",
+            Entitlement::Strings(vec!["ABCDE12345.dev.omnibuild.shell".to_owned()]),
+        );
+        entitlements.insert(
+            "z.two",
+            Entitlement::Strings(vec!["a".to_owned(), "b".to_owned()]),
+        );
+        entitlements.insert("z.zero", Entitlement::Strings(Vec::new()));
+
+        // What codesign wrote for the same entitlements, given as a file.
+        assert_eq!(
+            String::from_utf8(entitlements.xml()).unwrap(),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>application-identifier</key>
+	<string>ABCDE12345.dev.omnibuild.shell.Clip</string>
+	<key>com.apple.developer.on-demand-install-capable</key>
+	<true/>
+	<key>com.apple.developer.parent-application-identifiers</key>
+	<array>
+		<string>ABCDE12345.dev.omnibuild.shell</string>
+	</array>
+	<key>z.two</key>
+	<array>
+		<string>a</string>
+		<string>b</string>
+	</array>
+	<key>z.zero</key>
+	<array/>
+</dict>
+</plist>
+"#
+        );
+        assert_eq!(
+            entitlements.der(),
+            hex(concat!(
+                "7081ee020101b081e8303d0c166170706c69636174696f6e2d6964656e746966",
+                "6965720c23414243444531323334352e6465762e6f6d6e696275696c642e7368",
+                "656c6c2e436c697030320c2d636f6d2e6170706c652e646576656c6f7065722e",
+                "6f6e2d64656d616e642d696e7374616c6c2d63617061626c650101ff30560c32",
+                "636f6d2e6170706c652e646576656c6f7065722e706172656e742d6170706c69",
+                "636174696f6e2d6964656e7469666965727330200c1e41424344453132333435",
+                "2e6465762e6f6d6e696275696c642e7368656c6c300f0c057a2e74776f30060c",
+                "01610c0162300a0c067a2e7a65726f3000"
             ))
         );
     }
