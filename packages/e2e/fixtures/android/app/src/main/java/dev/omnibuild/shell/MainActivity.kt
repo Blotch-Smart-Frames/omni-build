@@ -19,7 +19,7 @@ import android.widget.TextView
 class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val report = ShellReport.read(this)
+        val report = ShellReport.read(this, openedWith = intent?.dataString)
         // The harness reads this line from logcat. The log rather than a
         // file, because a release build isn't debuggable, so `adb shell
         // run-as` can't read the app's private files.

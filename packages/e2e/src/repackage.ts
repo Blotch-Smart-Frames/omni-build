@@ -24,11 +24,18 @@ const APP: {
   build: number;
   /** The app's payload folder, relative to app.json. */
   payload: string;
+  urlSchemes: string[];
   android: { permissions: string[]; abis: string[] };
   ios: { usageDescriptions: { NSCameraUsageDescription: string } };
 } = JSON.parse(readFileSync(APP_CONFIG, 'utf8'));
 /** The colour of every pixel of the app's icon, `app/icon.png`. */
 const APP_ICON = '#E8590C';
+/**
+ * The link the tests open each Android app with, which only the app's own
+ * URL scheme leads to it. iOS asks its user before it opens an app's link,
+ * which no one is there to answer, so the iOS apps report their schemes.
+ */
+export const OPEN_URL = `${APP.urlSchemes[0]}://report`;
 /**
  * What an iOS build for devices is signed with: a key with a self-signed
  * certificate, in a keystore as Keychain Access exports one, and a
@@ -178,6 +185,7 @@ export const expected = (
         .sort()
         .join(', '),
       abis: [...APP.android.abis].sort().join(', '),
+      openedWith: OPEN_URL,
       // An app bundle is signed with the upload key omni-build created for
       // it, and an APK with the debug key it creates and signs with when
       // it's given no key: only omni-build could have made either.
@@ -200,6 +208,7 @@ export const expected = (
       cameraUsage,
       signer: SIGNER,
       applicationIdentifier: `${TEAM}.${APP.id}`,
+      urlSchemes: APP.urlSchemes.join(', '),
       extensionId: `${APP.id}.${EXTENSION}`,
       extensionApplicationIdentifier: `${TEAM}.${APP.id}.${EXTENSION}`,
     };
@@ -211,6 +220,7 @@ export const expected = (
     ...values,
     cameraUsage,
     framework: SHELL.framework,
+    urlSchemes: APP.urlSchemes.join(', '),
     extensionId: `${APP.id}.${EXTENSION}`,
     signer: 'ad hoc',
   };

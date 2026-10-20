@@ -16,7 +16,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { Artifacts, Platform } from './run.ts';
 import { type RunOptions, poll, run } from './process.ts';
-import { omniBuild, toolchainFree } from './repackage.ts';
+import { OPEN_URL, omniBuild, toolchainFree } from './repackage.ts';
 
 const PROJECT = fileURLToPath(new URL('../fixtures/android/', import.meta.url));
 const BUILD_DIR = fileURLToPath(new URL('../build/', import.meta.url));
@@ -419,22 +419,20 @@ const runApp: Platform<Started, Device>['runApp'] = async ({
     await onDevice(['install', app]);
   }
   await onDevice(['logcat', '-c'], { allowFailure: true });
-  // The launcher activity, as a launcher starts it. monkey finds it from the
-  // application ID on every Android version: `cmd`, which names it, is
-  // Android 7.0 and later, and `am start` won't start a launcher activity
-  // by its intent alone. Its one event is the launch: with system keys
-  // among the events it may send, monkey gives up on an emulator, which
-  // has none.
+  // Through the app's link, as a browser opens it, which only the intent
+  // filter OmniBuild gave the launcher activity for the app's URL scheme
+  // leads to. Named by the application ID too, so that no other app that
+  // took the scheme gets it.
   await onDevice([
     'shell',
-    'monkey',
-    '-p',
+    'am',
+    'start',
+    '-W',
+    '-a',
+    'android.intent.action.VIEW',
+    '-d',
+    OPEN_URL,
     appId,
-    '-c',
-    'android.intent.category.LAUNCHER',
-    '--pct-syskeys',
-    '0',
-    '1',
   ]);
 
   const saveLogcat = async () => {

@@ -19,7 +19,8 @@ import java.util.zip.ZipFile
 object ShellReport {
     const val LOG_TAG = "OmniBuildE2E"
 
-    fun read(context: Context): JSONObject {
+    /** `openedWith` is the link the app was opened with, if it was. */
+    fun read(context: Context, openedWith: String?): JSONObject {
         val packageManager = context.packageManager
         @Suppress("DEPRECATION") // The flags overload is API 33 and up.
         val packageInfo = packageManager.getPackageInfo(
@@ -47,6 +48,9 @@ object ShellReport {
             .put("permissions", packageInfo.requestedPermissions?.sorted()?.joinToString() ?: "")
             // The ABIs the APK has native libraries for: its lib/ folders.
             .put("abis", abis(context))
+            // Only an intent filter for the app's URL scheme leads its link
+            // here.
+            .put("openedWith", openedWith ?: JSONObject.NULL)
     }
 
     private fun launcherLabel(context: Context): String {

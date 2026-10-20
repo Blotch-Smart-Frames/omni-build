@@ -85,15 +85,26 @@ impl StringPool {
         (!reader.overrun()).then_some(string)
     }
 
-    /// Adds a string at the end, and returns its index.
     /// The index of the first string equal to `value`, if the pool has one.
     pub fn find(&self, value: &str) -> Option<u32> {
         (0..u32_of(self.offsets.len())).find(|&index| self.get(index).as_deref() == Some(value))
     }
 
+    /// Adds a string at the end, and returns its index.
     pub fn add(&mut self, value: &str) -> u32 {
         let index = u32_of(self.offsets.len());
-        self.offsets.push(u32_of(self.strings.len()));
+        self.insert(index, value);
+        index
+    }
+
+    /// Adds a string at `index`, which moves the strings from there on up
+    /// one: whatever refers to them by index has to follow. Its bytes go at
+    /// the end, so those of every other string stay where they are. A
+    /// styled string is among the first, with its style at the same index,
+    /// so `index` comes after them: binary XML's pools have none.
+    pub fn insert(&mut self, index: u32, value: &str) {
+        self.offsets
+            .insert(offset(index), u32_of(self.strings.len()));
         let units = value.encode_utf16().count();
         if self.flags & UTF8 == 0 {
             self.strings.extend(encode_length(units, 0x8000, 2));
@@ -107,7 +118,6 @@ impl StringPool {
             self.strings.push(0);
         }
         self.flags &= !SORTED;
-        index
     }
 
     /// The pool as a chunk.
@@ -253,6 +263,21 @@ pub mod tests {
             assert_eq!(pool.get(1).as_deref(), Some(long.as_str()));
             assert_eq!(pool.get(2).as_deref(), Some(""));
             assert_eq!(pool.flags & SORTED, 0);
+        }
+    }
+
+    #[test]
+    fn inserts_a_string_before_others() {
+        for flags in [0, UTF8] {
+            let mut pool = empty(flags);
+            pool.add("first");
+            pool.add("second");
+
+            pool.insert(1, "between");
+
+            let (pool, _) = StringPool::parse(&pool.to_bytes()).unwrap();
+            let strings: Vec<String> = (0..3).map(|index| pool.get(index).unwrap()).collect();
+            assert_eq!(strings, ["first", "between", "second"]);
         }
     }
 

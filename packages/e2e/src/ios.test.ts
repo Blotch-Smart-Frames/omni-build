@@ -442,6 +442,10 @@ describe('verify', () => {
       CFBundleName: 'OmniBuildShell',
       CFBundleShortVersionString: '2.5.0',
       CFBundleVersion: '42',
+      CFBundleURLTypes: [
+        { CFBundleURLSchemes: ['first', 'second'] },
+        { CFBundleURLName: 'no schemes' },
+      ],
     };
     let display = { CFBundleDisplayName: 'OmniBuild E2E' };
     respond = (program, args) => {
@@ -478,6 +482,7 @@ describe('verify', () => {
         build: '42',
         payload: 'the payload',
         applicationIdentifier: 'TEAM.dev.omnibuild.e2e.app',
+        urlSchemes: 'first, second',
       },
     });
     expect(commands().slice(0, 5)).toEqual([

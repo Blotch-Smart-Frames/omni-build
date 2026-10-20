@@ -236,6 +236,11 @@ const verify: Platform['verify'] = ({ app, log }) =>
         build: info.CFBundleVersion,
         payload: readFileSync(path.join(bundle, 'payload.txt'), 'utf8'),
         applicationIdentifier: await entitlements(bundle),
+        urlSchemes: (
+          (info.CFBundleURLTypes ?? []) as { CFBundleURLSchemes?: string[] }[]
+        )
+          .flatMap((type) => type.CFBundleURLSchemes ?? [])
+          .join(', '),
         ...extensionReport,
       },
     };

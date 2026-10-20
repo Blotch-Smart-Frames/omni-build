@@ -7,9 +7,9 @@
 //! in that order, so everything else is encoded as it was. Adding or
 //! removing an element writes the tree and reads it again.
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
-use super::manifest::{Attribute, Document, Value};
+use super::manifest::{Attribute, Document, Element, Value};
 use super::protobuf::{self, Field, Wire};
 
 // Field numbers in Resources.proto.
@@ -138,18 +138,61 @@ fn elements(node: &[u8]) -> usize {
     count
 }
 
-/// A document that was read, with `change` made to its root element's
-/// fields.
-fn change_root(data: &[u8], change: &mut dyn FnMut(&mut Vec<Field>)) -> ProtoXml {
-    let mut fields = protobuf::decode(data).expect(READ);
+/// A document that was read, with `change` made to the fields of its
+/// element `target`, by its place in document order: the root is 0.
+fn change_element(data: &[u8], target: usize, change: &mut dyn FnMut(&mut Vec<Field>)) -> ProtoXml {
+    let node = change_node(data, &mut 0, target, change);
+    ProtoXml::parse(&node).expect(READ)
+}
+
+/// `change_element` for a node's tree, counting elements from `count`.
+fn change_node(
+    node: &[u8],
+    count: &mut usize,
+    target: usize,
+    change: &mut dyn FnMut(&mut Vec<Field>),
+) -> Vec<u8> {
+    let mut fields = protobuf::decode(node).expect(READ);
     for field in &mut fields {
         if let (NODE_ELEMENT, Wire::Bytes(element)) = (field.number, &mut field.value) {
+            let place = *count;
+            *count += 1;
             let mut element_fields = protobuf::decode(element).expect(READ);
-            change(&mut element_fields);
+            // Its children first, counted as they were, then the change.
+            for child in &mut element_fields {
+                if let (ELEMENT_CHILD, Wire::Bytes(child)) = (child.number, &mut child.value) {
+                    *child = change_node(child, count, target, change);
+                }
+            }
+            if place == target {
+                change(&mut element_fields);
+            }
             *element = protobuf::encode(&element_fields);
         }
     }
-    ProtoXml::parse(&protobuf::encode(&fields)).expect(READ)
+    protobuf::encode(&fields)
+}
+
+/// `element` and the elements in it as an `XmlNode`, its attributes in
+/// order of their resource IDs, as aapt2 writes them: plain strings, with
+/// no compiled item.
+fn encode_element(element: &Element) -> Vec<u8> {
+    let mut attributes = element.attributes.clone();
+    attributes.sort_by_key(|&(_, id, _)| id);
+    let mut fields = vec![Field::bytes(ELEMENT_NAME, element.name)];
+    for (name, id, value) in attributes {
+        let attribute = protobuf::encode(&[
+            Field::bytes(ATTRIBUTE_NAMESPACE, ANDROID),
+            Field::bytes(ATTRIBUTE_NAME, name),
+            Field::bytes(ATTRIBUTE_VALUE, value),
+            Field::varint(ATTRIBUTE_RESOURCE_ID, u64::from(id)),
+        ]);
+        fields.push(Field::bytes(ELEMENT_ATTRIBUTE, attribute));
+    }
+    for child in &element.children {
+        fields.push(Field::bytes(ELEMENT_CHILD, encode_element(child)));
+    }
+    protobuf::encode(&[Field::bytes(NODE_ELEMENT, protobuf::encode(&fields))])
 }
 
 impl Document for ProtoXml {
@@ -168,7 +211,7 @@ impl Document for ProtoXml {
     }
 
     fn remove_children(&mut self, name: &str, remove: &dyn Fn(&[&Attribute]) -> bool) {
-        *self = change_root(&self.to_bytes(), &mut |root| {
+        *self = change_element(&self.to_bytes(), 0, &mut |root| {
             // The root is element 0, and each child's elements follow it.
             let mut node = 1;
             let mut kept = Vec::with_capacity(root.len());
@@ -194,26 +237,14 @@ impl Document for ProtoXml {
         });
     }
 
-    fn add_child(
-        &mut self,
-        name: &str,
-        (attribute, resource_id): (&str, u32),
-        value: &str,
-    ) -> Result<()> {
-        // A plain string, as aapt2 writes one: no compiled item.
-        let attribute = protobuf::encode(&[
-            Field::bytes(ATTRIBUTE_NAMESPACE, ANDROID),
-            Field::bytes(ATTRIBUTE_NAME, attribute),
-            Field::bytes(ATTRIBUTE_VALUE, value),
-            Field::varint(ATTRIBUTE_RESOURCE_ID, u64::from(resource_id)),
-        ]);
-        let element = protobuf::encode(&[
-            Field::bytes(ELEMENT_NAME, name),
-            Field::bytes(ELEMENT_ATTRIBUTE, attribute),
-        ]);
-        let child = protobuf::encode(&[Field::bytes(NODE_ELEMENT, element)]);
-        *self = change_root(&self.to_bytes(), &mut |root| {
-            root.push(Field::bytes(ELEMENT_CHILD, child.clone()));
+    fn add_element(&mut self, parent: usize, element: &Element) -> Result<()> {
+        if parent >= elements(&self.data) {
+            bail!("it has no element to add one to");
+        }
+        let child = encode_element(element);
+        // The parent's last child.
+        *self = change_element(&self.to_bytes(), parent, &mut |parent| {
+            parent.push(Field::bytes(ELEMENT_CHILD, child.clone()));
         });
         Ok(())
     }
@@ -248,8 +279,9 @@ impl Document for ProtoXml {
 #[cfg(test)]
 pub mod tests {
     use super::ProtoXml;
+    use crate::android::binary_xml::tests::url_filter;
     use crate::android::binary_xml::tests::{named, names, texts};
-    use crate::android::manifest::{Document, Value};
+    use crate::android::manifest::{Document, Element, Value};
     use crate::android::protobuf::{Field, encode};
     use crate::zip;
 
@@ -275,10 +307,13 @@ pub mod tests {
         xml.remove_children("uses-permission", &named("android.permission.CAMERA"));
         // Only the root's children: the launcher activity's action stays.
         xml.remove_children("action", &|_| true);
-        xml.add_child(
-            "uses-permission",
-            ("name", 0x0101_0003),
-            "android.permission.VIBRATE",
+        xml.add_element(
+            0,
+            &Element::with(
+                "uses-permission",
+                ("name", 0x0101_0003),
+                "android.permission.VIBRATE",
+            ),
         )
         .unwrap();
 
@@ -305,6 +340,71 @@ pub mod tests {
         // the request for it, the application, the activity, its intent
         // filter, action and category, and the provider: then the new one.
         assert_eq!(added.node, 11);
+    }
+
+    #[test]
+    fn adds_elements_to_any_element() {
+        let mut xml = ProtoXml::parse(&shell_manifest()).unwrap();
+        let activity = xml
+            .attributes()
+            .iter()
+            .find(|attribute| attribute.element == "activity")
+            .unwrap()
+            .node;
+
+        xml.add_element(activity, &url_filter("myapp")).unwrap();
+
+        let mut xml = ProtoXml::parse(&xml.to_bytes()).unwrap();
+        let data: Vec<(&str, Option<u32>, &Value)> = xml
+            .attributes()
+            .iter()
+            .filter(|attribute| attribute.element == "data")
+            .map(|attribute| {
+                (
+                    attribute.name.as_str(),
+                    attribute.resource_id,
+                    &attribute.value,
+                )
+            })
+            .collect();
+        // In order of their resource IDs.
+        assert_eq!(
+            data,
+            [
+                (
+                    "scheme",
+                    Some(0x0101_0027),
+                    &Value::String("myapp".to_owned())
+                ),
+                (
+                    "host",
+                    Some(0x0101_0028),
+                    &Value::String("report".to_owned())
+                ),
+            ]
+        );
+        // The activity's last child: after its own intent filter's action
+        // and category, and before the provider.
+        let node = |element: &str, value: &str| {
+            xml.attributes()
+                .iter()
+                .find(|attribute| {
+                    attribute.element == element
+                        && attribute.value == Value::String(value.to_owned())
+                })
+                .unwrap()
+                .node
+        };
+        assert!(
+            node("category", "android.intent.category.LAUNCHER")
+                < node("action", "android.intent.action.VIEW")
+        );
+        assert_eq!(
+            xml.add_element(99, &url_filter("x"))
+                .unwrap_err()
+                .to_string(),
+            "it has no element to add one to"
+        );
     }
 
     #[test]
