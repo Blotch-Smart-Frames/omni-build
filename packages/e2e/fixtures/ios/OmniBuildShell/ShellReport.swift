@@ -32,6 +32,10 @@ struct ShellReport: Encodable {
     let intentsExtensionId: String?
     /// The App Clip's bundle ID, which Apple requires under the app's.
     let appClipId: String?
+    /// The watch app's bundle ID, and the app it pairs with, which should
+    /// be this one.
+    let watchAppId: String?
+    let watchCompanion: String?
 
 
     init(bundle: Bundle) {
@@ -54,6 +58,10 @@ struct ShellReport: Encodable {
             in: bundle.bundleURL.appendingPathComponent("Extensions"), kind: "appex")
         appClipId = Self.bundleId(
             in: bundle.bundleURL.appendingPathComponent("AppClips"), kind: "app")
+        let watchApp = Self.bundle(
+            in: bundle.bundleURL.appendingPathComponent("Watch"), kind: "app")
+        watchAppId = watchApp?.bundleIdentifier
+        watchCompanion = watchApp?.infoDictionary?["WKCompanionAppBundleIdentifier"] as? String
         version = info["CFBundleShortVersionString"] as? String
         build = info["CFBundleVersion"] as? String
         payload = bundle.url(forResource: "payload", withExtension: "txt")
@@ -77,12 +85,16 @@ struct ShellReport: Encodable {
             : "Assets.car: \(catalogIcon ?? "none"), PNGs: \(fileIcon ?? "none")"
     }
 
-    /// The bundle ID of the first bundle of this kind (`appex`, `app`) in
-    /// `folder`.
-    static func bundleId(in folder: URL, kind: String) -> String? {
+    /// The first bundle of this kind (`appex`, `app`) in `folder`.
+    static func bundle(in folder: URL, kind: String) -> Bundle? {
         (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil))?
             .first { $0.pathExtension == kind }
-            .flatMap { Bundle(url: $0)?.bundleIdentifier }
+            .flatMap { Bundle(url: $0) }
+    }
+
+    /// Its bundle ID.
+    static func bundleId(in folder: URL, kind: String) -> String? {
+        bundle(in: folder, kind: kind)?.bundleIdentifier
     }
 
     /// The iPhone icon named `name` in the bundle's Assets.car, as CoreUI

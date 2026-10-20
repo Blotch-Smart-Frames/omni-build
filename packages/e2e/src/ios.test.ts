@@ -130,8 +130,8 @@ describe('build', () => {
     const zip = path.join('out', 'OmniBuildShell.zip');
     const ipa = path.join('out', 'OmniBuildShell.ipa');
     expect(commands()).toEqual([
-      `${xcodebuild} -sdk iphonesimulator -destination generic/platform=iOS Simulator -derivedDataPath ${derivedData}`,
-      `${xcodebuild} -sdk iphoneos -destination generic/platform=iOS -derivedDataPath ${derivedData} CODE_SIGNING_ALLOWED=NO OTHER_LDFLAGS=-Wl,-adhoc_codesign`,
+      `${xcodebuild} -destination generic/platform=iOS Simulator -derivedDataPath ${derivedData}`,
+      `${xcodebuild} -destination generic/platform=iOS -derivedDataPath ${derivedData} CODE_SIGNING_ALLOWED=NO OTHER_LDFLAGS=-Wl,-adhoc_codesign`,
       `ditto -c -k --keepParent ${simulator} ${zip}`,
       `ditto ${device} ${path.join(payload, 'OmniBuildShell.app')}`,
       `ditto -c -k --keepParent ${payload} ${ipa}`,
@@ -506,11 +506,12 @@ describe('verify', () => {
   it("reads each nested bundle's own ID and what its profile allowed it", async () => {
     const bundle = path.join(unzipped, 'Payload', 'OmniBuildShell.app');
     // An app extension, an ExtensionKit extension in a folder of its own,
-    // and an App Clip.
+    // an App Clip and a watch app.
     const folders: Record<string, string[]> = {
       [path.join(bundle, 'PlugIns')]: ['README', 'ShellNotifications.appex'],
       [path.join(bundle, 'Extensions')]: ['ShellIntents.appex'],
       [path.join(bundle, 'AppClips')]: ['ShellClip.app'],
+      [path.join(bundle, 'Watch')]: ['ShellWatch.app'],
     };
     const nested = Object.entries(folders).map(([folder, names]) =>
       path.join(folder, names.at(-1) ?? ''),
@@ -542,7 +543,15 @@ describe('verify', () => {
     };
     respond = (program, args) => {
       if (program === 'plutil') {
-        return { stdout: JSON.stringify({ CFBundleIdentifier: id(args) }) };
+        return {
+          stdout: JSON.stringify({
+            CFBundleIdentifier: id(args),
+            // Only a watch app names the app it pairs with.
+            ...(id(args).endsWith('ShellWatch') && {
+              WKCompanionAppBundleIdentifier: 'dev.omnibuild.e2e.app',
+            }),
+          }),
+        };
       }
       if (args.includes('--entitlements')) {
         return { stdout: entitlements(id(args)) };
@@ -565,6 +574,9 @@ describe('verify', () => {
       appClipApplicationIdentifier: clip,
       appClipParent: 'TEAM.dev.omnibuild.e2e.app',
       associatedAppClip: clip,
+      watchAppId: 'dev.omnibuild.e2e.app.ShellWatch',
+      watchCompanion: 'dev.omnibuild.e2e.app',
+      watchAppApplicationIdentifier: 'TEAM.dev.omnibuild.e2e.app.ShellWatch',
     });
   });
 

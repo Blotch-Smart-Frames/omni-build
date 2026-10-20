@@ -1,7 +1,9 @@
 //! Mach-O executables, as far as signing them goes. An iOS app's
 //! executable is a 64-bit Mach-O file for one architecture, or, for the
 //! Simulator, a universal file with one for each, which are each signed on
-//! their own.
+//! their own. A watch app's, for devices, is universal too, with a 32-bit
+//! file for `arm64_32` (64-bit code with 32-bit pointers, which Apple
+//! Watches since Series 4 run) beside one for `arm64`.
 //!
 //! The signature is the last thing in the file, at the end of the
 //! `__LINKEDIT` segment, where the `LC_CODE_SIGNATURE` load command points.
@@ -16,22 +18,82 @@ use anyhow::{Context, Result, bail};
 
 use crate::bytes::Reader;
 
+const MH_MAGIC: u32 = 0xfeed_face;
 const MH_MAGIC_64: u32 = 0xfeed_facf;
 /// A universal file's header is big-endian.
 const FAT_MAGIC: u32 = 0xcafe_babe;
-/// The header of a 64-bit Mach-O file, which the load commands follow.
-const HEADER_SIZE: usize = 32;
 /// A universal file's header, and the size of each architecture's entry.
 const FAT_HEADER_SIZE: usize = 8;
 const FAT_ARCH_SIZE: usize = 20;
+const LC_SEGMENT: u32 = 0x1;
 const LC_SEGMENT_64: u32 = 0x19;
 const LC_CODE_SIGNATURE: u32 = 0x1d;
+/// The OS and its version the code is for, and the older command for
+/// watchOS alone, each with the earliest version it runs on, as
+/// `major << 16 | minor << 8 | patch`: in the first after its platform, in
+/// the second first.
+const LC_BUILD_VERSION: u32 = 0x32;
+const LC_VERSION_MIN_WATCHOS: u32 = 0x30;
+/// codesign signs `arm64_32` code for watchOS before 12 with SHA-1 hashes
+/// as well as SHA-256 ones, and so every architecture in the same file, as
+/// measured with Xcode 27.1's for each version from watchOS 4. OmniBuild
+/// doesn't write SHA-1 hashes yet.
+const SHA256_ONLY_WATCHOS: u32 = 12 << 16;
 const CPU_TYPE_ARM64: u32 = 0x0100_000c;
-/// Where a segment load command has its virtual size, file offset and file
-/// size.
-const SEGMENT_VM_SIZE: usize = 32;
-const SEGMENT_FILE_OFFSET: usize = 40;
-const SEGMENT_FILE_SIZE: usize = 48;
+const CPU_TYPE_ARM64_32: u32 = 0x0200_000c;
+
+/// Where a Mach-O file of each width has what signing reads and changes:
+/// the size of its header, which the load commands follow, and the kind
+/// of its segment load commands, whose virtual size, file offset and file
+/// size follow their name and virtual address, each a word of that width.
+struct Layout {
+    header_size: usize,
+    segment: u32,
+    /// Bytes in a word, 4 or 8.
+    word: usize,
+}
+
+const MACHO_32: Layout = Layout {
+    header_size: 28,
+    segment: LC_SEGMENT,
+    word: 4,
+};
+const MACHO_64: Layout = Layout {
+    header_size: 32,
+    segment: LC_SEGMENT_64,
+    word: 8,
+};
+
+impl Layout {
+    /// Where a segment load command has its virtual size, after its kind,
+    /// size, name and virtual address.
+    fn vm_size(&self) -> usize {
+        24 + self.word
+    }
+
+    fn file_offset(&self) -> usize {
+        24 + 2 * self.word
+    }
+
+    fn file_size(&self) -> usize {
+        24 + 3 * self.word
+    }
+
+    /// The word at `at`.
+    fn read(&self, macho: &[u8], at: usize) -> u64 {
+        let mut reader = Reader::at(macho, at);
+        if self.word == 4 {
+            u64::from(reader.u32())
+        } else {
+            reader.u64()
+        }
+    }
+
+    /// Writes `value` as the word at `at`.
+    fn write(&self, macho: &mut [u8], at: usize, value: u64) {
+        macho[at..at + self.word].copy_from_slice(&value.to_le_bytes()[..self.word]);
+    }
+}
 /// codesign leaves room for a signature 8 bytes longer than the one it
 /// writes, padded to a multiple of 16 bytes, as measured signing a library
 /// under identifiers of every length from 1 to 39.
@@ -110,27 +172,36 @@ fn sign_universal(executable: &[u8], sign: &impl Fn(&Code) -> Vec<u8>) -> Result
 /// One architecture's Mach-O file, signed.
 fn sign_architecture(macho: &[u8], sign: &impl Fn(&Code) -> Vec<u8>) -> Result<Vec<u8>> {
     let mut header = Reader::at(macho, 0);
-    if header.u32() != MH_MAGIC_64 {
-        bail!("it isn't a 64-bit Mach-O executable");
-    }
+    let magic = header.u32();
     let cpu = header.u32();
+    let layout = match magic {
+        MH_MAGIC_64 => MACHO_64,
+        // Only arm64_32's: OmniBuild signs no other 32-bit code.
+        MH_MAGIC if cpu == CPU_TYPE_ARM64_32 => MACHO_32,
+        _ => bail!("it isn't a 64-bit Mach-O executable, nor one for arm64_32"),
+    };
     header.skip(8); // The CPU subtype and file type.
     let commands = header.u32();
 
-    let (mut text, mut linkedit, mut signature) = (None, None, None);
-    let mut at = HEADER_SIZE;
+    let (mut text, mut linkedit, mut signature, mut min_os) = (None, None, None, None);
+    let mut at = layout.header_size;
     for _ in 0..commands {
         let mut command = Reader::at(macho, at);
         let (kind, size) = (command.u32(), command.u32() as usize);
         let name = command.bytes(16);
         let segment = || {
-            let mut segment = Reader::at(macho, at + SEGMENT_FILE_OFFSET);
-            (segment.u64(), segment.u64())
+            let offset = at + layout.file_offset();
+            (
+                layout.read(macho, offset),
+                layout.read(macho, offset + layout.word),
+            )
         };
-        match (kind, name) {
-            (LC_SEGMENT_64, b"__TEXT\0\0\0\0\0\0\0\0\0\0") => text = Some(segment()),
-            (LC_SEGMENT_64, b"__LINKEDIT\0\0\0\0\0\0") => linkedit = Some(at),
-            (LC_CODE_SIGNATURE, _) => signature = Some(at),
+        match (kind == layout.segment, kind, name) {
+            (true, _, b"__TEXT\0\0\0\0\0\0\0\0\0\0") => text = Some(segment()),
+            (true, _, b"__LINKEDIT\0\0\0\0\0\0") => linkedit = Some(at),
+            (_, LC_CODE_SIGNATURE, _) => signature = Some(at),
+            (_, LC_BUILD_VERSION, _) => min_os = Some(Reader::at(macho, at + 12).u32()),
+            (_, LC_VERSION_MIN_WATCHOS, _) => min_os = Some(Reader::at(macho, at + 8).u32()),
             _ => {}
         }
         // A command can't be shorter than its kind and size, and one that
@@ -140,6 +211,11 @@ fn sign_architecture(macho: &[u8], sign: &impl Fn(&Code) -> Vec<u8>) -> Result<V
         }
         at += size;
     }
+    if cpu == CPU_TYPE_ARM64_32 && min_os.is_none_or(|version| version < SHA256_ONLY_WATCHOS) {
+        bail!(
+            "its arm64_32 code is for watchOS before 12, which codesign signs with SHA-1 hashes too, as OmniBuild can't yet: build the watch app for watchOS 12 or later"
+        );
+    }
     let (Some(text), Some(linkedit), Some(signature)) = (text, linkedit, signature) else {
         bail!(
             "it has no code signature to replace. Build it signed, if only ad hoc (-Wl,-adhoc_codesign)"
@@ -148,16 +224,21 @@ fn sign_architecture(macho: &[u8], sign: &impl Fn(&Code) -> Vec<u8>) -> Result<V
 
     let mut fields = Reader::at(macho, signature + 8);
     let (data_offset, data_size) = (fields.u32() as usize, fields.u32() as usize);
-    let mut segment = Reader::at(macho, linkedit + SEGMENT_VM_SIZE);
-    let vm_size = segment.u64();
-    let (file_offset, file_size) = (segment.u64(), segment.u64());
+    let vm_size = layout.read(macho, linkedit + layout.vm_size());
+    let file_offset = layout.read(macho, linkedit + layout.file_offset());
+    let file_size = layout.read(macho, linkedit + layout.file_size());
     if data_offset.saturating_add(data_size) != macho.len()
         || file_offset.saturating_add(file_size) != macho.len() as u64
     {
         bail!("its code signature isn't at its end, where it's replaced");
     }
 
-    let page_size = if cpu == CPU_TYPE_ARM64 { 14 } else { 12 };
+    // arm64_32's too, as watchOS maps it.
+    let page_size = if matches!(cpu, CPU_TYPE_ARM64 | CPU_TYPE_ARM64_32) {
+        14
+    } else {
+        12
+    };
     let mut code = macho[..data_offset].to_vec();
     // The signature's size depends only on the code's, so a first signature
     // says how much room the load commands give it.
@@ -170,10 +251,8 @@ fn sign_architecture(macho: &[u8], sign: &impl Fn(&Code) -> Vec<u8>) -> Result<V
     let file_size = (data_offset + size) as u64 - file_offset.min(data_offset as u64);
     let vm_size = vm_size.max(file_size.next_multiple_of(LINKEDIT_ROUNDING));
     code[signature + 12..signature + 16].copy_from_slice(&u32_of(size).to_le_bytes());
-    code[linkedit + SEGMENT_VM_SIZE..linkedit + SEGMENT_VM_SIZE + 8]
-        .copy_from_slice(&vm_size.to_le_bytes());
-    code[linkedit + SEGMENT_FILE_SIZE..linkedit + SEGMENT_FILE_SIZE + 8]
-        .copy_from_slice(&file_size.to_le_bytes());
+    layout.write(&mut code, linkedit + layout.vm_size(), vm_size);
+    layout.write(&mut code, linkedit + layout.file_size(), file_size);
 
     let signed = sign(&Code {
         bytes: &code,
@@ -191,7 +270,7 @@ fn u32_of(value: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Code, sign};
+    use super::{Code, MH_MAGIC, sign};
     use crate::bytes::Reader;
     use crate::ios::tests::{device_file, shell_file};
 
@@ -203,6 +282,11 @@ mod tests {
 
     fn device() -> Vec<u8> {
         device_file("Payload/OmniBuildShell.app/OmniBuildShell")
+    }
+
+    /// The device shell's watch app's: arm64 code, then `arm64_32`'s.
+    fn watch() -> Vec<u8> {
+        device_file("Payload/OmniBuildShell.app/Watch/ShellWatch.app/ShellWatch")
     }
 
     /// A signature of 100 bytes of the code's first byte, its page size and
@@ -310,6 +394,41 @@ mod tests {
     }
 
     #[test]
+    fn signs_a_watch_apps_arm64_32_code_too() {
+        let watch = watch();
+
+        let signed = sign(&watch, stub).unwrap();
+
+        // After the arm64 code, on the next 16 KiB boundary.
+        let mut entry = Reader::at(&signed, 8 + 20);
+        let cpu = entry.u32_be();
+        entry.skip(4);
+        assert_eq!((cpu, entry.u32_be()), (0x0200_000c, 65_536));
+        let (arm64_32, original) = (&signed[65_536..], &watch[65_536..]);
+        assert_eq!(arm64_32.len(), 32_944 + 112);
+        // Its 32-bit load commands pointed at the new signature, 112 bytes
+        // at 32,944: LC_CODE_SIGNATURE's size, and __LINKEDIT's sizes in
+        // memory and in the file, each a 32-bit word.
+        assert_eq!(Reader::at(arm64_32, 696 + 12).u32(), 112);
+        let mut linkedit = Reader::at(arm64_32, 276 + 28);
+        let (vm_size, file_offset) = (linkedit.u32(), linkedit.u32());
+        assert_eq!(
+            (vm_size, file_offset, linkedit.u32()),
+            (16_384, 32_768, 32_944 + 112 - 32_768)
+        );
+        // Everything else up to the signature is as it was.
+        assert_eq!(arm64_32[..276 + 28], original[..276 + 28]);
+        assert_eq!(arm64_32[276 + 40..696 + 12], original[276 + 40..696 + 12]);
+        assert_eq!(arm64_32[696 + 16..32_944], original[696 + 16..32_944]);
+        // Hashed in 16 KiB pages, as watchOS maps them, with the 32 KiB
+        // __TEXT segment.
+        assert_eq!(
+            arm64_32[32_944..32_944 + 100],
+            [&[0xce; 98][..], &[14, 8]].concat()
+        );
+    }
+
+    #[test]
     fn grows_linkedit_for_a_signature_that_needs_more_pages() {
         let signed = sign(&device(), |_: &Code| vec![1; 20_000]).unwrap();
 
@@ -322,6 +441,8 @@ mod tests {
     fn reports_an_executable_it_cant_sign() {
         let device = device();
         let simulator = simulator();
+        let watch = watch();
+        let watchos_11 = "its arm64_32 code is for watchOS before 12, which codesign signs with SHA-1 hashes too, as OmniBuild can't yet: build the watch app for watchOS 12 or later";
         let set = |bytes: &[u8], at: usize, value: &[u8]| {
             let mut bytes = bytes.to_vec();
             bytes[at..at + value.len()].copy_from_slice(value);
@@ -330,7 +451,12 @@ mod tests {
         let cases = [
             (
                 b"not an executable".to_vec(),
-                "it isn't a 64-bit Mach-O executable",
+                "it isn't a 64-bit Mach-O executable, nor one for arm64_32",
+            ),
+            (
+                // A 32-bit file for another architecture: x86.
+                [&MH_MAGIC.to_le_bytes()[..], &7_u32.to_le_bytes()].concat(),
+                "it isn't a 64-bit Mach-O executable, nor one for arm64_32",
             ),
             (
                 // Its last load command, LC_CODE_SIGNATURE, made one of no size.
@@ -356,8 +482,18 @@ mod tests {
             (
                 // The second architecture's code, made not Mach-O.
                 set(&simulator, 16_384, &[0; 4]),
-                "it isn't a 64-bit Mach-O executable",
+                "it isn't a 64-bit Mach-O executable, nor one for arm64_32",
             ),
+            // The watch app's arm64_32 code for watchOS 11, in
+            // LC_BUILD_VERSION, then in LC_VERSION_MIN_WATCHOS, whose
+            // version is where LC_BUILD_VERSION has its platform (watchOS,
+            // 4), and with neither.
+            (
+                set(&watch, 65_536 + 520 + 12, &(11_u32 << 16).to_le_bytes()),
+                watchos_11,
+            ),
+            (set(&watch, 65_536 + 520, &[0x30]), watchos_11),
+            (set(&watch, 65_536 + 520, &[0x2a]), watchos_11),
         ];
 
         for (executable, message) in cases {
