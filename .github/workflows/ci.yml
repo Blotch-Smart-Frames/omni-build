@@ -431,6 +431,12 @@ jobs:
     needs: [build, e2e-repackage]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest Android the fixture runs on, 5.0, where an APK installs
+        # only with a v1 signature and without `cmd`, and a recent one.
+        api-level: [21, 34]
     env:
       # The release binary the build job made for Linux, which installs each
       # app on the emulator, as it would for a user without the Android SDK.
@@ -466,21 +472,21 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      # An emulator image of its own, apart from the API level the shells
-      # target: the fixture targets API 37 and runs on 24 and later. A device
+      # Emulator images of their own, apart from the API level the shells
+      # target: the fixture targets API 37 and runs on 21 and later. A device
       # only applies the behaviour changes of the level an app targets when it
       # runs that level or newer, so this checks the shells install and run,
       # not those changes.
       - uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: ${{ matrix.api-level }}
           arch: x86_64
           target: google_apis
           script: node packages/e2e/src/cli.ts test --platform android e2e/repackaged/*.apk e2e/repackaged/*.aab
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: e2e-results-android
+          name: e2e-results-android-${{ matrix.api-level }}
           path: packages/e2e/artifacts
           retention-days: 7
 

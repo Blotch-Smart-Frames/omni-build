@@ -1,6 +1,7 @@
 //! JAR signing, as `jarsigner` does it, which is what an Android App Bundle
 //! is signed with: Google Play checks an AAB's upload key this way, then
-//! signs the APKs it makes from the bundle with the app's own key.
+//! signs the APKs it makes from the bundle with the app's own key. It's
+//! also an APK's v1 signature, the only one Android before 7.0 verifies.
 //!
 //! A JAR signature is three files in `META-INF/`: a manifest with a digest
 //! of each entry, a signature file with a digest of each of the manifest's
@@ -27,8 +28,25 @@ use crate::zip::{Entry, Method};
 /// Lines in a JAR manifest are at most 72 bytes.
 const LINE: usize = 72;
 
-/// The entries with a JAR signature in front of them, signed by `key`.
-pub fn sign(entries: Vec<Entry>, key: &SigningKey) -> Result<Vec<Entry>> {
+/// An app bundle's entries with a JAR signature in front of them, signed by
+/// `key`.
+pub fn sign_bundle(entries: Vec<Entry>, key: &SigningKey) -> Result<Vec<Entry>> {
+    sign(entries, key, "")
+}
+
+/// An APK's entries with a v1 signature in front of them, signed by `key`,
+/// for the APK Signature Schemes v2 and v3 to sign next. Its signature file
+/// says they will (`X-Android-APK-Signed`), so that Android 7.0 and later
+/// reject the APK if they're stripped from it to fall back on v1, which
+/// leaves more of the file unsigned. SHA-256 throughout, which Android
+/// verifies from 4.3 (API 18) on, as apksigner signs for those versions.
+pub fn sign_apk(entries: Vec<Entry>, key: &SigningKey) -> Result<Vec<Entry>> {
+    sign(entries, key, &header("X-Android-APK-Signed", "2, 3"))
+}
+
+/// The entries with a JAR signature in front of them, signed by `key`,
+/// with `attributes` among the signature file's main attributes.
+fn sign(entries: Vec<Entry>, key: &SigningKey, attributes: &str) -> Result<Vec<Entry>> {
     let main_attributes = [
         header("Manifest-Version", "1.0"),
         header("Created-By", "OmniBuild"),
@@ -57,6 +75,7 @@ pub fn sign(entries: Vec<Entry>, key: &SigningKey) -> Result<Vec<Entry>> {
             "SHA-256-Digest-Manifest-Main-Attributes",
             &digest(main_attributes.as_bytes()),
         ),
+        attributes.to_owned(),
         "\r\n".to_owned(),
         sections,
     ]
@@ -159,7 +178,7 @@ mod tests {
     use sha2::{Digest, Sha256};
     use x509_cert::der::Decode;
 
-    use super::{header, sign};
+    use super::{header, sign_apk, sign_bundle};
     use crate::key::tests::{KEY, verifies};
     use crate::zip::{Entry, Method};
 
@@ -178,7 +197,7 @@ mod tests {
             Entry::new("base/assets/payload.txt", Method::Stored, b"payload"),
         ];
 
-        let jar = sign(entries.clone(), &KEY).unwrap();
+        let jar = sign_bundle(entries.clone(), &KEY).unwrap();
 
         let names: Vec<&str> = jar.iter().map(|entry| entry.name.as_str()).collect();
         assert_eq!(
@@ -207,6 +226,8 @@ mod tests {
         assert!(
             signature_file.contains(&format!("SHA-256-Digest-Manifest: {manifest_digest}\r\n"))
         );
+        // An app bundle has no APK signatures to protect.
+        assert!(!signature_file.contains("X-Android-APK-Signed"));
         assert!(signature_file.ends_with(&format!(
             "Name: base/assets/payload.txt\r\nSHA-256-Digest: {section_digest}\r\n\r\n"
         )));
@@ -226,6 +247,23 @@ mod tests {
             signature_file.as_bytes(),
             signer.signature.as_bytes()
         ));
+    }
+
+    #[test]
+    fn says_a_v1_signature_comes_with_v2_and_v3() {
+        let entries = vec![Entry::new(
+            "AndroidManifest.xml",
+            Method::Deflated,
+            b"manifest",
+        )];
+
+        let apk = sign_apk(entries.clone(), &KEY).unwrap();
+
+        assert_eq!(apk[3..], entries);
+        // Among the main attributes, which end at the first blank line.
+        let signature_file = text(&apk[1]);
+        let (main_attributes, _) = signature_file.split_once("\r\n\r\n").unwrap();
+        assert!(main_attributes.ends_with("\r\nX-Android-APK-Signed: 2, 3"));
     }
 
     #[test]
@@ -252,7 +290,7 @@ mod tests {
         corrupt.data = vec![0xff; 8];
 
         assert_eq!(
-            sign(vec![corrupt], &KEY).unwrap_err().to_string(),
+            sign_bundle(vec![corrupt], &KEY).unwrap_err().to_string(),
             "base/dex/classes.dex is corrupt"
         );
     }

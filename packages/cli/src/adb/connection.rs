@@ -274,7 +274,7 @@ fn name(command: u32) -> String {
 #[cfg(test)]
 pub mod tests {
     use std::cell::Cell;
-    use std::collections::VecDeque;
+    use std::collections::{HashMap, VecDeque};
     use std::io::{self, Cursor, ErrorKind, Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::Path;
@@ -328,6 +328,56 @@ pub mod tests {
         message(OKAY, 100, local, b"")
     }
 
+    /// What a service on a `service_device` does next.
+    pub enum Answer {
+        /// Waits for more input.
+        Waiting,
+        /// Writes this output and closes the stream.
+        Done(Vec<u8>),
+        /// Hangs up on OmniBuild.
+        HangUp,
+    }
+
+    /// A device that connects without checking the key, with `banner`, and
+    /// runs services, taking writes of at most `max_payload` bytes: once it
+    /// has opened a stream to one, and after each write to it, `answer`
+    /// gets the service and everything written to it, and says what the
+    /// service does next.
+    pub fn service_device(
+        max_payload: u32,
+        banner: &'static [u8],
+        mut answer: impl FnMut(&str, &[u8]) -> Answer + Send + 'static,
+    ) -> impl Respond {
+        // Each stream's service and input, by OmniBuild's ID for it.
+        let mut streams: HashMap<u32, (String, Vec<u8>)> = HashMap::new();
+        move |received| {
+            let local = received.arg0;
+            match received.command {
+                CNXN => return Some(vec![message(CNXN, VERSION, max_payload, banner)]),
+                OPEN => {
+                    let service = String::from_utf8_lossy(&received.data);
+                    let service = service.trim_end_matches('\0').to_owned();
+                    streams.insert(local, (service, Vec::new()));
+                }
+                WRTE => {
+                    assert!(received.data.len() <= max_payload.max(1) as usize);
+                    streams.get_mut(&local).unwrap().1.extend(&received.data);
+                }
+                _ => return Some(Vec::new()),
+            }
+            let (service, input) = &streams[&local];
+            match answer(service, input) {
+                Answer::Waiting => Some(vec![okay(local)]),
+                Answer::Done(output) => Some(vec![
+                    okay(local),
+                    message(WRTE, 100, local, &output),
+                    message(CLSE, 100, local, b""),
+                ]),
+                Answer::HangUp => None,
+            }
+        }
+    }
+
     /// A device that connects without checking the key, with `banner`, and
     /// then answers `exec:<command> -S <size>` with `output` once it has
     /// taken `size` bytes of input, in writes of at most `max_payload`
@@ -337,28 +387,17 @@ pub mod tests {
         banner: &'static [u8],
         output: Option<&'static [u8]>,
     ) -> impl Respond {
-        let mut expected = 0;
-        move |received| match received.command {
-            CNXN => Some(vec![message(CNXN, VERSION, max_payload, banner)]),
-            OPEN => {
-                let service = String::from_utf8_lossy(&received.data);
-                let size = service.trim_end_matches('\0').rsplit(' ').next().unwrap();
-                expected = size.parse().unwrap();
-                output.map(|_| vec![okay(received.arg0)])
+        service_device(max_payload, banner, move |service, input| {
+            let Some(output) = output else {
+                return Answer::HangUp;
+            };
+            let size: usize = service.rsplit(' ').next().unwrap().parse().unwrap();
+            if input.len() == size {
+                Answer::Done(output.to_vec())
+            } else {
+                Answer::Waiting
             }
-            WRTE => {
-                assert!(received.data.len() <= max_payload.max(1) as usize);
-                expected -= received.data.len();
-                let mut responses = vec![okay(received.arg0)];
-                if expected == 0 {
-                    let output = output.unwrap_or_default();
-                    responses.push(message(WRTE, 100, received.arg0, output));
-                    responses.push(message(CLSE, 100, received.arg0, b""));
-                }
-                Some(responses)
-            }
-            _ => Some(Vec::new()),
-        }
+        })
     }
 
     /// A device that doesn't know the key: it sends a second token for the

@@ -4,8 +4,9 @@
 //! Both sign a digest of the whole file except the signature itself, which
 //! goes in an APK Signing Block between the zip entries and the central
 //! directory. Android 7 to 8.1 verify v2, and Android 9 and later v3, which
-//! adds key rotation. OmniBuild writes both, as apksigner does, and no v1
-//! (JAR) signature: that's only for Android 6 and earlier.
+//! adds key rotation. OmniBuild writes both, as apksigner does. Android 6
+//! and earlier verify only a v1 (JAR) signature, which an APK for them gets
+//! first (`jar_signing.rs`), so that these sign it too.
 
 use sha2::{Digest, Sha256};
 
