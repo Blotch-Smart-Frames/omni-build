@@ -36,7 +36,7 @@ use sha2::{Digest, Sha256};
 use x509_cert::Certificate;
 use x509_cert::attr::Attribute;
 use x509_cert::der::asn1::{OctetString, SetOfVec, UtcTime};
-use x509_cert::der::{Any, Encode, Tag};
+use x509_cert::der::{Any, Decode, Encode, Tag};
 use x509_cert::name::Name;
 use x509_cert::spki::AlgorithmIdentifierOwned;
 
@@ -96,6 +96,15 @@ const CD_HASHES: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113635
 const CD_HASHES_2: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113635.100.9.2");
 /// The organization of the authorities that issue Apple's certificates.
 const APPLE: &str = "Apple Inc.";
+/// The certificates above an Apple signing certificate: Apple's Worldwide
+/// Developer Relations authority (G3), which has issued Apple Development
+/// and Apple Distribution certificates since 2021, and Apple's root, which
+/// issued it. codesign's signature carries both, but Keychain Access
+/// exports a signing identity without them, so OmniBuild brings its own,
+/// from apple.com/certificateauthority, verified against the root in
+/// macOS's trust store.
+const WWDR_G3: &[u8] = include_bytes!("apple/AppleWWDRCAG3.cer");
+const APPLE_ROOT: &[u8] = include_bytes!("apple/AppleRootCA.cer");
 
 /// What goes into an app's signature besides its code.
 pub struct Signer<'a> {
@@ -295,9 +304,13 @@ impl Signer<'_> {
             },
             unsigned_attrs: None,
         };
-        // A certificate listed twice in the key's file is carried once.
+        // A certificate listed twice, in the key's file and among Apple's,
+        // is carried once.
         let mut certificates = SetOfVec::new();
-        for certificate in std::iter::once(certificate).chain(key.chain()) {
+        for certificate in std::iter::once(certificate)
+            .chain(key.chain())
+            .chain(&apple_chain(certificate))
+        {
             certificates
                 .insert(CertificateChoices::Certificate(certificate.clone()))
                 .ok();
@@ -319,6 +332,19 @@ impl Signer<'_> {
             content_type: ID_SIGNED_DATA,
             content: Any::encode_from(&signed_data).expect("signed data encodes"),
         })
+    }
+}
+
+/// Apple's certificates above `certificate`, if WWDR G3 issued it.
+fn apple_chain(certificate: &Certificate) -> Vec<Certificate> {
+    let wwdr = Certificate::from_der(WWDR_G3).expect("Apple's certificate parses");
+    if certificate.tbs_certificate.issuer == wwdr.tbs_certificate.subject {
+        vec![
+            wwdr,
+            Certificate::from_der(APPLE_ROOT).expect("Apple's certificate parses"),
+        ]
+    } else {
+        Vec::new()
     }
 }
 
@@ -422,7 +448,9 @@ pub mod tests {
     use sha2::{Digest, Sha256};
     use x509_cert::der::{Decode, Encode};
 
-    use super::Signer;
+    use x509_cert::Certificate;
+
+    use super::{Signer, WWDR_G3};
     use crate::bytes::Reader;
     use crate::ios::entitlements::tests::shell_entitlements;
     use crate::ios::macho::Code;
@@ -432,10 +460,13 @@ pub mod tests {
     /// The test identity: a key with a self-signed certificate,
     /// "OmniBuild Test", made as tests/fixtures/README.md says.
     pub fn identity() -> SigningKey {
-        SigningKey::read(Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/identity.pem"
-        )))
+        SigningKey::read(
+            Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/identity.pem"
+            )),
+            "",
+        )
         .unwrap()
     }
 
@@ -598,9 +629,12 @@ pub mod tests {
     }
 
     #[test]
-    fn writes_apples_requirement_and_team_for_a_certificate_apple_issued() {
+    fn writes_apples_requirement_team_and_chain_for_a_certificate_apple_issued() {
+        // Issued by Apple's WWDR G3, by its name in the certificate
+        // OmniBuild carries.
+        let wwdr = Certificate::from_der(WWDR_G3).unwrap();
         let key = issued_key(
-            "CN=Apple Worldwide Developer Relations Certification Authority,OU=G3,O=Apple Inc.,C=US",
+            wwdr.tbs_certificate.subject.clone(),
             "CN=Apple Development: Jane Doe (ABCDE12345),OU=ABCDE12345,O=Jane Doe,C=US",
         );
         let signer = Signer {
@@ -629,5 +663,26 @@ pub mod tests {
                 "2a864886f76364060201000000000000"
             ))
         );
+        // The CMS signature carries Apple's chain: the key's certificate,
+        // WWDR G3 and Apple's root.
+        let cms = ContentInfo::from_der(&blobs[2].1[8..]).unwrap();
+        let signed_data = cms.content.decode_as::<SignedData>().unwrap();
+        let subjects: Vec<String> = signed_data
+            .certificates
+            .unwrap()
+            .0
+            .iter()
+            .map(|choice| {
+                let certificate = Certificate::from_der(&choice.to_der().unwrap()).unwrap();
+                certificate.tbs_certificate.subject.to_string()
+            })
+            .collect();
+        assert_eq!(subjects.len(), 3);
+        assert!(
+            subjects
+                .iter()
+                .any(|subject| subject.contains("CN=Apple Root CA"))
+        );
+        assert!(subjects.iter().any(|subject| subject.contains("OU=G3")));
     }
 }

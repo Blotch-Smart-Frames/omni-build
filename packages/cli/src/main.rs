@@ -6,6 +6,7 @@ mod config;
 mod icon;
 mod ios;
 mod key;
+mod keystore;
 mod payload;
 mod zip;
 
@@ -17,11 +18,15 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 
 use config::App;
-use key::{SigningKey, debug_key_path};
+use key::{ALIAS, SigningKey, debug_key_path};
+use x509_cert::name::Name;
 
 /// How the error for a file that's none of the shells OmniBuild knows
 /// starts.
 const NOT_A_SHELL: &str = "the shell isn't an APK, an AAB or an iOS app";
+/// A keystore's password, from the environment rather than a flag, which
+/// would show it to anyone listing the computer's processes.
+const KEY_PASSWORD: &str = "OMNI_BUILD_KEY_PASSWORD";
 
 /// Build, sign, install and ship iOS and Android apps with no native toolchain.
 #[derive(Debug, Parser)]
@@ -34,6 +39,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Repackage(Repackage),
+    Key(Key),
 }
 
 /// Turn a prebuilt app shell into an app, and sign it.
@@ -53,11 +59,13 @@ struct Repackage {
     /// has it.
     #[arg(long, short)]
     config: Option<PathBuf>,
-    /// The key to sign with: a PEM file with an RSA private key (PKCS #8),
-    /// its certificate, and any that issued it. An iOS build for devices
-    /// needs one Apple issued a certificate for. Without it, Android apps
-    /// are signed with a debug key OmniBuild creates, and iOS Simulator
-    /// builds ad hoc.
+    /// The key to sign with: a PKCS #12 keystore (`.p12`, or a `.jks` from
+    /// keytool since Java 9), with its password in `OMNI_BUILD_KEY_PASSWORD`,
+    /// or a PEM file with the private key (PKCS #8). An RSA key, with its
+    /// certificate and any that issued it. An iOS build for devices needs
+    /// one Apple issued a certificate for. Without it, Android apps are
+    /// signed with a debug key OmniBuild creates, and iOS Simulator builds
+    /// ad hoc.
     #[arg(long)]
     signing_key: Option<PathBuf>,
     /// The provisioning profile for an iOS build for devices
@@ -65,6 +73,31 @@ struct Repackage {
     /// the app's ID.
     #[arg(long)]
     profile: Option<PathBuf>,
+}
+
+/// Manage signing keys.
+#[derive(Debug, Args)]
+struct Key {
+    #[command(subcommand)]
+    command: KeyCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum KeyCommand {
+    Create(CreateKey),
+}
+
+/// Create an upload key for Google Play: an RSA key with a certificate of
+/// its own, valid for 30 years, in a PKCS #12 keystore that keytool,
+/// Android Studio and Gradle read too, under the alias "upload". Its
+/// password comes from `OMNI_BUILD_KEY_PASSWORD`.
+#[derive(Debug, Args)]
+struct CreateKey {
+    /// Where to write the keystore, which mustn't exist yet.
+    keystore: PathBuf,
+    /// The certificate's subject, as a distinguished name.
+    #[arg(long, default_value = "CN=Upload key")]
+    subject: String,
 }
 
 fn main() -> ExitCode {
@@ -80,7 +113,15 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Repackage(args) => repackage(&args),
+        Command::Key(Key {
+            command: KeyCommand::Create(args),
+        }) => create_key(&args),
     }
+}
+
+/// The keystore password, or none.
+fn key_password() -> String {
+    std::env::var(KEY_PASSWORD).unwrap_or_default()
 }
 
 fn repackage(args: &Repackage) -> Result<()> {
@@ -93,7 +134,7 @@ fn repackage(args: &Repackage) -> Result<()> {
     let key = args
         .signing_key
         .as_deref()
-        .map(SigningKey::read)
+        .map(|path| SigningKey::read(path, &key_password()))
         .transpose()?;
     let profile = args
         .profile
@@ -125,6 +166,37 @@ fn repackage(args: &Repackage) -> Result<()> {
         .with_context(|| format!("couldn't write the app to {}", args.out.display()))
 }
 
+fn create_key(args: &CreateKey) -> Result<()> {
+    let subject = distinguished_name(&args.subject).with_context(|| {
+        format!(
+            "\"{}\" isn't a distinguished name, such as \"CN=Upload key, O=Example\"",
+            args.subject
+        )
+    })?;
+    SigningKey::create(&args.keystore, &subject, &key_password())?;
+    println!(
+        "Created an upload key in {}, with the alias \"{ALIAS}\". Keep it, and its password, safe: Google Play only takes updates signed with it, unless you ask Google to reset it.",
+        args.keystore.display()
+    );
+    Ok(())
+}
+
+/// A distinguished name as keytool takes one, with spaces after its
+/// commas, which RFC 4514, and so x509-cert, doesn't allow.
+fn distinguished_name(text: &str) -> Option<Name> {
+    let mut name = String::new();
+    let (mut escaped, mut after_comma) = (false, false);
+    for character in text.chars() {
+        if after_comma && character == ' ' {
+            continue;
+        }
+        after_comma = character == ',' && !escaped;
+        escaped = character == '\\' && !escaped;
+        name.push(character);
+    }
+    name.parse().ok()
+}
+
 /// The key OmniBuild signs Android apps with when it's given none, which
 /// it creates the first time.
 fn android_debug_key() -> Result<SigningKey> {
@@ -143,7 +215,23 @@ fn android_debug_key() -> Result<SigningKey> {
 mod tests {
     use clap::CommandFactory;
 
-    use super::Cli;
+    use super::{Cli, distinguished_name};
+
+    #[test]
+    fn reads_a_distinguished_name_with_spaces_after_its_commas() {
+        let name = |text| distinguished_name(text).map(|name| name.to_string());
+
+        assert_eq!(
+            name("CN=Jane Doe,  O=Example"),
+            Some("CN=Jane Doe,O=Example".to_owned())
+        );
+        // An escaped comma is part of a value, with the space after it.
+        assert_eq!(
+            name("CN=Jane Doe, O=Doe\\, Inc."),
+            Some("CN=Jane Doe,O=Doe\\, Inc.".to_owned())
+        );
+        assert_eq!(name("not a name"), None);
+    }
 
     #[test]
     fn cli_definition_is_valid() {

@@ -1,4 +1,10 @@
-import { existsSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +28,12 @@ vi.mock('node:fs', async (importOriginal) => {
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const APP_CONFIG = fileURLToPath(new URL('../app/app.json', import.meta.url));
+/** All omni-build gets of the environment: the home and temporary folders, and the keystores' password. */
+const ENV = {
+  HOME: '/home/me',
+  TMPDIR: '/tmp/me',
+  OMNI_BUILD_KEY_PASSWORD: 'omnibuild-e2e',
+};
 const PLATFORM = process.platform;
 
 const onPlatform = (platform: string) => {
@@ -73,6 +85,10 @@ describe('expected', () => {
       icon: '#E8590C',
       signer: 'CN=OmniBuild Debug, O=OmniBuild',
     });
+    // An app bundle, signed with the upload key omni-build created.
+    expect(expected('android', 'OmniBuildShell-linux.aab').signer).toBe(
+      'CN=OmniBuild E2E Upload',
+    );
   });
 
   it("is the app's values for an iOS simulator build, signed ad hoc", () => {
@@ -116,7 +132,7 @@ describe('repackage', () => {
     expect(run).toHaveBeenCalledWith(
       binary,
       ['repackage', shell, '--config', APP_CONFIG, '--out', app],
-      { log: 'commands.log', env: { HOME: '/home/me', TMPDIR: '/tmp/me' } },
+      { log: 'commands.log', env: ENV },
     );
   });
 
@@ -130,7 +146,7 @@ describe('repackage', () => {
     expect(run).toHaveBeenCalledWith(
       binary,
       ['repackage', shell, '--config', APP_CONFIG, '--out', app],
-      { log: 'commands.log', env: { HOME: '/home/me', TMPDIR: '/tmp/me' } },
+      { log: 'commands.log', env: ENV },
     );
   });
 
@@ -149,7 +165,7 @@ describe('repackage', () => {
         '--config',
         APP_CONFIG,
         '--signing-key',
-        fileURLToPath(new URL('../app/signing-key.pem', import.meta.url)),
+        fileURLToPath(new URL('../app/signing-key.p12', import.meta.url)),
         '--profile',
         fileURLToPath(
           new URL('../app/OmniBuildE2E.mobileprovision', import.meta.url),
@@ -157,8 +173,40 @@ describe('repackage', () => {
         '--out',
         app,
       ],
-      { log: 'commands.log', env: { HOME: '/home/me', TMPDIR: '/tmp/me' } },
+      { log: 'commands.log', env: ENV },
     );
+  });
+
+  it('signs an app bundle with an upload key it has omni-build create', async () => {
+    const shell = path.join('shells', 'OmniBuildShell.aab');
+
+    const app = await repackage({ shell, outDir, log: 'commands.log' });
+
+    const [create, sign] = vi.mocked(run).mock.calls;
+    const keystore = create[1][2];
+    expect(path.dirname(path.dirname(keystore))).toBe(outDir);
+    expect(path.basename(path.dirname(keystore))).toMatch(/^\.keys-/);
+    expect(create).toEqual([
+      binary,
+      ['key', 'create', keystore, '--subject', 'CN=OmniBuild E2E Upload'],
+      { log: 'commands.log', env: ENV },
+    ]);
+    expect(sign).toEqual([
+      binary,
+      [
+        'repackage',
+        shell,
+        '--config',
+        APP_CONFIG,
+        '--signing-key',
+        keystore,
+        '--out',
+        app,
+      ],
+      { log: 'commands.log', env: ENV },
+    ]);
+    // Deleted, so no stage takes it for an app.
+    expect(readdirSync(outDir)).toEqual([]);
   });
 
   it('names an app for an OS it has no name for by its platform', async () => {
