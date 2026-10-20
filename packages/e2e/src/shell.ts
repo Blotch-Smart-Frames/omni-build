@@ -3,7 +3,7 @@
  * report on launch. They're set in:
  *
  * - iOS: `fixtures/ios/OmniBuildShell.xcodeproj` (bundle ID, version, build,
- *   and the app extensions' and the App Clip's bundle IDs) and `OmniBuildShell/Info.plist`
+ *   and the app extensions', the App Clip's and the watch app's bundle IDs) and `OmniBuildShell/Info.plist`
  *   (name, camera usage), which `en.lproj/InfoPlist.strings` translates
  *   into English
  * - Android: `fixtures/android/app/build.gradle.kts` (application ID,
@@ -37,6 +37,7 @@ export const SHELL = {
   extensionId: 'dev.omnibuild.shell.ShellNotifications',
   intentsExtensionId: 'dev.omnibuild.shell.ShellIntents',
   appClipId: 'dev.omnibuild.shell.Clip',
+  watchAppId: 'dev.omnibuild.shell.watchkitapp',
 };
 
 /**

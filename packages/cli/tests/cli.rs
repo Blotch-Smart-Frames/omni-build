@@ -201,8 +201,10 @@ fn repackage_signs_with_the_key_it_is_given() {
             SHELL_IPA,
             "--signing-key",
             IDENTITY,
-            // One for the app and one for each extension, as they'd be
-            // without a wildcard App ID, and the App Clip's own.
+            // One for the app and one for each extension and the watch app,
+            // as they'd be without a wildcard App ID, and the App Clip's own.
+            "--profile",
+            PROFILE,
             "--profile",
             PROFILE,
             "--profile",
@@ -240,6 +242,10 @@ fn repackage_signs_with_the_key_it_is_given() {
     assert!(contains(
         &ipa,
         b"Payload/OmniBuildShell.app/AppClips/ShellClip.app/embedded.mobileprovision"
+    ));
+    assert!(contains(
+        &ipa,
+        b"Payload/OmniBuildShell.app/Watch/ShellWatch.app/embedded.mobileprovision"
     ));
 }
 

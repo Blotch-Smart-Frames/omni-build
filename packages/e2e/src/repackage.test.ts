@@ -117,6 +117,8 @@ describe('expected', () => {
       extensionId: 'dev.omnibuild.e2e.app.ShellNotifications',
       intentsExtensionId: 'dev.omnibuild.e2e.app.ShellIntents',
       appClipId: 'dev.omnibuild.e2e.app.Clip',
+      watchAppId: 'dev.omnibuild.e2e.app.watchkitapp',
+      watchCompanion: 'dev.omnibuild.e2e.app',
       signer: 'ad hoc',
     });
   });
@@ -138,6 +140,10 @@ describe('expected', () => {
       appClipApplicationIdentifier: 'OMNIBUILD0.dev.omnibuild.e2e.app.Clip',
       appClipParent: 'OMNIBUILD0.dev.omnibuild.e2e.app',
       associatedAppClip: 'OMNIBUILD0.dev.omnibuild.e2e.app.Clip',
+      watchAppId: 'dev.omnibuild.e2e.app.watchkitapp',
+      watchCompanion: 'dev.omnibuild.e2e.app',
+      watchAppApplicationIdentifier:
+        'OMNIBUILD0.dev.omnibuild.e2e.app.watchkitapp',
     });
   });
 });
@@ -175,7 +181,7 @@ describe('repackage', () => {
     );
   });
 
-  it("signs an iOS build for devices with the test key, and the app's, its extensions' and its App Clip's profiles", async () => {
+  it("signs an iOS build for devices with the test key, and the app's, its extensions', its App Clip's and its watch app's profiles", async () => {
     const shell = path.join('shells', 'OmniBuildShell.ipa');
     onPlatform('darwin');
 
@@ -206,6 +212,10 @@ describe('repackage', () => {
         '--profile',
         fileURLToPath(
           new URL('../app/ShellClip.mobileprovision', import.meta.url),
+        ),
+        '--profile',
+        fileURLToPath(
+          new URL('../app/ShellWatch.mobileprovision', import.meta.url),
         ),
         '--out',
         app,

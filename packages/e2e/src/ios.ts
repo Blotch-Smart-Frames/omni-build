@@ -42,7 +42,12 @@ interface SimctlList {
   devices: Record<string, { name: string; udid: string }[] | undefined>;
 }
 
-/** Where each SDK's builds run: anywhere, on a simulator or a device. */
+/**
+ * Where each SDK's builds run: anywhere, on a simulator or a device. The
+ * destination alone picks the SDK, so that each target builds for its own
+ * platform: the watch app for watchOS, where `-sdk iphoneos` would build it
+ * for iOS.
+ */
 const DESTINATIONS = {
   iphonesimulator: 'generic/platform=iOS Simulator',
   iphoneos: 'generic/platform=iOS',
@@ -65,8 +70,6 @@ const xcodebuild = async (
       SHELL,
       '-configuration',
       'Release',
-      '-sdk',
-      sdk,
       '-destination',
       DESTINATIONS[sdk],
       '-derivedDataPath',
@@ -190,7 +193,7 @@ const verify: Platform['verify'] = ({ app, log }) =>
         ),
       )?.[1];
     // The bundle of this kind in one of the app's folders for them: its
-    // own ID, and the entitlements its profile allowed its signature.
+    // Info.plist, and the entitlements its profile allowed its signature.
     const bundleIn = async (folder: string, kind: string) => {
       const nested = existsSync(folder)
         ? readdirSync(folder).find((name) => name.endsWith(kind))
@@ -199,24 +202,27 @@ const verify: Platform['verify'] = ({ app, log }) =>
         return undefined;
       }
       const signed = path.join(folder, nested);
+      const info: Record<string, string | undefined> = JSON.parse(
+        (
+          await run(
+            'plutil',
+            ['-convert', 'json', '-o', '-', path.join(signed, 'Info.plist')],
+            { log },
+          )
+        ).stdout,
+      );
       return {
-        id: JSON.parse(
-          (
-            await run(
-              'plutil',
-              ['-convert', 'json', '-o', '-', path.join(signed, 'Info.plist')],
-              { log },
-            )
-          ).stdout,
-        ).CFBundleIdentifier,
+        id: info.CFBundleIdentifier,
+        info,
         entitlements: await entitlements(signed),
       };
     };
     // An app extension, an ExtensionKit extension, which Xcode puts in a
-    // folder of its own, and an App Clip.
+    // folder of its own, an App Clip and a watch app.
     const plugIn = await bundleIn(path.join(bundle, 'PlugIns'), '.appex');
     const intents = await bundleIn(path.join(bundle, 'Extensions'), '.appex');
     const appClip = await bundleIn(path.join(bundle, 'AppClips'), '.app');
+    const watchApp = await bundleIn(path.join(bundle, 'Watch'), '.app');
     const own = await entitlements(bundle);
     // What iOS shows in English: the strings the app has in English, over
     // Info.plist's.
@@ -271,6 +277,13 @@ const verify: Platform['verify'] = ({ app, log }) =>
         associatedAppClip: appId(
           own,
           'com.apple.developer.associated-appclip-app-identifiers',
+        ),
+        // The watch app, and the app it pairs with.
+        watchAppId: watchApp?.id,
+        watchCompanion: watchApp?.info.WKCompanionAppBundleIdentifier,
+        watchAppApplicationIdentifier: appId(
+          watchApp?.entitlements ?? '',
+          'application-identifier',
         ),
       },
     };

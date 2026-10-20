@@ -45,6 +45,11 @@ const EXTENSION_FOLDERS: [&str; 2] = ["PlugIns/", "Extensions/"];
 /// app's (`dev.example.app.Clip`, as Xcode names one), and a signature of
 /// its own, naming the app as its parent.
 const APP_CLIPS: &str = "AppClips/";
+/// Where an app has its watch app, `Name.app/`, which an Apple Watch paired
+/// with the phone installs: its ID is under the app's too
+/// (`dev.example.app.watchkitapp`, as Xcode names one), it names the app it
+/// pairs with, and it has a signature of its own.
+const WATCH: &str = "Watch/";
 
 /// The folder in the shell's entries that holds the app, if it's an iOS
 /// app: `Name.app/`, in a zipped `.app`, or `Payload/Name.app/`, in an
@@ -125,14 +130,14 @@ pub fn repackage(
     Ok(zip::write(&entries).bytes)
 }
 
-/// Gives each app extension and App Clip in the shell an ID under the
-/// app's, in place of the shell's (`shell_id`), and the app's version and
-/// build number.
+/// Gives each app extension, App Clip and watch app in the shell an ID
+/// under the app's, in place of the shell's (`shell_id`), and the app's
+/// version and build number.
 fn rewrite_nested(entries: &mut [Entry], bundle: &str, shell_id: &str, app: &App) -> Result<()> {
     let folders = EXTENSION_FOLDERS
         .iter()
         .map(|&folder| (folder, "appex"))
-        .chain([(APP_CLIPS, "app")]);
+        .chain([(APP_CLIPS, "app"), (WATCH, "app")]);
     for entry in entries.iter_mut() {
         let is_nested = folders.clone().any(|(folder, kind)| {
             entry
@@ -285,6 +290,8 @@ pub mod tests {
     const INTENTS_INFO: &str = "OmniBuildShell.app/Extensions/ShellIntents.appex/Info.plist";
     /// The App Clip's, in `AppClips/`.
     const APP_CLIP_INFO: &str = "OmniBuildShell.app/AppClips/ShellClip.app/Info.plist";
+    /// The watch app's, in `Watch/`.
+    const WATCH_INFO: &str = "OmniBuildShell.app/Watch/ShellWatch.app/Info.plist";
     /// The colour of every pixel of the app's icon in the tests.
     const ICON: Rgba<u8> = Rgba([0xe8, 0x59, 0x0c, 0xff]);
 
@@ -403,6 +410,7 @@ pub mod tests {
             "OmniBuildShell.app/PlugIns/ShellNotifications.appex/ShellNotifications",
             "OmniBuildShell.app/Extensions/ShellIntents.appex/ShellIntents",
             "OmniBuildShell.app/AppClips/ShellClip.app/ShellClip",
+            "OmniBuildShell.app/Watch/ShellWatch.app/ShellWatch",
             "OmniBuildShell.app/_CodeSignature/CodeResources",
         ];
         for (entry, shell_entry) in app.iter().zip(&shell) {
@@ -485,12 +493,14 @@ pub mod tests {
         };
         assert_eq!(names(&entries)[..shell.len()], names(&shell));
         assert_eq!(mode(file(&entries, EXECUTABLE)), 0o100_755);
-        // Each extension's ID under the app's, and the App Clip's, and the
-        // app's version and build, in PlugIns/ and in Extensions/ alike.
+        // Each extension's ID under the app's, and the App Clip's and the
+        // watch app's, and the app's version and build, in PlugIns/ and in
+        // Extensions/ alike.
         for (info, id) in [
             (EXTENSION_INFO, "dev.example.app.ShellNotifications"),
             (INTENTS_INFO, "dev.example.app.ShellIntents"),
             (APP_CLIP_INFO, "dev.example.app.Clip"),
+            (WATCH_INFO, "dev.example.app.watchkitapp"),
         ] {
             let extension = InfoPlist::parse(&file(&entries, info).contents().unwrap()).unwrap();
             let mut expected = InfoPlist::parse(&file(&shell, info).contents().unwrap()).unwrap();
@@ -500,6 +510,18 @@ pub mod tests {
             assert_eq!(extension, expected);
             assert_eq!(extension.id(), Some(id));
         }
+        // And the watch app pairs with the app.
+        let watch_app =
+            Value::from_reader(Cursor::new(file(&entries, WATCH_INFO).contents().unwrap()))
+                .unwrap()
+                .into_dictionary()
+                .unwrap();
+        assert_eq!(
+            watch_app
+                .get("WKCompanionAppBundleIdentifier")
+                .and_then(Value::as_string),
+            Some("dev.example.app")
+        );
     }
 
     #[test]
@@ -681,16 +703,19 @@ pub mod tests {
         let executable = file(&entries, "Payload/OmniBuildShell.app/OmniBuildShell");
         assert_eq!(mode(executable), 0o100_755);
         // The signatures' entitlements are for the app's own ID, and each
-        // extension's, which is under it.
-        let entitlements = |executable: &str| {
+        // extension's, which is under it. Each executable's is in its arm64
+        // code, at the start of the file but for a watch app's.
+        let in_code = |executable: &str, code: usize, load_command: usize| {
             let executable = file(&entries, executable).contents().unwrap();
-            let signature = Reader::at(&executable, 784 + 8).u32() as usize;
+            let executable = &executable[code..];
+            let signature = Reader::at(executable, load_command + 8).u32() as usize;
             let (_, entitlements) = blobs(&executable[signature..])
                 .into_iter()
                 .find(|(slot, _)| *slot == 5)
                 .unwrap();
             String::from_utf8_lossy(&entitlements).into_owned()
         };
+        let entitlements = |executable: &str| in_code(executable, 0, 784);
         assert!(
             entitlements("Payload/OmniBuildShell.app/OmniBuildShell")
                 .contains("<string>ABCDE12345.dev.example.app</string>")
@@ -740,6 +765,15 @@ pub mod tests {
                 .unwrap(),
             app_clip
         );
+        // The watch app's, in its arm64_32 code too, after its arm64 code,
+        // for its own ID under the app's, from the wildcard.
+        let watch = "Payload/OmniBuildShell.app/Watch/ShellWatch.app/ShellWatch";
+        for (code, load_command) in [(16_384, 784), (65_536, 696)] {
+            assert!(
+                in_code(watch, code, load_command)
+                    .contains("<string>ABCDE12345.dev.example.app.watchkitapp</string>")
+            );
+        }
     }
 
     #[test]
@@ -835,6 +869,21 @@ pub mod tests {
                 },
                 "couldn't rewrite the shell's OmniBuildShell.app/AppClips/ShellClip.app/Info.plist: its bundle ID (CFBundleIdentifier) isn't under the app's, dev.omnibuild.shell",
             ),
+            (
+                with_file(&Entry::new(
+                    WATCH_INFO,
+                    Method::Stored,
+                    b"<plist><dict>
+                        <key>CFBundleIdentifier</key><string>dev.omnibuild.shell.watchkitapp</string>
+                        <key>WKCompanionAppBundleIdentifier</key><string>dev.omnibuild.other</string>
+                    </dict></plist>",
+                )),
+                App {
+                    id: Some("dev.example.app".to_owned()),
+                    ..App::default()
+                },
+                "couldn't rewrite the shell's OmniBuildShell.app/Watch/ShellWatch.app/Info.plist: it's a watch app for another app than the shell: its WKCompanionAppBundleIdentifier isn't dev.omnibuild.shell",
+            ),
         ];
 
         for (shell, app, message) in cases {
@@ -914,7 +963,7 @@ pub mod tests {
                     b"not an executable",
                 )),
                 App::default(),
-                "couldn't sign OmniBuildShell.app/OmniBuildShell: it isn't a 64-bit Mach-O executable",
+                "couldn't sign OmniBuildShell.app/OmniBuildShell: it isn't a 64-bit Mach-O executable, nor one for arm64_32",
             ),
         ];
 

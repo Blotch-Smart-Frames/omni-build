@@ -69,14 +69,21 @@ const INTENTS_EXTENSION_PROFILE = fileURLToPath(
 const APP_CLIP_PROFILE = fileURLToPath(
   new URL('../app/ShellClip.mobileprovision', import.meta.url),
 );
+const WATCH_APP_PROFILE = fileURLToPath(
+  new URL('../app/ShellWatch.mobileprovision', import.meta.url),
+);
 /**
  * The extensions in the iOS shell, under the shell's ID and the app's: an
  * app extension in PlugIns/, and an ExtensionKit extension in Extensions/.
  */
 const EXTENSION = 'ShellNotifications';
 const INTENTS_EXTENSION = 'ShellIntents';
-/** The App Clip's ID, under the shell's and the app's, as Xcode names one. */
+/**
+ * The App Clip's and the watch app's IDs, under the shell's and the app's,
+ * as Xcode names them.
+ */
 const APP_CLIP = 'Clip';
+const WATCH_APP = 'watchkitapp';
 const SIGNER = 'OmniBuild E2E';
 const TEAM = 'OMNIBUILD0';
 /** The keystores' password, the iOS key's and the upload key's. */
@@ -235,6 +242,10 @@ export const expected = (
       // The App Clip and the app name each other in their signatures.
       appClipParent: `${TEAM}.${APP.id}`,
       associatedAppClip: `${TEAM}.${APP.id}.${APP_CLIP}`,
+      // The watch app pairs with the app.
+      watchAppId: `${APP.id}.${WATCH_APP}`,
+      watchCompanion: APP.id,
+      watchAppApplicationIdentifier: `${TEAM}.${APP.id}.${WATCH_APP}`,
     };
   }
   // Signed ad hoc, as Xcode signs a simulator build, and its framework,
@@ -249,6 +260,8 @@ export const expected = (
     extensionId: `${APP.id}.${EXTENSION}`,
     intentsExtensionId: `${APP.id}.${INTENTS_EXTENSION}`,
     appClipId: `${APP.id}.${APP_CLIP}`,
+    watchAppId: `${APP.id}.${WATCH_APP}`,
+    watchCompanion: APP.id,
     signer: 'ad hoc',
   };
 };
@@ -282,7 +295,7 @@ export const repackage = async ({
     let signing: string[] = [];
     if (extension === '.ipa') {
       // A build for devices has to be signed with a key and a profile, and
-      // each extension and the App Clip with one of its own.
+      // each extension, the watch app and the App Clip with one of its own.
       signing = [
         '--signing-key',
         SIGNING_KEY,
@@ -294,6 +307,8 @@ export const repackage = async ({
         INTENTS_EXTENSION_PROFILE,
         '--profile',
         APP_CLIP_PROFILE,
+        '--profile',
+        WATCH_APP_PROFILE,
       ];
     } else if (extension === '.aab') {
       // An app bundle is signed as Google Play takes one: with an upload

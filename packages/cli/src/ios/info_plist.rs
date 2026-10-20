@@ -13,6 +13,9 @@ use crate::config::{App, check_url_scheme};
 /// The start of a binary property list, the format Xcode writes an app's
 /// Info.plist in.
 const BINARY: &[u8] = b"bplist00";
+/// The ID of the iPhone app a watch app pairs with, which watchOS installs
+/// it for.
+const WATCH_COMPANION: &str = "WKCompanionAppBundleIdentifier";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InfoPlist {
@@ -204,12 +207,13 @@ impl InfoPlist {
         Ok(())
     }
 
-    /// Gives an app extension or an App Clip what follows from the app's
-    /// values, as Xcode would have built it for the app: its ID under the
-    /// app's in place of the shell's (`dev.example.app.Share` for
-    /// `dev.omnibuild.shell.Share`), which iOS requires, and the app's
-    /// version and build number, which App Store validation requires.
-    /// `shell_id` is the shell's ID.
+    /// Gives an app extension, an App Clip or a watch app what follows
+    /// from the app's values, as Xcode would have built it for the app: its
+    /// ID under the app's in place of the shell's (`dev.example.app.Share`
+    /// for `dev.omnibuild.shell.Share`), which iOS requires, and the app's
+    /// version and build number, which App Store validation requires. A
+    /// watch app names the app it pairs with too, which becomes the app's
+    /// ID. `shell_id` is the shell's ID.
     pub fn rewrite_nested(&mut self, shell_id: &str, app: &App) -> Result<()> {
         if let Some(id) = &app.id {
             let suffix = self
@@ -219,8 +223,16 @@ impl InfoPlist {
                 .with_context(|| {
                     format!("its bundle ID (CFBundleIdentifier) isn't under the app's, {shell_id}")
                 })?;
-            let id = format!("{id}{suffix}");
-            self.set("CFBundleIdentifier", &id);
+            let own = format!("{id}{suffix}");
+            self.set("CFBundleIdentifier", &own);
+            if let Some(companion) = self.dictionary.get(WATCH_COMPANION) {
+                if companion.as_string() != Some(shell_id) {
+                    bail!(
+                        "it's a watch app for another app than the shell: its {WATCH_COMPANION} isn't {shell_id}"
+                    );
+                }
+                self.set(WATCH_COMPANION, id);
+            }
         }
         if let Some(version) = &app.version {
             self.set("CFBundleShortVersionString", version);
@@ -299,7 +311,7 @@ fn is_version(version: &str) -> bool {
 mod tests {
     use plist::Value;
 
-    use super::InfoPlist;
+    use super::{InfoPlist, WATCH_COMPANION};
     use crate::config::App;
     use crate::ios::tests::shell_info_plist;
 
@@ -450,6 +462,39 @@ mod tests {
             unchanged,
             extension("dev.omnibuild.shell.ShellNotifications")
         );
+    }
+
+    #[test]
+    fn gives_a_watch_app_the_app_it_pairs_with() {
+        let watch_app = |companion: &str| {
+            let mut info = extension("dev.omnibuild.shell.watchkitapp");
+            info.set(WATCH_COMPANION, companion);
+            info
+        };
+        let mut info = watch_app("dev.omnibuild.shell");
+
+        info.rewrite_nested("dev.omnibuild.shell", &app()).unwrap();
+        let error = watch_app("dev.omnibuild.other")
+            .rewrite_nested("dev.omnibuild.shell", &app())
+            .unwrap_err();
+
+        assert_eq!(info.id(), Some("dev.example.app.watchkitapp"));
+        assert_eq!(
+            info.dictionary
+                .get(WATCH_COMPANION)
+                .and_then(Value::as_string),
+            Some("dev.example.app")
+        );
+        assert_eq!(
+            error.to_string(),
+            "it's a watch app for another app than the shell: its WKCompanionAppBundleIdentifier isn't dev.omnibuild.shell"
+        );
+        // Without the app's ID, as the shell has it.
+        let mut unchanged = watch_app("dev.omnibuild.shell");
+        unchanged
+            .rewrite_nested("dev.omnibuild.shell", &App::default())
+            .unwrap();
+        assert_eq!(unchanged, watch_app("dev.omnibuild.shell"));
     }
 
     #[test]
