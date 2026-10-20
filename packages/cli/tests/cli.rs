@@ -97,6 +97,10 @@ fn repackage_signs_the_shell_with_a_debug_key_it_creates_once() {
     );
     assert!(second.status.success(), "{}", stderr(&second));
     assert_eq!(stderr(&second), "");
+    assert_eq!(
+        String::from_utf8_lossy(&second.stdout),
+        format!("Repackaged {SHELL} into {app}\n")
+    );
     let signed = fs::read(app).unwrap();
     assert!(
         signed
@@ -416,9 +420,10 @@ type Install = (String, Vec<u8>);
 
 /// A stand-in for a device's adbd, on a port of this computer, which takes
 /// a connection for each of `answers`: it connects without checking the
-/// key, and installs an app as Android 14 does, with that answer. Returns
-/// its port, and what each connection sent.
-fn fake_device(answers: &[&'static [u8]]) -> (u16, JoinHandle<Vec<Install>>) {
+/// key, or when it `asks`, once its user allows the key, and installs an
+/// app as Android 14 does, with that answer. Returns its port, and what
+/// each connection sent.
+fn fake_device(asks: bool, answers: &[&'static [u8]]) -> (u16, JoinHandle<Vec<Install>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let answers = answers.to_vec();
@@ -428,6 +433,14 @@ fn fake_device(answers: &[&'static [u8]]) -> (u16, JoinHandle<Vec<Install>>) {
             .map(|answer| {
                 let (mut stream, _) = listener.accept().unwrap();
                 assert_eq!(&receive(&mut stream).0, b"CNXN");
+                if asks {
+                    // A token, a second for the signature, and then the
+                    // key, which its user allows.
+                    send(&mut stream, *b"AUTH", 1, 0, &[1; 20]);
+                    assert_eq!(receive(&mut stream).1, 2);
+                    send(&mut stream, *b"AUTH", 1, 0, &[2; 20]);
+                    assert_eq!(receive(&mut stream).1, 3);
+                }
                 let banner = b"device::ro.product.model=Pixel 8;features=shell_v2,cmd\0";
                 send(&mut stream, *b"CNXN", 0x0100_0001, 4096, banner);
                 let (open, local, _, service) = receive(&mut stream);
@@ -481,7 +494,7 @@ fn send(stream: &mut TcpStream, command: [u8; 4], arg0: u32, arg1: u32, data: &[
 #[test]
 fn installs_an_apk_with_an_adb_key_it_creates_once() {
     let home = tempfile::tempdir().unwrap();
-    let (port, device) = fake_device(&[b"Success\n", b"Success\n"]);
+    let (port, device) = fake_device(false, &[b"Success\n", b"Success\n"]);
     let address = format!("127.0.0.1:{port}");
 
     let first = omni_build_at_home(home.path(), &["install", SHELL, "--device", &address]);
@@ -567,8 +580,10 @@ fn install_reports_why_the_device_refused_the_app() {
     let home = tempfile::tempdir().unwrap();
     fs::create_dir(home.path().join(".android")).unwrap();
     fs::copy(ADB_KEY, home.path().join(".android/adbkey")).unwrap();
-    let (port, _) =
-        fake_device(&[b"Failure [INSTALL_FAILED_OLDER_SDK: Requires newer sdk version #37]\n"]);
+    let (port, _) = fake_device(
+        false,
+        &[b"Failure [INSTALL_FAILED_OLDER_SDK: Requires newer sdk version #37]\n"],
+    );
     let address = format!("127.0.0.1:{port}");
 
     let output = omni_build_at_home(home.path(), &["install", SHELL, "--device", &address]);
@@ -579,5 +594,97 @@ fn install_reports_why_the_device_refused_the_app() {
         format!(
             "error: Pixel 8 ({address}) didn't install the app: Failure [INSTALL_FAILED_OLDER_SDK: Requires newer sdk version #37]\n"
         )
+    );
+}
+
+/// The JSON lines omni-build wrote to stdout, for build tools.
+fn events(output: &Output) -> Vec<serde_json::Value> {
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[test]
+fn reports_to_build_tools_as_json_lines() {
+    let home = tempfile::tempdir().unwrap();
+    let app = home.path().join("app.aab");
+    let app = app.to_str().unwrap();
+    // Joined a part at a time, as each system writes its paths.
+    let key = home
+        .path()
+        .join(".omni-build")
+        .join("android-debug-key.pem");
+
+    // --json goes after the command, or before it.
+    let output = omni_build_at_home(home.path(), &["repackage", SHELL_AAB, "-o", app, "--json"]);
+    let failed = omni_build_at_home(
+        home.path(),
+        &["--json", "repackage", "missing.apk", "-o", app],
+    );
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    // Everything on stdout, and nothing for people on stderr.
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        events(&output),
+        [
+            serde_json::json!({
+                "event": "key-created",
+                "key": "debug",
+                "path": key.display().to_string(),
+                "message": format!("Created a debug key for signing Android apps: {}", key.display()),
+            }),
+            serde_json::json!({
+                "event": "repackaged",
+                "shell": SHELL_AAB,
+                "out": app,
+                "platform": "android",
+                "format": "aab",
+                "message": format!("Repackaged {SHELL_AAB} into {app}"),
+            }),
+        ]
+    );
+    assert_eq!(failed.status.code(), Some(1));
+    assert_eq!(stderr(&failed), "");
+    let [error] = &events(&failed)[..] else {
+        panic!("{}", String::from_utf8_lossy(&failed.stdout));
+    };
+    assert_eq!(error["event"], "error");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("couldn't read the shell missing.apk: "),
+        "{error}"
+    );
+}
+
+#[test]
+fn tells_build_tools_when_the_device_asks_its_user() {
+    let home = tempfile::tempdir().unwrap();
+    let (port, _) = fake_device(true, &[b"Success\n"]);
+    let address = format!("127.0.0.1:{port}");
+
+    let output = omni_build_at_home(
+        home.path(),
+        &["install", SHELL, "--device", &address, "--json"],
+    );
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let events = events(&output);
+    let names: Vec<_> = events.iter().map(|event| &event["event"]).collect();
+    assert_eq!(names, ["key-created", "authorizing", "installed"]);
+    assert_eq!(events[0]["key"], "adb");
+    assert_eq!(events[1]["device"], address.as_str());
+    assert_eq!(
+        events[2],
+        serde_json::json!({
+            "event": "installed",
+            "app": SHELL,
+            "device": address,
+            "model": "Pixel 8",
+            "message": format!("Installed {SHELL} on Pixel 8 ({address})"),
+        })
     );
 }

@@ -2,7 +2,7 @@
 
 Build, sign, install and ship iOS and Android apps with no native toolchain: no Xcode, no JDK, no Android SDK. One standalone binary that repackages a prebuilt app shell with your app's config and assets, then signs it.
 
-**Status:** Phase 0 of [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1), with Phase 1 begun. `omni-build repackage` gives an Android APK or app bundle (AAB) shell, or an iOS shell built for the Simulator or for devices, an app's ID, name, version, build number, icon and payload, and signs it, with nothing else installed. `omni-build key create` makes an Android upload key, and `omni-build install` installs an APK on an Android emulator or a device on the network, over ADB. Nothing is published yet.
+**Status:** Phase 0 of [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1), with Phase 1 begun. `omni-build repackage` gives an Android APK or app bundle (AAB) shell, or an iOS shell built for the Simulator or for devices, an app's ID, name, version, build number, icon and payload, and signs it, with nothing else installed. `omni-build key create` makes an Android upload key, and `omni-build install` installs an APK on an Android emulator or a device on the network, over ADB. Build tools read what it reports as JSON lines, through the npm package's API or `--json`. Nothing is published yet.
 
 ## Repository
 
@@ -11,7 +11,7 @@ An npm workspaces and [Turborepo](https://turborepo.com) monorepo, with the Rust
 | Package                   | What it is                                                                                                                   |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `packages/cli`            | The `omni-build` binary, a Rust crate. Its `package.json` is private and only lets turbo run Cargo                           |
-| `packages/omni-build`     | The `omni-build` npm package: a launcher that runs the binary built for the user's OS and CPU                                |
+| `packages/omni-build`     | The `omni-build` npm package: a launcher that runs the binary built for the user's OS and CPU, and an API for build tools    |
 | `packages/e2e`            | End-to-end tests: real Swift and Kotlin app shells, repackaged on every OS, run on the iOS Simulator and an Android emulator |
 | `packages/platform-watch` | Opens an issue when the app shells need a newer Xcode or Android API level, or can't read a vendor's page. Runs daily in CI  |
 | `packages/docs`           | The documentation site and landing page, built with Docusaurus and published to GitHub Pages                                 |

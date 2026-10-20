@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { android } from './android.ts';
 import { type RunResult, run } from './process.ts';
+import { omniBuild } from './repackage.ts';
 
 // Nothing here touches the disk, a device or the network: the Android SDK,
 // the JDK, Gradle and the emulator are all stand-ins.
@@ -37,10 +38,17 @@ vi.mock('./process.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./process.ts')>()),
   run: vi.fn(),
 }));
-vi.mock('./repackage.ts', () => ({
-  omniBuildBinary: () => '/repo/target/release/omni-build',
-  toolchainFree: () => ({ HOME: '/home/me' }),
-}));
+// omniBuild() runs the binary through the run() above, as the real one
+// does, but leaves checking its result to repackage.test.ts.
+vi.mock('./repackage.ts', async () => {
+  const { run: runMock } = await import('./process.ts');
+  return {
+    omniBuild: vi.fn((args: string[], _expected: unknown, options: object) =>
+      runMock('/repo/target/release/omni-build', [...args, '--json'], options),
+    ),
+    toolchainFree: () => ({ HOME: '/home/me' }),
+  };
+});
 
 const PROJECT = fileURLToPath(new URL('../fixtures/android/', import.meta.url));
 const BUILD_DIR = fileURLToPath(new URL('../build/', import.meta.url));
@@ -531,7 +539,7 @@ describe('runApp', () => {
     const adb = 'adb -s emulator-5584';
     expect(commands()).toEqual([
       `${adb} uninstall ${appId}`,
-      'omni-build install app.apk --device emulator-5584',
+      'omni-build install app.apk --device emulator-5584 --json',
       `${adb} logcat -c`,
       `${adb} shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER ${appId}`,
       `${adb} shell am start -W -n ${activity}`,
@@ -552,11 +560,14 @@ describe('runApp', () => {
 
     await android.runApp(options);
 
-    expect(vi.mocked(run).mock.calls[1]).toEqual([
-      '/repo/target/release/omni-build',
+    expect(omniBuild).toHaveBeenCalledWith(
       ['install', 'app.apk', '--device', 'emulator-5584'],
+      { event: 'installed', device: 'emulator-5584' },
       { log: 'commands.log', env: { HOME: '/home/me' } },
-    ]);
+    );
+    expect(vi.mocked(run).mock.calls[1][0]).toBe(
+      '/repo/target/release/omni-build',
+    );
   });
 
   it('installs on a device on the network with omni-build', async () => {
@@ -568,7 +579,7 @@ describe('runApp', () => {
     });
 
     expect(commands()[1]).toBe(
-      'omni-build install app.apk --device 192.168.1.20:5555',
+      'omni-build install app.apk --device 192.168.1.20:5555 --json',
     );
   });
 

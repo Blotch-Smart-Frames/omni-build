@@ -8,7 +8,7 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { run } from './process.ts';
+import { type RunOptions, run } from './process.ts';
 import { SHELL } from './shell.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
@@ -102,6 +102,37 @@ export const omniBuildBinary = () => {
 };
 
 /**
+ * Runs an omni-build command as a build tool would, with `--json`, and
+ * checks that the event it ends with, its result, has the `expected`
+ * values: so the stages check what omni-build reports, as well as what it
+ * makes.
+ */
+export const omniBuild = async (
+  args: string[],
+  expected: Record<string, string>,
+  options: RunOptions,
+) => {
+  const { stdout } = await run(omniBuildBinary(), [...args, '--json'], options);
+  const last = stdout.trimEnd().split('\n').at(-1)!;
+  let event: Record<string, unknown> = {};
+  try {
+    event = JSON.parse(last);
+  } catch {
+    // Wrong in every value, as the error below says.
+  }
+  const wrong = Object.entries(expected).filter(
+    ([name, value]) => event[name] !== value,
+  );
+  if (wrong.length > 0) {
+    throw new Error(
+      `omni-build ended with ${last || 'nothing'}, where ${wrong
+        .map(([name, value]) => `${name} should be ${JSON.stringify(value)}`)
+        .join(' and ')}`,
+    );
+  }
+};
+
+/**
  * What an app must report after the repackage stage, and what signed it:
  * the app config's values where omni-build rewrites them, and the shell's
  * own elsewhere.
@@ -173,7 +204,6 @@ export const repackage = async ({
     outDir,
     `${path.basename(shell, extension)}-${OS_NAMES[process.platform] ?? process.platform}${extension}`,
   );
-  const binary = omniBuildBinary();
   const env = { ...toolchainFree(), OMNI_BUILD_KEY_PASSWORD: KEY_PASSWORD };
   // A hidden folder, which no stage takes for an app.
   const keys = mkdtempSync(path.join(outDir, '.keys-'));
@@ -187,15 +217,16 @@ export const repackage = async ({
       // key, which omni-build creates first, as a developer without a JDK
       // would.
       const keystore = path.join(keys, 'upload.p12');
-      await run(binary, ['key', 'create', keystore, '--subject', UPLOAD_KEY], {
-        log,
-        env,
-      });
+      await omniBuild(
+        ['key', 'create', keystore, '--subject', UPLOAD_KEY],
+        { event: 'key-created', path: keystore },
+        { log, env },
+      );
       signing = ['--signing-key', keystore];
     }
-    await run(
-      binary,
+    await omniBuild(
       ['repackage', shell, '--config', APP_CONFIG, ...signing, '--out', output],
+      { event: 'repackaged', out: output },
       { log, env },
     );
   } finally {

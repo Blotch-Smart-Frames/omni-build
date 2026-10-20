@@ -10,6 +10,7 @@ const sidebars: SidebarsConfig = {
     'installation',
     'repackaging',
     'installing',
+    'build-tools',
     'roadmap',
     'contributing',
   ],

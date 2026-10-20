@@ -9,6 +9,7 @@ mod ios;
 mod key;
 mod keystore;
 mod payload;
+mod report;
 mod zip;
 
 use std::fs;
@@ -20,7 +21,8 @@ use clap::{Args, Parser, Subcommand};
 
 use adb::AdbKey;
 use config::App;
-use key::{ALIAS, SigningKey, debug_key_path};
+use key::{SigningKey, debug_key_path};
+use report::{Event, Format, KeyKind, Platform, Reporter};
 use x509_cert::name::Name;
 
 /// How the error for a file that's none of the shells OmniBuild knows
@@ -34,6 +36,11 @@ const KEY_PASSWORD: &str = "OMNI_BUILD_KEY_PASSWORD";
 #[derive(Debug, Parser)]
 #[command(version, about, arg_required_else_help = true)]
 struct Cli {
+    /// Report each event as a line of JSON on stdout, for build tools to
+    /// read: what OmniBuild created, what it waits for, the command's
+    /// result, or the error it stopped at.
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -119,22 +126,26 @@ struct CreateKey {
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    let cli = Cli::parse();
+    let reporter = Reporter::new(cli.json);
+    match run(cli.command, &reporter) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("error: {error:#}");
+            reporter.report(&Event::Error {
+                message: format!("{error:#}"),
+            });
             ExitCode::FAILURE
         }
     }
 }
 
-fn run(cli: Cli) -> Result<()> {
-    match cli.command {
-        Command::Repackage(args) => repackage(&args),
-        Command::Install(args) => install(&args),
+fn run(command: Command, reporter: &Reporter) -> Result<()> {
+    match command {
+        Command::Repackage(args) => repackage(&args, reporter),
+        Command::Install(args) => install(&args, reporter),
         Command::Key(Key {
             command: KeyCommand::Create(args),
-        }) => create_key(&args),
+        }) => create_key(&args, reporter),
     }
 }
 
@@ -143,7 +154,7 @@ fn key_password() -> String {
     std::env::var(KEY_PASSWORD).unwrap_or_default()
 }
 
-fn repackage(args: &Repackage) -> Result<()> {
+fn repackage(args: &Repackage, reporter: &Reporter) -> Result<()> {
     let shell = fs::read(&args.shell)
         .with_context(|| format!("couldn't read the shell {}", args.shell.display()))?;
     let app = match &args.config {
@@ -165,27 +176,46 @@ fn repackage(args: &Repackage) -> Result<()> {
         })
         .transpose()?;
     let entries = zip::read(&shell).context(NOT_A_SHELL)?;
-    let repackaged = if let Some(bundle) = ios::bundle(&entries) {
-        ios::repackage(entries, &bundle, &app, key.as_ref(), profile.as_deref())?
+    let (repackaged, platform, format) = if let Some(bundle) = ios::bundle(&entries) {
+        let format = if bundle.starts_with("Payload/") {
+            Format::Ipa
+        } else {
+            Format::App
+        };
+        let repackaged = ios::repackage(entries, &bundle, &app, key.as_ref(), profile.as_deref())?;
+        (repackaged, Platform::Ios, format)
     } else if let Some(layout) = android::layout(&entries) {
         if profile.is_some() {
             bail!("a provisioning profile is for iOS apps, and the shell is an Android app");
         }
         let key = match key {
             Some(key) => key,
-            None => android_debug_key()?,
+            None => android_debug_key(reporter)?,
         };
-        android::repackage(entries, layout, &app, &key)?
+        let format = if layout.bundle {
+            Format::Aab
+        } else {
+            Format::Apk
+        };
+        let repackaged = android::repackage(entries, layout, &app, &key)?;
+        (repackaged, Platform::Android, format)
     } else {
         bail!(
             "{NOT_A_SHELL}: it has no AndroidManifest.xml or BundleConfig.pb, and no .app with an Info.plist"
         );
     };
     fs::write(&args.out, repackaged)
-        .with_context(|| format!("couldn't write the app to {}", args.out.display()))
+        .with_context(|| format!("couldn't write the app to {}", args.out.display()))?;
+    reporter.report(&Event::Repackaged {
+        shell: args.shell.display().to_string(),
+        out: args.out.display().to_string(),
+        platform,
+        format,
+    });
+    Ok(())
 }
 
-fn install(args: &Install) -> Result<()> {
+fn install(args: &Install, reporter: &Reporter) -> Result<()> {
     let path = args.app.display();
     let app = fs::read(&args.app).with_context(|| format!("couldn't read the app {path}"))?;
     match zip::read(&app).ok().as_deref().and_then(android::layout) {
@@ -195,28 +225,41 @@ fn install(args: &Install) -> Result<()> {
         ),
         None => bail!("{path} isn't an APK"),
     }
-    let key = adb_key()?;
-    let mut device = adb::Device::connect(args.device.as_deref(), &adb::emulator_ports(), &key)?;
+    let key = adb_key(reporter)?;
+    let mut device = adb::Device::connect(
+        args.device.as_deref(),
+        &adb::emulator_ports(),
+        &key,
+        &|device| {
+            reporter.report(&Event::Authorizing {
+                device: device.to_owned(),
+            });
+        },
+    )?;
     device.install(&app)?;
-    println!("Installed {path} on {device}");
+    reporter.report(&Event::Installed {
+        app: path.to_string(),
+        device: device.serial().to_owned(),
+        model: device.model().map(str::to_owned),
+    });
     Ok(())
 }
 
 /// The key OmniBuild proves itself to Android devices with: adb's, which
 /// OmniBuild creates where adb keeps it if adb hasn't yet.
-fn adb_key() -> Result<AdbKey> {
+fn adb_key(reporter: &Reporter) -> Result<AdbKey> {
     let path = adb::key_path();
     let (key, created) = AdbKey::at(&path, &adb::owner(|name| std::env::var(name).ok()))?;
     if created {
-        eprintln!(
-            "Created a key for ADB, which devices ask you to allow: {}",
-            path.display()
-        );
+        reporter.report(&Event::KeyCreated {
+            key: KeyKind::Adb,
+            path: path.display().to_string(),
+        });
     }
     Ok(key)
 }
 
-fn create_key(args: &CreateKey) -> Result<()> {
+fn create_key(args: &CreateKey, reporter: &Reporter) -> Result<()> {
     let subject = distinguished_name(&args.subject).with_context(|| {
         format!(
             "\"{}\" isn't a distinguished name, such as \"CN=Upload key, O=Example\"",
@@ -224,10 +267,10 @@ fn create_key(args: &CreateKey) -> Result<()> {
         )
     })?;
     SigningKey::create(&args.keystore, &subject, &key_password())?;
-    println!(
-        "Created an upload key in {}, with the alias \"{ALIAS}\". Keep it, and its password, safe: Google Play only takes updates signed with it, unless you ask Google to reset it.",
-        args.keystore.display()
-    );
+    reporter.report(&Event::KeyCreated {
+        key: KeyKind::Upload,
+        path: args.keystore.display().to_string(),
+    });
     Ok(())
 }
 
@@ -249,14 +292,14 @@ fn distinguished_name(text: &str) -> Option<Name> {
 
 /// The key OmniBuild signs Android apps with when it's given none, which
 /// it creates the first time.
-fn android_debug_key() -> Result<SigningKey> {
+fn android_debug_key(reporter: &Reporter) -> Result<SigningKey> {
     let path = debug_key_path();
     let (key, created) = SigningKey::debug(&path)?;
     if created {
-        eprintln!(
-            "Created a debug key for signing Android apps: {}",
-            path.display()
-        );
+        reporter.report(&Event::KeyCreated {
+            key: KeyKind::Debug,
+            path: path.display().to_string(),
+        });
     }
     Ok(key)
 }

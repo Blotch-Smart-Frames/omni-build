@@ -77,12 +77,16 @@ impl<'a> Connection<'a> {
     /// Connects to the device at the other end of `stream`, proving
     /// OmniBuild's identity with `key`: by signing the device's token if
     /// the device trusts the key, or by sending the key for its user to
-    /// allow if it doesn't.
-    pub fn open(stream: impl Stream + 'a, key: &AdbKey) -> Result<Self> {
-        Self::handshake(Box::new(stream), key)
+    /// allow if it doesn't, and calling `authorizing` as the device asks.
+    pub fn open(stream: impl Stream + 'a, key: &AdbKey, authorizing: &dyn Fn()) -> Result<Self> {
+        Self::handshake(Box::new(stream), key, authorizing)
     }
 
-    fn handshake(mut stream: Box<dyn Stream + 'a>, key: &AdbKey) -> Result<Self> {
+    fn handshake(
+        mut stream: Box<dyn Stream + 'a>,
+        key: &AdbKey,
+        authorizing: &dyn Fn(),
+    ) -> Result<Self> {
         send(&mut stream, CNXN, VERSION, MAX_PAYLOAD, b"host::\0")?;
         let mut auth = Auth::Unsigned;
         loop {
@@ -104,9 +108,7 @@ impl<'a> Connection<'a> {
                 // it, and then connect.
                 (AUTH, AUTH_TOKEN, Auth::Signed) => {
                     auth = Auth::KeySent;
-                    eprintln!(
-                        "The device asks whether to allow debugging from this computer. Allow it on the device."
-                    );
+                    authorizing();
                     let mut public_key = key.public_key().as_bytes().to_vec();
                     public_key.push(0);
                     (AUTH_PUBLIC_KEY, public_key)
@@ -271,6 +273,7 @@ fn name(command: u32) -> String {
 
 #[cfg(test)]
 pub mod tests {
+    use std::cell::Cell;
     use std::collections::VecDeque;
     use std::io::{self, Cursor, ErrorKind, Read, Write};
     use std::net::{TcpListener, TcpStream};
@@ -355,6 +358,17 @@ pub mod tests {
                 Some(responses)
             }
             _ => Some(Vec::new()),
+        }
+    }
+
+    /// A device that doesn't know the key: it sends a second token for the
+    /// signature, and once its user allows the key it's sent, it answers
+    /// as `respond` does.
+    pub fn asking(mut respond: impl Respond) -> impl Respond {
+        move |received| match (received.command, received.arg0) {
+            (CNXN, _) | (AUTH, AUTH_SIGNATURE) => Some(vec![token(20)]),
+            (AUTH, _) => respond(&message(CNXN, VERSION, MAX_PAYLOAD, b"host::\0")),
+            _ => respond(received),
         }
     }
 
@@ -453,6 +467,10 @@ pub mod tests {
         }
     }
 
+    /// For a device that never asks its user to allow the key, or whose
+    /// asking doesn't matter.
+    fn unasked() {}
+
     /// A device that answers every message with `messages`.
     fn always(messages: fn() -> Vec<Message>) -> impl Respond {
         move |_: &Message| Some(messages())
@@ -462,7 +480,7 @@ pub mod tests {
     fn connects_to_a_device_that_doesnt_check_the_key() {
         let mut device = Device::new(always(|| vec![connected(4096)]));
 
-        let connection = Connection::open(&mut device, &KEY).unwrap();
+        let connection = Connection::open(&mut device, &KEY, &unasked).unwrap();
 
         assert_eq!(connection.property("ro.product.model"), Some("Pixel 8"));
         assert_eq!(connection.property("ro.serialno"), None);
@@ -494,8 +512,10 @@ pub mod tests {
             }])
         });
 
-        Connection::open(&mut device, &KEY).unwrap();
+        Connection::open(&mut device, &KEY, &unasked).unwrap();
 
+        // The device trusts the key, so it doesn't ask for it.
+        assert_eq!(device.commands(), ["CNXN", "AUTH"]);
         let signature = &device.log[1];
         assert_eq!((signature.command, signature.arg0), (AUTH, AUTH_SIGNATURE));
         RsaPrivateKey::from_pkcs8_pem(&std::fs::read_to_string(FIXTURE).unwrap())
@@ -516,8 +536,11 @@ pub mod tests {
             }])
         });
 
-        Connection::open(&mut device, &KEY).unwrap();
+        let asked = Cell::new(0);
+        Connection::open(&mut device, &KEY, &|| asked.set(asked.get() + 1)).unwrap();
 
+        // Once, as it sends the key, for the user to see the device asking.
+        assert_eq!(asked.get(), 1);
         assert_eq!(device.commands(), ["CNXN", "AUTH", "AUTH"]);
         let public_key = &device.log[2];
         assert_eq!(public_key.arg0, AUTH_PUBLIC_KEY);
@@ -530,7 +553,7 @@ pub mod tests {
     #[test]
     fn says_why_it_couldnt_connect() {
         let refuses = |messages: fn() -> Vec<Message>| {
-            let error = Connection::open(Device::new(always(messages)), &KEY)
+            let error = Connection::open(Device::new(always(messages)), &KEY, &unasked)
                 .err()
                 .unwrap();
             format!("{error:#}")
@@ -564,7 +587,10 @@ pub mod tests {
     fn tells_adb_from_whatever_else_listens() {
         let refuses = |bytes: &[u8]| {
             let device = Device::new(always(Vec::new)).saying(bytes);
-            format!("{:#}", Connection::open(device, &KEY).err().unwrap())
+            format!(
+                "{:#}",
+                Connection::open(device, &KEY, &unasked).err().unwrap()
+            )
         };
         let mut oversized = Vec::new();
         send(&mut oversized, CNXN, 0, 0, b"").unwrap();
@@ -589,12 +615,18 @@ pub mod tests {
         reset.silence = ErrorKind::ConnectionReset;
 
         assert_eq!(
-            format!("{:#}", Connection::open(silent, &KEY).err().unwrap()),
+            format!(
+                "{:#}",
+                Connection::open(silent, &KEY, &unasked).err().unwrap()
+            ),
             "the device stopped answering"
         );
         assert!(
-            format!("{:#}", Connection::open(reset, &KEY).err().unwrap())
-                .starts_with("couldn't read from the device: ")
+            format!(
+                "{:#}",
+                Connection::open(reset, &KEY, &unasked).err().unwrap()
+            )
+            .starts_with("couldn't read from the device: ")
         );
     }
 
@@ -602,7 +634,7 @@ pub mod tests {
     fn writes_input_a_payload_at_a_time_and_returns_the_output() {
         let mut device = Device::new(exec_device(4096, BANNER, Some(b"Success\n")));
         let input: Vec<u8> = (0..10_000u32).map(|n| n.to_le_bytes()[0]).collect();
-        let mut connection = Connection::open(&mut device, &KEY).unwrap();
+        let mut connection = Connection::open(&mut device, &KEY, &unasked).unwrap();
 
         let output = connection.run("exec:cat -S 10000", &input).unwrap();
         let second = connection.run("exec:true -S 1", b"!").unwrap();
@@ -655,7 +687,7 @@ pub mod tests {
     #[test]
     fn keeps_output_the_device_writes_before_it_takes_all_the_input() {
         let mut device = Device::new(failing_device());
-        let mut connection = Connection::open(&mut device, &KEY).unwrap();
+        let mut connection = Connection::open(&mut device, &KEY, &unasked).unwrap();
 
         let output = connection.run("exec:false", &[0; 10_000]).unwrap();
 
@@ -671,12 +703,12 @@ pub mod tests {
         let handshake = |writes| {
             let mut device = Device::new(always(|| vec![token(20)]));
             device.writes_left = writes;
-            Connection::open(device, &KEY).err().unwrap()
+            Connection::open(device, &KEY, &unasked).err().unwrap()
         };
         let stream = |writes, input: &'static [u8]| {
             let mut device = Device::new(failing_device());
             device.writes_left = writes;
-            let mut connection = Connection::open(device, &KEY).unwrap();
+            let mut connection = Connection::open(device, &KEY, &unasked).unwrap();
             connection.run("exec:false", input).err().unwrap()
         };
 
@@ -706,7 +738,7 @@ pub mod tests {
                 _ => message(CLSE, 0, received.arg0, b""),
             }])
         });
-        let mut connection = Connection::open(&mut device, &KEY).unwrap();
+        let mut connection = Connection::open(&mut device, &KEY, &unasked).unwrap();
 
         assert_eq!(connection.run("nonsense:", b"input").unwrap(), b"");
     }
@@ -721,7 +753,7 @@ pub mod tests {
                     _ => stray.take().unwrap(),
                 }])
             });
-            let mut connection = Connection::open(device, &KEY).unwrap();
+            let mut connection = Connection::open(device, &KEY, &unasked).unwrap();
             format!("{:#}", connection.run("exec:true", b"").err().unwrap())
         };
 
@@ -738,7 +770,7 @@ pub mod tests {
     #[test]
     fn writes_something_to_a_device_that_says_it_takes_nothing() {
         let mut device = Device::new(exec_device(0, BANNER, Some(b"Success\n")));
-        let mut connection = Connection::open(&mut device, &KEY).unwrap();
+        let mut connection = Connection::open(&mut device, &KEY, &unasked).unwrap();
 
         assert_eq!(connection.max_payload, 1);
         assert_eq!(
@@ -753,7 +785,8 @@ pub mod tests {
         let address = listener.local_addr().unwrap();
         let device = serve(listener, exec_device(4096, BANNER, Some(b"Success\n")));
 
-        let mut connection = Connection::open(TcpStream::connect(address).unwrap(), &KEY).unwrap();
+        let mut connection =
+            Connection::open(TcpStream::connect(address).unwrap(), &KEY, &unasked).unwrap();
 
         assert_eq!(
             connection.run("exec:true -S 5", b"input").unwrap(),
@@ -768,7 +801,8 @@ pub mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let device = serve(listener, exec_device(4096, BANNER, None));
-        let mut connection = Connection::open(TcpStream::connect(address).unwrap(), &KEY).unwrap();
+        let mut connection =
+            Connection::open(TcpStream::connect(address).unwrap(), &KEY, &unasked).unwrap();
 
         let error = connection.run("exec:true -S 5", b"input").err().unwrap();
 
