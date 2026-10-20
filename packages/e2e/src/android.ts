@@ -221,6 +221,20 @@ const verify: Platform['verify'] = async ({ app, artifactsDir, log }) => {
     ['verify', '--verbose', '--print-certs', app],
     { log },
   );
+  // The fixture runs on Android 5.0 and later: before 7.0 that takes a v1
+  // signature, from 7.0 v2, and from 9 v3. apksigner checks the ones the
+  // APK's minSdkVersion needs, and says which it found.
+  const missing = ['v1', 'v2', 'v3'].filter(
+    (scheme) =>
+      !new RegExp(`^Verified using ${scheme} scheme .*: true$`, 'm').test(
+        verified.stdout,
+      ),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `apksigner found no ${missing.join(', ')} signature in ${app}.`,
+    );
+  }
   // The first signer's line: "Signer #1 certificate DN: ..." up to build
   // tools 36, "V3.0 Signer: certificate DN: ..." from 37.
   return {
@@ -405,21 +419,23 @@ const runApp: Platform<Started, Device>['runApp'] = async ({
     await onDevice(['install', app]);
   }
   await onDevice(['logcat', '-c'], { allowFailure: true });
-  // The launcher activity's name, which the application ID doesn't give.
-  const resolved = await onDevice([
+  // The launcher activity, as a launcher starts it. monkey finds it from the
+  // application ID on every Android version: `cmd`, which names it, is
+  // Android 7.0 and later, and `am start` won't start a launcher activity
+  // by its intent alone. Its one event is the launch: with system keys
+  // among the events it may send, monkey gives up on an emulator, which
+  // has none.
+  await onDevice([
     'shell',
-    'cmd',
-    'package',
-    'resolve-activity',
-    '--brief',
-    '-a',
-    'android.intent.action.MAIN',
+    'monkey',
+    '-p',
+    appId,
     '-c',
     'android.intent.category.LAUNCHER',
-    appId,
+    '--pct-syskeys',
+    '0',
+    '1',
   ]);
-  const activity = resolved.stdout.trim().split('\n').at(-1)!.trim();
-  await onDevice(['shell', 'am', 'start', '-W', '-n', activity]);
 
   const saveLogcat = async () => {
     const logcat = await onDevice(['logcat', '-d', '-v', 'time'], {
