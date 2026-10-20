@@ -20,7 +20,7 @@ npm install --save-dev omni-build
 npx omni-build --help
 ```
 
-The `omni-build` package is a small launcher. npm installs the binary for your OS and CPU from one of the `@omni-build/*` packages, each of which declares its `os` and `cpu`, and `omni-build` runs it. esbuild, rspack and oxlint are distributed the same way.
+The `omni-build` package is a small launcher. npm installs the binary for your OS and CPU from one of the `@omni-build/*` packages, each of which declares its `os` and `cpu`, and `omni-build` runs it. esbuild, rspack and oxlint are distributed the same way. For every pull request, CI packs these packages from that pull request's builds and installs them on each of the platforms below, checking that npm picks the machine's own binary and that it runs.
 
 To use a binary from somewhere else, such as one you built yourself, set `OMNI_BUILD_BINARY` to its path.
 

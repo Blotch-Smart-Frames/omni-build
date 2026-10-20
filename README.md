@@ -16,10 +16,11 @@ An npm workspaces and [Turborepo](https://turborepo.com) monorepo, with the Rust
 | `packages/platform-watch` | Opens an issue when the app shells need a newer Xcode or Android API level, or can't read a vendor's page. Runs daily in CI  |
 | `packages/docs`           | The documentation site and landing page, built with Docusaurus and published to GitHub Pages                                 |
 | `packages/coverage-guard` | Fails the coverage gate wherever 100% would pass over untested code. `npm run test:coverage` runs it after the tests         |
+| `packages/release`        | Packs the npm packages a release publishes, and checks `npm install omni-build` gets each machine its own binary             |
 
 The npm packages are TypeScript. Node runs the private ones' `.ts` files as they are, by stripping the types, so their imports name the `.ts` file and they use only syntax that strips away (no enums or namespaces). The `omni-build` launcher is compiled to `dist/` for npm, because Node won't strip types in `node_modules`.
 
-The per-platform npm packages that will hold the binaries (`@omni-build/darwin-arm64`, `@omni-build/linux-x64`, ...) aren't in the repository. npm refuses to install a workspace whose `os` or `cpu` doesn't match the machine, so the release workflow will generate them from the list in `packages/omni-build/src/platforms.ts`.
+The per-platform npm packages that hold the binaries (`@omni-build/darwin-arm64`, `@omni-build/linux-x64`, ...) aren't in the repository. npm refuses to install a workspace whose `os` or `cpu` doesn't match the machine, so `packages/release` makes them from the list in `packages/omni-build/src/platforms.ts`, and CI installs them on each OS and CPU from a registry on the runner. Nothing is published yet.
 
 ## Development
 
@@ -37,6 +38,6 @@ npm run format         # rustfmt and oxfmt; CI runs format:check
 npm run e2e -- --platform ios  # build, repackage and run a real app on the iOS Simulator, or android (see packages/e2e)
 ```
 
-Pull requests must pass CI: formatting, lint (warnings are errors), spelling, type checks, 100% test coverage, tests on Linux, macOS and Windows, a release build on each of the six targets OmniBuild ships for, the end-to-end tests on the iOS Simulator and an Android emulator, and a build of the docs site.
+Pull requests must pass CI: formatting, lint (warnings are errors), spelling, type checks, 100% test coverage, tests on Linux, macOS and Windows, a release build on each of the six targets OmniBuild ships for, `npm install omni-build` from those builds on each of the six, the end-to-end tests on the iOS Simulator and an Android emulator, and a build of the docs site.
 
 Cargo also works on its own from the repository root, for example `cargo run -- --help`.
