@@ -503,15 +503,16 @@ describe('verify', () => {
     });
   });
 
-  it("reads each extension's own ID and what its profile allowed it", async () => {
+  it("reads each nested bundle's own ID and what its profile allowed it", async () => {
     const bundle = path.join(unzipped, 'Payload', 'OmniBuildShell.app');
-    // An app extension, and an ExtensionKit extension in a folder of its
-    // own.
+    // An app extension, an ExtensionKit extension in a folder of its own,
+    // and an App Clip.
     const folders: Record<string, string[]> = {
       [path.join(bundle, 'PlugIns')]: ['README', 'ShellNotifications.appex'],
       [path.join(bundle, 'Extensions')]: ['ShellIntents.appex'],
+      [path.join(bundle, 'AppClips')]: ['ShellClip.app'],
     };
-    const extensions = Object.entries(folders).map(([folder, names]) =>
+    const nested = Object.entries(folders).map(([folder, names]) =>
       path.join(folder, names.at(-1) ?? ''),
     );
     vi.mocked(readdirSync).mockImplementation(
@@ -519,23 +520,32 @@ describe('verify', () => {
     );
     vi.mocked(existsSync).mockImplementation((file) => String(file) in folders);
     vi.mocked(readFileSync).mockReturnValue('the payload');
-    const identifier = (id: string) =>
-      `<dict><key>application-identifier</key><string>${id}</string></dict>`;
-    /** The ID of the bundle a command names, by the extension it names. */
+    /** The ID of the bundle a command names, by the nested one it names. */
     const id = (args: string[]) => {
-      const extension = extensions.find((folder) =>
+      const named = nested.find((folder) =>
         args.some((arg) => arg.startsWith(folder)),
       );
-      return extension
-        ? `dev.omnibuild.e2e.app.${path.basename(extension, '.appex')}`
+      return named
+        ? `dev.omnibuild.e2e.app.${path.parse(named).name}`
         : 'dev.omnibuild.e2e.app';
+    };
+    const clip = 'TEAM.dev.omnibuild.e2e.app.ShellClip';
+    /** The entitlements codesign prints, which name the app and its App Clip to each other. */
+    const entitlements = (bundleId: string) => {
+      const named =
+        bundleId === 'dev.omnibuild.e2e.app'
+          ? `<key>com.apple.developer.associated-appclip-app-identifiers</key>\n\t<array>\n\t\t<string>${clip}</string>\n\t</array>`
+          : bundleId.endsWith('ShellClip')
+            ? '<key>com.apple.developer.parent-application-identifiers</key><array><string>TEAM.dev.omnibuild.e2e.app</string></array>'
+            : '';
+      return `<dict><key>application-identifier</key><string>TEAM.${bundleId}</string>${named}</dict>`;
     };
     respond = (program, args) => {
       if (program === 'plutil') {
         return { stdout: JSON.stringify({ CFBundleIdentifier: id(args) }) };
       }
       if (args.includes('--entitlements')) {
-        return { stdout: identifier(`TEAM.${id(args)}`) };
+        return { stdout: entitlements(id(args)) };
       }
       return args[0] === '--display' ? { output: '' } : undefined;
     };
@@ -551,6 +561,10 @@ describe('verify', () => {
       intentsExtensionId: 'dev.omnibuild.e2e.app.ShellIntents',
       intentsExtensionApplicationIdentifier:
         'TEAM.dev.omnibuild.e2e.app.ShellIntents',
+      appClipId: 'dev.omnibuild.e2e.app.ShellClip',
+      appClipApplicationIdentifier: clip,
+      appClipParent: 'TEAM.dev.omnibuild.e2e.app',
+      associatedAppClip: clip,
     });
   });
 

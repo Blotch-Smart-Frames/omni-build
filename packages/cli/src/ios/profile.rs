@@ -18,6 +18,12 @@ use x509_cert::der::asn1::OctetString;
 
 use super::entitlements::{Entitlement, Entitlements};
 
+/// What makes an app an App Clip, which only the profile of an App ID
+/// registered as an App Clip's allows.
+const ON_DEMAND_INSTALL: &str = "com.apple.developer.on-demand-install-capable";
+/// The App ID of the app an App Clip belongs to, as its signature names it.
+const PARENT_APPLICATIONS: &str = "com.apple.developer.parent-application-identifiers";
+
 pub struct Profile {
     /// The profile as Apple made it, which goes in the app as it is.
     pub bytes: Vec<u8>,
@@ -70,6 +76,13 @@ impl Profile {
         &self.application_identifier
     }
 
+    /// The App ID's prefix, the team's ID: `TEAM` in `TEAM.dev.example.app`.
+    pub fn prefix(&self) -> &str {
+        self.application_identifier
+            .split_once('.')
+            .map_or("", |(prefix, _)| prefix)
+    }
+
     /// How closely the App ID fits the bundle `bundle_id`, if it includes
     /// it: an exact App ID most, and then a wildcard the longer what it
     /// matches before its `*`, so that `TEAM.dev.example.*` fits closer
@@ -92,10 +105,7 @@ impl Profile {
     /// capability its App ID may use, such as push notifications, but an
     /// app claims one only if it uses it.
     pub fn entitlements(&self, bundle_id: &str, certificate: &[u8]) -> Result<Entitlements> {
-        let (prefix, _) = self
-            .application_identifier
-            .split_once('.')
-            .unwrap_or_default();
+        let prefix = self.prefix();
         if !self
             .certificates
             .iter()
@@ -121,6 +131,36 @@ impl Profile {
         }
         Ok(entitlements)
     }
+
+    /// The entitlements to sign the App Clip `bundle_id`, of the app
+    /// `app_id`, with: an app's, and those that make it an App Clip of that
+    /// app, as Xcode signs one. iOS installs an App Clip only with them,
+    /// and only with a profile that allows them: the profile of an App ID
+    /// registered as an App Clip's, which this has to be.
+    pub fn app_clip_entitlements(
+        &self,
+        bundle_id: &str,
+        app_id: &str,
+        certificate: &[u8],
+    ) -> Result<Entitlements> {
+        let mut entitlements = self.entitlements(bundle_id, certificate)?;
+        if self
+            .entitlements
+            .get(ON_DEMAND_INSTALL)
+            .and_then(Value::as_boolean)
+            != Some(true)
+        {
+            bail!(
+                "it isn't an App Clip's: it doesn't allow {ON_DEMAND_INSTALL}, as the profile of an App ID registered as an App Clip's does"
+            );
+        }
+        entitlements.insert(ON_DEMAND_INSTALL, Entitlement::Boolean(true));
+        entitlements.insert(
+            PARENT_APPLICATIONS,
+            Entitlement::Strings(vec![format!("{}.{app_id}", self.prefix())]),
+        );
+        Ok(entitlements)
+    }
 }
 
 #[cfg(test)]
@@ -139,6 +179,9 @@ pub mod tests {
     /// The test profile: for the test identity, any bundle ID, and
     /// debugging, made as tests/fixtures/README.md says.
     pub const PROFILE: &[u8] = include_bytes!("../../tests/fixtures/profile.mobileprovision");
+    /// The test App Clip profile: for the test identity, the shell's App
+    /// Clip, `dev.omnibuild.shell.Clip`, of the shell, and debugging.
+    pub const CLIP_PROFILE: &[u8] = include_bytes!("../../tests/fixtures/clip.mobileprovision");
 
     /// A profile of this property list, unsigned.
     fn profile_of(plist: &str) -> Vec<u8> {
@@ -179,6 +222,23 @@ pub mod tests {
             </dict></plist>"
         )))
         .unwrap()
+    }
+
+    /// An App Clip's profile for this App ID, of the app `parent`, as Apple
+    /// makes one, allowing the test identity's certificate, unsigned.
+    pub fn app_clip_profile(app_id: &str, parent: &str) -> Vec<u8> {
+        let certificate = data(identity().certificate());
+        profile_of(&format!(
+            "<plist><dict>
+                <key>DeveloperCertificates</key><array><data>{certificate}</data></array>
+                <key>Entitlements</key><dict>
+                    <key>application-identifier</key><string>{app_id}</string>
+                    <key>com.apple.developer.on-demand-install-capable</key><true/>
+                    <key>com.apple.developer.parent-application-identifiers</key>
+                    <array><string>{parent}</string></array>
+                </dict>
+            </dict></plist>"
+        ))
     }
 
     fn data(bytes: &[u8]) -> String {
@@ -237,6 +297,59 @@ pub mod tests {
         assert_eq!(fit("TEAM.dev.other.*", "dev.example.app"), None);
         assert_eq!(fit("no prefix", "no prefix"), None);
         assert_eq!(profile_for("TEAM.*").app_id(), "TEAM.*");
+    }
+
+    #[test]
+    fn gives_an_app_clip_the_entitlements_that_make_it_one() {
+        let profile = Profile::parse(CLIP_PROFILE).unwrap();
+
+        let entitlements = profile
+            .app_clip_entitlements(
+                "dev.omnibuild.shell.Clip",
+                "dev.omnibuild.shell",
+                identity().certificate(),
+            )
+            .unwrap();
+
+        // An app's, and that it's an App Clip, and whose.
+        let mut expected = profile
+            .entitlements("dev.omnibuild.shell.Clip", identity().certificate())
+            .unwrap();
+        expected.insert(
+            "com.apple.developer.on-demand-install-capable",
+            Entitlement::Boolean(true),
+        );
+        expected.insert(
+            "com.apple.developer.parent-application-identifiers",
+            Entitlement::Strings(vec!["ABCDE12345.dev.omnibuild.shell".to_owned()]),
+        );
+        assert_eq!(entitlements, expected);
+        assert_eq!(profile.prefix(), "ABCDE12345");
+        assert_eq!(profile_for("no prefix").prefix(), "");
+    }
+
+    #[test]
+    fn refuses_an_app_clip_a_profile_that_isnt_an_app_clips() {
+        let certificate = identity().certificate().to_vec();
+        let not_a_clips = Profile::parse(PROFILE).unwrap().app_clip_entitlements(
+            "dev.omnibuild.shell.Clip",
+            "dev.omnibuild.shell",
+            &certificate,
+        );
+        let stranger = Profile::parse(CLIP_PROFILE).unwrap().app_clip_entitlements(
+            "dev.omnibuild.shell.Clip",
+            "dev.omnibuild.shell",
+            b"another certificate",
+        );
+
+        assert_eq!(
+            not_a_clips.unwrap_err().to_string(),
+            "it isn't an App Clip's: it doesn't allow com.apple.developer.on-demand-install-capable, as the profile of an App ID registered as an App Clip's does"
+        );
+        assert_eq!(
+            stranger.unwrap_err().to_string(),
+            "it doesn't allow the signing key's certificate (DeveloperCertificates)"
+        );
     }
 
     #[test]

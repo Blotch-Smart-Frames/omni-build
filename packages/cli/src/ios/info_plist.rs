@@ -204,12 +204,13 @@ impl InfoPlist {
         Ok(())
     }
 
-    /// Gives an app extension what follows from the app's values, as Xcode
-    /// would have built it for the app: its ID under the app's in place of
-    /// the shell's (`dev.example.app.Share` for `dev.omnibuild.shell.Share`),
-    /// which iOS requires, and the app's version and build number, which
-    /// App Store validation requires. `shell_id` is the shell's ID.
-    pub fn rewrite_extension(&mut self, shell_id: &str, app: &App) -> Result<()> {
+    /// Gives an app extension or an App Clip what follows from the app's
+    /// values, as Xcode would have built it for the app: its ID under the
+    /// app's in place of the shell's (`dev.example.app.Share` for
+    /// `dev.omnibuild.shell.Share`), which iOS requires, and the app's
+    /// version and build number, which App Store validation requires.
+    /// `shell_id` is the shell's ID.
+    pub fn rewrite_nested(&mut self, shell_id: &str, app: &App) -> Result<()> {
         if let Some(id) = &app.id {
             let suffix = self
                 .id()
@@ -420,8 +421,7 @@ mod tests {
     fn gives_an_extension_an_id_under_the_apps_and_its_version() {
         let mut info = extension("dev.omnibuild.shell.ShellNotifications");
 
-        info.rewrite_extension("dev.omnibuild.shell", &app())
-            .unwrap();
+        info.rewrite_nested("dev.omnibuild.shell", &app()).unwrap();
 
         assert_eq!(
             entries(&info.to_bytes()),
@@ -444,7 +444,7 @@ mod tests {
         // Without the app's values, as the shell has it.
         let mut unchanged = extension("dev.omnibuild.shell.ShellNotifications");
         unchanged
-            .rewrite_extension("dev.omnibuild.shell", &App::default())
+            .rewrite_nested("dev.omnibuild.shell", &App::default())
             .unwrap();
         assert_eq!(
             unchanged,
@@ -456,7 +456,7 @@ mod tests {
     fn refuses_an_extension_whose_id_isnt_under_the_apps() {
         for id in ["dev.omnibuild.other", "dev.omnibuild.shellfish"] {
             let error = extension(id)
-                .rewrite_extension("dev.omnibuild.shell", &app())
+                .rewrite_nested("dev.omnibuild.shell", &app())
                 .unwrap_err();
 
             assert_eq!(

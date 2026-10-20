@@ -20,6 +20,11 @@ const PROFILE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/profile.mobileprovision"
 );
+/// The test profile for the shell's App Clip, which needs one of its own.
+const CLIP_PROFILE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/clip.mobileprovision"
+);
 
 fn omni_build(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_omni-build"))
@@ -197,13 +202,15 @@ fn repackage_signs_with_the_key_it_is_given() {
             "--signing-key",
             IDENTITY,
             // One for the app and one for each extension, as they'd be
-            // without a wildcard App ID.
+            // without a wildcard App ID, and the App Clip's own.
             "--profile",
             PROFILE,
             "--profile",
             PROFILE,
             "--profile",
             PROFILE,
+            "--profile",
+            CLIP_PROFILE,
             "--out",
             ipa.to_str().unwrap(),
         ],
@@ -229,6 +236,10 @@ fn repackage_signs_with_the_key_it_is_given() {
     assert!(contains(
         &ipa,
         b"Payload/OmniBuildShell.app/Extensions/ShellIntents.appex/embedded.mobileprovision"
+    ));
+    assert!(contains(
+        &ipa,
+        b"Payload/OmniBuildShell.app/AppClips/ShellClip.app/embedded.mobileprovision"
     ));
 }
 

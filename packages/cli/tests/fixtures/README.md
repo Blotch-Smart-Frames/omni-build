@@ -34,7 +34,7 @@ The Rust tests find files in both Android shells by name, and resources by their
 
 ## `shell.app.zip`
 
-The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. Its executable, its framework's (`Frameworks/ShellKit.framework`) and its extensions' (`PlugIns/ShellNotifications.appex`, an app extension, and `Extensions/ShellIntents.appex`, an ExtensionKit extension) are tiny programs instead of the shell's Swift, linked for the Simulator's two architectures and signed by the linker: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, its English translation (`en.lproj/InfoPlist.strings`), its icon, in the asset catalog (`Assets.car`) and the PNGs beside it, and its signatures, but never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
+The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. Its executable, its framework's (`Frameworks/ShellKit.framework`) its extensions' (`PlugIns/ShellNotifications.appex`, an app extension, and `Extensions/ShellIntents.appex`, an ExtensionKit extension) and its App Clip's (`AppClips/ShellClip.app`) are tiny programs instead of the shell's Swift, linked for the Simulator's two architectures and signed by the linker: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, its English translation (`en.lproj/InfoPlist.strings`), its icon, in the asset catalog (`Assets.car`) and the PNGs beside it, and its signatures, but never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
 
 ```sh
 node packages/e2e/src/cli.ts build --platform ios
@@ -50,6 +50,8 @@ xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-versio
   -Wl,-adhoc_codesign main.c -o trimmed/OmniBuildShell.app/PlugIns/ShellNotifications.appex/ShellNotifications
 xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-version-min=17.0 \
   -Wl,-adhoc_codesign main.c -o trimmed/OmniBuildShell.app/Extensions/ShellIntents.appex/ShellIntents
+xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-version-min=17.0 \
+  -Wl,-adhoc_codesign main.c -o trimmed/OmniBuildShell.app/AppClips/ShellClip.app/ShellClip
 ditto -c -k --norsrc --keepParent trimmed/OmniBuildShell.app packages/cli/tests/fixtures/shell.app.zip
 ```
 
@@ -68,10 +70,12 @@ xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -Wl,-adhoc_codesign
   -o trimmed-ipa/Payload/OmniBuildShell.app/PlugIns/ShellNotifications.appex/ShellNotifications
 xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -Wl,-adhoc_codesign main.c \
   -o trimmed-ipa/Payload/OmniBuildShell.app/Extensions/ShellIntents.appex/ShellIntents
+xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -Wl,-adhoc_codesign main.c \
+  -o trimmed-ipa/Payload/OmniBuildShell.app/AppClips/ShellClip.app/ShellClip
 cd trimmed-ipa && ditto -c -k --norsrc --keepParent Payload ../packages/cli/tests/fixtures/shell.ipa
 ```
 
-The tests compare what OmniBuild signs with what `codesign` signs from the same files, the framework first, then the extensions, then the app, as Xcode signs them: ad hoc, with `codesign --sign - --force` on each bundle of each unzipped shell, and with the identity below, from a keychain, with `codesign --sign "OmniBuild Test" --timestamp=none`. That adds, for the extensions and the app, `--entitlements` with the entitlements the profile gives each ID (`dev.omnibuild.shell.ShellNotifications`, `dev.omnibuild.shell.ShellIntents` and `dev.omnibuild.shell`), and the profile copied into each as `embedded.mobileprovision`. In the device shell, `codesign` pads each signature with what the linker's left there, and OmniBuild with zeros. So the tests compare each executable up to the end of its signature, and the app is signed again around the framework and the extensions with their padding zeroed. A remade shell needs those values in the tests made again.
+The tests compare what OmniBuild signs with what `codesign` signs from the same files, the framework first, then the extensions, then the App Clip, then the app, as Xcode signs them: ad hoc, with `codesign --sign - --force` on each bundle of each unzipped shell, and with the identity below, from a keychain, with `codesign --sign "OmniBuild Test" --timestamp=none`. That adds, for the extensions, the App Clip and the app, `--entitlements` with the entitlements OmniBuild signs each with (`dev.omnibuild.shell.ShellNotifications`, `dev.omnibuild.shell.ShellIntents`, `dev.omnibuild.shell.Clip` and `dev.omnibuild.shell`): what the profile gives each ID, and for the App Clip and the app, the entitlements that name each other. Each gets its profile copied into it as `embedded.mobileprovision`: `clip.mobileprovision` for the App Clip, and `profile.mobileprovision` for the rest. In the device shell, `codesign` pads each signature with what the linker's left there, and OmniBuild with zeros. So the tests compare each executable up to the end of its signature, and the app is signed again around the framework, the extensions and the App Clip with their padding zeroed. A remade shell needs those values in the tests made again.
 
 ## `packed-icons.car`
 
@@ -83,9 +87,9 @@ xcrun actool --compile out --platform iphoneos --minimum-deployment-target 17.0 
 cp out/Assets.car packages/cli/tests/fixtures/packed-icons.car
 ```
 
-## `identity.pem` and `profile.mobileprovision`
+## `identity.pem`, `profile.mobileprovision` and `clip.mobileprovision`
 
-A key with a self-signed certificate, "OmniBuild Test", for a team that doesn't exist (`ABCDE12345`), and a provisioning profile signed with the same key, which allows it and any bundle ID (`ABCDE12345.*`). Made as the E2E tests' are (see `packages/e2e/README.md`), with `OmniBuild Test`, `ABCDE12345` and `ABCDE12345.*`, and written to `identity.pem` and `profile.mobileprovision`.
+A key with a self-signed certificate, "OmniBuild Test", for a team that doesn't exist (`ABCDE12345`), and a provisioning profile signed with the same key, which allows it and any bundle ID (`ABCDE12345.*`). Made as the E2E tests' are (see `packages/e2e/README.md`), with `OmniBuild Test`, `ABCDE12345` and `ABCDE12345.*`, and written to `identity.pem` and `profile.mobileprovision`. `clip.mobileprovision` is the shell's App Clip's, made the same way as the E2E tests' App Clip profile, for the App ID `ABCDE12345.dev.omnibuild.shell.Clip`, of `ABCDE12345.dev.omnibuild.shell`, named `OmniBuild Test Clip`, with the UUID `7A2B3C4D-5E6F-4071-8283-A4B5C6D7E8F9`.
 
 ## `keystores/`
 

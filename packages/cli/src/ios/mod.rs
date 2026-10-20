@@ -40,6 +40,11 @@ const DEVICES: &str = "iPhoneOS";
 /// Assets). iOS treats both alike as far as repackaging goes: each needs
 /// an ID under the app's, and a signature of its own.
 const EXTENSION_FOLDERS: [&str; 2] = ["PlugIns/", "Extensions/"];
+/// Where an app has its App Clips, each `Name.app/`: a part of the app that
+/// people run without installing it, which also needs an ID under the
+/// app's (`dev.example.app.Clip`, as Xcode names one), and a signature of
+/// its own, naming the app as its parent.
+const APP_CLIPS: &str = "AppClips/";
 
 /// The folder in the shell's entries that holds the app, if it's an iOS
 /// app: `Name.app/`, in a zipped `.app`, or `Payload/Name.app/`, in an
@@ -104,7 +109,7 @@ pub fn repackage(
     let shell_id = shell
         .id()
         .context("the shell's Info.plist has no bundle ID (CFBundleIdentifier)")?;
-    rewrite_extensions(&mut entries, bundle, shell_id, app)?;
+    rewrite_nested(&mut entries, bundle, shell_id, app)?;
     drop_translations(&mut entries, bundle, &InfoPlist::translated(app))?;
     if let Some(path) = &app.icon {
         set_icon(&mut entries, bundle, &shell, &icon::load(path)?)?;
@@ -120,29 +125,29 @@ pub fn repackage(
     Ok(zip::write(&entries).bytes)
 }
 
-/// Gives each app extension in the shell an ID under the app's, in place
-/// of the shell's (`shell_id`), and the app's version and build number.
-fn rewrite_extensions(
-    entries: &mut [Entry],
-    bundle: &str,
-    shell_id: &str,
-    app: &App,
-) -> Result<()> {
+/// Gives each app extension and App Clip in the shell an ID under the
+/// app's, in place of the shell's (`shell_id`), and the app's version and
+/// build number.
+fn rewrite_nested(entries: &mut [Entry], bundle: &str, shell_id: &str, app: &App) -> Result<()> {
+    let folders = EXTENSION_FOLDERS
+        .iter()
+        .map(|&folder| (folder, "appex"))
+        .chain([(APP_CLIPS, "app")]);
     for entry in entries.iter_mut() {
-        let is_extension = EXTENSION_FOLDERS.iter().any(|folder| {
+        let is_nested = folders.clone().any(|(folder, kind)| {
             entry
                 .name
                 .strip_prefix(bundle)
                 .and_then(|file| file.strip_prefix(folder))
                 .and_then(|file| file.strip_suffix("/Info.plist"))
-                .is_some_and(|extension| {
-                    !extension.contains('/')
-                        && Path::new(extension)
+                .is_some_and(|nested| {
+                    !nested.contains('/')
+                        && Path::new(nested)
                             .extension()
-                            .is_some_and(|kind| kind == "appex")
+                            .is_some_and(|extension| extension == kind)
                 })
         });
-        if !is_extension {
+        if !is_nested {
             continue;
         }
         let shell = entry
@@ -150,7 +155,7 @@ fn rewrite_extensions(
             .and_then(|contents| InfoPlist::parse(&contents))
             .with_context(|| format!("couldn't read the shell's {}", entry.name))?;
         let mut info = shell.clone();
-        info.rewrite_extension(shell_id, app)
+        info.rewrite_nested(shell_id, app)
             .with_context(|| format!("couldn't rewrite the shell's {}", entry.name))?;
         // Left as it was when nothing changed, rather than written again.
         if info != shell {
@@ -259,7 +264,7 @@ pub mod tests {
 
     use super::asset_catalog::tests::icon_bitmap;
     use super::code_signature::tests::{blobs, identity};
-    use super::profile::tests::PROFILE;
+    use super::profile::tests::{PROFILE, app_clip_profile};
     use super::{InfoPlist, bundle, repackage};
     use crate::bytes::Reader;
     use crate::config::{App, Ios};
@@ -278,6 +283,8 @@ pub mod tests {
     const EXTENSION_INFO: &str = "OmniBuildShell.app/PlugIns/ShellNotifications.appex/Info.plist";
     /// The `ExtensionKit` extension's, in Extensions/.
     const INTENTS_INFO: &str = "OmniBuildShell.app/Extensions/ShellIntents.appex/Info.plist";
+    /// The App Clip's, in `AppClips/`.
+    const APP_CLIP_INFO: &str = "OmniBuildShell.app/AppClips/ShellClip.app/Info.plist";
     /// The colour of every pixel of the app's icon in the tests.
     const ICON: Rgba<u8> = Rgba([0xe8, 0x59, 0x0c, 0xff]);
 
@@ -395,6 +402,7 @@ pub mod tests {
             "OmniBuildShell.app/Frameworks/ShellKit.framework/ShellKit",
             "OmniBuildShell.app/PlugIns/ShellNotifications.appex/ShellNotifications",
             "OmniBuildShell.app/Extensions/ShellIntents.appex/ShellIntents",
+            "OmniBuildShell.app/AppClips/ShellClip.app/ShellClip",
             "OmniBuildShell.app/_CodeSignature/CodeResources",
         ];
         for (entry, shell_entry) in app.iter().zip(&shell) {
@@ -477,16 +485,17 @@ pub mod tests {
         };
         assert_eq!(names(&entries)[..shell.len()], names(&shell));
         assert_eq!(mode(file(&entries, EXECUTABLE)), 0o100_755);
-        // Each extension's ID under the app's, and the app's version and
-        // build, in PlugIns/ and in Extensions/ alike.
+        // Each extension's ID under the app's, and the App Clip's, and the
+        // app's version and build, in PlugIns/ and in Extensions/ alike.
         for (info, id) in [
             (EXTENSION_INFO, "dev.example.app.ShellNotifications"),
             (INTENTS_INFO, "dev.example.app.ShellIntents"),
+            (APP_CLIP_INFO, "dev.example.app.Clip"),
         ] {
             let extension = InfoPlist::parse(&file(&entries, info).contents().unwrap()).unwrap();
             let mut expected = InfoPlist::parse(&file(&shell, info).contents().unwrap()).unwrap();
             expected
-                .rewrite_extension("dev.omnibuild.shell", &app)
+                .rewrite_nested("dev.omnibuild.shell", &app)
                 .unwrap();
             assert_eq!(extension, expected);
             assert_eq!(extension.id(), Some(id));
@@ -644,12 +653,18 @@ pub mod tests {
             ..App::default()
         };
 
+        // A wildcard for the app and its extensions, and the App Clip's own.
+        let app_clip = app_clip_profile(
+            "ABCDE12345.dev.example.app.Clip",
+            "ABCDE12345.dev.example.app",
+        );
+
         let ipa = repackage(
             shell,
             "Payload/OmniBuildShell.app/",
             &app,
             Some(&identity()),
-            &[PROFILE.to_vec()],
+            &[PROFILE.to_vec(), app_clip.clone()],
         )
         .unwrap();
 
@@ -697,6 +712,34 @@ pub mod tests {
                 PROFILE
             );
         }
+        // The App Clip and the app name each other, by their App IDs.
+        let clip = "Payload/OmniBuildShell.app/AppClips/ShellClip.app/";
+        assert!(entitlements(&format!("{clip}ShellClip")).contains(
+            "\t<key>application-identifier</key>
+\t<string>ABCDE12345.dev.example.app.Clip</string>
+\t<key>com.apple.developer.on-demand-install-capable</key>
+\t<true/>
+\t<key>com.apple.developer.parent-application-identifiers</key>
+\t<array>
+\t\t<string>ABCDE12345.dev.example.app</string>
+\t</array>
+"
+        ));
+        assert!(
+            entitlements("Payload/OmniBuildShell.app/OmniBuildShell").contains(
+                "\t<key>com.apple.developer.associated-appclip-app-identifiers</key>
+\t<array>
+\t\t<string>ABCDE12345.dev.example.app.Clip</string>
+\t</array>
+"
+            )
+        );
+        assert_eq!(
+            file(&entries, &format!("{clip}embedded.mobileprovision"))
+                .contents()
+                .unwrap(),
+            app_clip
+        );
     }
 
     #[test]
@@ -779,6 +822,18 @@ pub mod tests {
                     ..App::default()
                 },
                 "couldn't rewrite the shell's OmniBuildShell.app/Extensions/ShellIntents.appex/Info.plist: its bundle ID (CFBundleIdentifier) isn't under the app's, dev.omnibuild.shell",
+            ),
+            (
+                with_file(&Entry::new(
+                    APP_CLIP_INFO,
+                    Method::Stored,
+                    b"<plist><dict><key>CFBundleIdentifier</key><string>dev.omnibuild.Clip</string></dict></plist>",
+                )),
+                App {
+                    id: Some("dev.example.app".to_owned()),
+                    ..App::default()
+                },
+                "couldn't rewrite the shell's OmniBuildShell.app/AppClips/ShellClip.app/Info.plist: its bundle ID (CFBundleIdentifier) isn't under the app's, dev.omnibuild.shell",
             ),
         ];
 

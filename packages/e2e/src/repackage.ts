@@ -62,11 +62,21 @@ const INTENTS_EXTENSION_PROFILE = fileURLToPath(
   new URL('../app/ShellIntents.mobileprovision', import.meta.url),
 );
 /**
+ * A profile for the app's App Clip, as Apple makes one for an App ID
+ * registered as an App Clip's: it allows the entitlements that make the
+ * App Clip one, and name the app as its parent.
+ */
+const APP_CLIP_PROFILE = fileURLToPath(
+  new URL('../app/ShellClip.mobileprovision', import.meta.url),
+);
+/**
  * The extensions in the iOS shell, under the shell's ID and the app's: an
  * app extension in PlugIns/, and an ExtensionKit extension in Extensions/.
  */
 const EXTENSION = 'ShellNotifications';
 const INTENTS_EXTENSION = 'ShellIntents';
+/** The App Clip's ID, under the shell's and the app's, as Xcode names one. */
+const APP_CLIP = 'Clip';
 const SIGNER = 'OmniBuild E2E';
 const TEAM = 'OMNIBUILD0';
 /** The keystores' password, the iOS key's and the upload key's. */
@@ -220,11 +230,17 @@ export const expected = (
       extensionApplicationIdentifier: `${TEAM}.${APP.id}.${EXTENSION}`,
       intentsExtensionId: `${APP.id}.${INTENTS_EXTENSION}`,
       intentsExtensionApplicationIdentifier: `${TEAM}.${APP.id}.${INTENTS_EXTENSION}`,
+      appClipId: `${APP.id}.${APP_CLIP}`,
+      appClipApplicationIdentifier: `${TEAM}.${APP.id}.${APP_CLIP}`,
+      // The App Clip and the app name each other in their signatures.
+      appClipParent: `${TEAM}.${APP.id}`,
+      associatedAppClip: `${TEAM}.${APP.id}.${APP_CLIP}`,
     };
   }
   // Signed ad hoc, as Xcode signs a simulator build, and its framework,
   // which only loads with a signature of its own, too. Its extensions' IDs
-  // are under the app's, or the simulator wouldn't install it.
+  // are under the app's, or the simulator wouldn't install it, and its App
+  // Clip's, as Apple requires.
   return {
     ...values,
     cameraUsage,
@@ -232,6 +248,7 @@ export const expected = (
     urlSchemes: APP.urlSchemes.join(', '),
     extensionId: `${APP.id}.${EXTENSION}`,
     intentsExtensionId: `${APP.id}.${INTENTS_EXTENSION}`,
+    appClipId: `${APP.id}.${APP_CLIP}`,
     signer: 'ad hoc',
   };
 };
@@ -265,7 +282,7 @@ export const repackage = async ({
     let signing: string[] = [];
     if (extension === '.ipa') {
       // A build for devices has to be signed with a key and a profile, and
-      // each extension with one of its own.
+      // each extension and the App Clip with one of its own.
       signing = [
         '--signing-key',
         SIGNING_KEY,
@@ -275,6 +292,8 @@ export const repackage = async ({
         EXTENSION_PROFILE,
         '--profile',
         INTENTS_EXTENSION_PROFILE,
+        '--profile',
+        APP_CLIP_PROFILE,
       ];
     } else if (extension === '.aab') {
       // An app bundle is signed as Google Play takes one: with an upload
