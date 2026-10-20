@@ -9,11 +9,16 @@ repository.workspace = true
 [dependencies]
 anyhow = "1.0.104"
 base64 = "0.23.1"
+# Legacy PKCS #12 keystores, as Keychain Access exports them, encrypt keys
+# with 3DES and certificates with 40-bit RC2, in CBC mode.
+cbc = { version = "0.1.2", features = ["alloc"] }
 clap = { version = "4.6.7", features = ["derive"] }
 cms = "0.2.3"
 const-oid = { version = "0.9.6", features = ["db"] }
 crc32fast = "1.5.2"
+des = "0.8.1"
 flate2 = "1.1.10"
+hmac = "0.12.1"
 # PNG only: app icons are PNGs, and resizing them is all OmniBuild does.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 # actool compresses an asset catalog's bitmaps with LZFSE. Pure Rust, unlike
@@ -21,9 +26,14 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 # a C toolchain. OmniBuild only compresses its own pixels with it, and never
 # decompresses what users hand it.
 lzfse_rust = "0.2.1"
+# PKCS #12's structures and key derivation, and PKCS #8's encryption
+# (PBES2), of the same RustCrypto generation as cms and x509-cert.
+pkcs12 = { version = "0.1.0", features = ["kdf"] }
+pkcs8 = { version = "0.10.2", features = ["encryption"] }
 # Without serde: Info.plist is edited as a dictionary, so the keys OmniBuild
 # doesn't know stay as Xcode wrote them.
 plist = { version = "1.10.1", default-features = false }
+rc2 = "0.8.1"
 # rsa, x509-cert, cms and const-oid are RustCrypto crates of one generation,
 # which share der, spki and pkcs8. rsa 0.10 is still a release candidate.
 rsa = { version = "0.9.10", features = ["getrandom", "sha2"] }

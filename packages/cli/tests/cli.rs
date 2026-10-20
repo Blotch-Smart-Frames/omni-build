@@ -27,10 +27,21 @@ fn omni_build(args: &[&str]) -> Output {
 /// Runs omni-build with `home` as the user's home folder, where it keeps
 /// its debug key.
 fn omni_build_at_home(home: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_omni-build"))
+    omni_build_with_password(home, None, args)
+}
+
+/// Runs omni-build at `home`, with a keystore password, or none.
+fn omni_build_with_password(home: &Path, password: Option<&str>, args: &[&str]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_omni-build"));
+    command
         .args(args)
         .env("HOME", home)
         .env("USERPROFILE", home)
+        .env_remove("OMNI_BUILD_KEY_PASSWORD");
+    if let Some(password) = password {
+        command.env("OMNI_BUILD_KEY_PASSWORD", password);
+    }
+    command
         .output()
         .expect("the omni-build binary should start")
 }
@@ -193,6 +204,86 @@ fn repackage_signs_with_the_key_it_is_given() {
         &fs::read(ipa).unwrap(),
         b"Payload/OmniBuildShell.app/embedded.mobileprovision"
     ));
+}
+
+#[test]
+fn creates_an_upload_key_and_signs_with_it() {
+    let home = tempfile::tempdir().unwrap();
+    let keystore = home.path().join("keys/upload.p12");
+    let keystore = keystore.to_str().unwrap();
+    let apk = home.path().join("app.apk");
+
+    let created = omni_build_with_password(
+        home.path(),
+        Some("a password"),
+        &["key", "create", keystore],
+    );
+    let signed = omni_build_with_password(
+        home.path(),
+        Some("a password"),
+        &[
+            "repackage",
+            SHELL,
+            "--signing-key",
+            keystore,
+            "--out",
+            apk.to_str().unwrap(),
+        ],
+    );
+
+    assert!(created.status.success(), "{}", stderr(&created));
+    assert!(
+        String::from_utf8_lossy(&created.stdout).starts_with(&format!(
+            "Created an upload key in {keystore}, with the alias \"upload\"."
+        ))
+    );
+    assert!(signed.status.success(), "{}", stderr(&signed));
+    let apk = fs::read(apk).unwrap();
+    assert!(apk.windows(10).any(|window| window == b"Upload key"));
+}
+
+#[test]
+fn reports_an_upload_key_it_cant_create_or_read() {
+    let home = tempfile::tempdir().unwrap();
+    let keystore = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/keystores/openssl.p12"
+    );
+    let cases = [
+        (
+            Some("a password"),
+            vec!["key", "create", "upload.p12", "--subject", "not a name"],
+            "error: \"not a name\" isn't a distinguished name, such as \"CN=Upload key, O=Example\"\n",
+        ),
+        (
+            None,
+            vec!["key", "create", "upload.p12"],
+            "error: the keystore's password (OMNI_BUILD_KEY_PASSWORD) has to have at least 6 characters",
+        ),
+        (
+            Some("wrong"),
+            vec![
+                "repackage",
+                SHELL,
+                "--signing-key",
+                keystore,
+                "--out",
+                "app.apk",
+            ],
+            "openssl.p12: the password isn't its password (OMNI_BUILD_KEY_PASSWORD)\n",
+        ),
+    ];
+
+    for (password, args, message) in cases {
+        let output = omni_build_with_password(home.path(), password, &args);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            stderr(&output).starts_with(message) || stderr(&output).ends_with(message),
+            "{}",
+            stderr(&output)
+        );
+    }
 }
 
 #[test]

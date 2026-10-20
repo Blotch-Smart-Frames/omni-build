@@ -49,7 +49,17 @@ Paths are relative to the config file. A field you leave out keeps the shell's v
 
 ## Signing
 
-An APK is signed with APK Signature Schemes v2 and v3, which Android 7.0 and later verify. An app bundle gets a JAR signature, which is how Google Play checks an upload before it signs the APKs it makes from the bundle with the app's own key. With no key given, OmniBuild uses a debug key it creates the first time, in `~/.omni-build/android-debug-key.pem`, the way the Android SDK keeps its own in `~/.android`. APKs signed with it install on devices and emulators. To sign with your own key instead, give it with `--signing-key`: a PEM file with the RSA private key (PKCS #8) and its certificate. Keystores (PKCS #12, Java's) come with [Phase 1](./roadmap.md).
+An APK is signed with APK Signature Schemes v2 and v3, which Android 7.0 and later verify. An app bundle gets a JAR signature, which is how Google Play checks an upload before it signs the APKs it makes from the bundle with the app's own key. With no key given, OmniBuild uses a debug key it creates the first time, in `~/.omni-build/android-debug-key.pem`, the way the Android SDK keeps its own in `~/.android`. APKs signed with it install on devices and emulators. Google Play takes an app signed with your own key, which you give with `--signing-key`.
+
+```sh
+export OMNI_BUILD_KEY_PASSWORD='a password'
+omni-build key create upload.p12 --subject "CN=Your name, O=Your organization"
+omni-build repackage shell.aab --config app.json --out app.aab --signing-key upload.p12
+```
+
+`omni-build key create` makes an upload key without a JDK: an RSA key with a certificate of its own, valid for 30 years (Google Play requires an upload key to last past 2033), in a PKCS #12 keystore under the alias `upload`. keytool, Android Studio and Gradle read it too. Keep it and its password safe: Google Play takes updates signed with it alone, unless you ask Google to reset it.
+
+`--signing-key` takes a PKCS #12 keystore, whose password OmniBuild reads from `OMNI_BUILD_KEY_PASSWORD` rather than a flag, which anyone listing your processes could see. That includes `.p12` files from Keychain Access or OpenSSL, and the `.jks` files keytool and Android Studio have made since Java 9; an older `.jks` is in Java's own format, which keytool converts (`keytool -importkeystore -srckeystore old.jks -destkeystore new.p12 -deststoretype pkcs12`). `--signing-key` also takes a PEM file with the private key (PKCS #8) and its certificate. Either way, the key is RSA, as Google Play's upload keys and Apple's signing certificates are.
 
 An iOS app gets Apple's code signature, as `codesign` writes it: every file sealed in `_CodeSignature/CodeResources`, and the executable signed over the seal, `Info.plist` and the entitlements.
 
@@ -59,7 +69,7 @@ An iOS app gets Apple's code signature, as `codesign` writes it: every file seal
   ditto -x -k app.zip app && xcrun simctl install booted app/*.app
   ```
 
-- **For devices**, it's signed with a key Apple issued a certificate for (`--signing-key`, a PEM file with the key, its certificate, and Apple's intermediate certificate that issued it), and a provisioning profile that allows the certificate and the app's ID (`--profile`). The profile goes in the app as `embedded.mobileprovision`, and its App ID, team and `get-task-allow` or `beta-reports-active` become the app's entitlements. Other capabilities, such as push notifications, come later. A key from Keychain Access exports as a `.p12`, which `openssl pkcs12 -in key.p12 -nodes` turns into PEM.
+- **For devices**, it's signed with a key Apple issued a certificate for (`--signing-key`), and a provisioning profile that allows the certificate and the app's ID (`--profile`). Export the key from Keychain Access as a `.p12` and give it as it is: OmniBuild adds the certificates above it, Apple's Worldwide Developer Relations authority (G3) and Apple's root, as `codesign` does. The profile goes in the app as `embedded.mobileprovision`, and its App ID, team and `get-task-allow` or `beta-reports-active` become the app's entitlements. Other capabilities, such as push notifications, come later.
 
 ## What a shell needs
 

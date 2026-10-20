@@ -40,7 +40,7 @@ The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simu
 node packages/e2e/src/cli.ts build --platform ios
 ditto -x -k packages/e2e/build/shells/ios/OmniBuildShell.zip trimmed
 printf 'int main(void) { return 0; }\n' > main.c
-xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-version-min=17.0 \\
+xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-version-min=17.0 \
   -Wl,-adhoc_codesign main.c -o trimmed/OmniBuildShell.app/OmniBuildShell
 ditto -c -k --norsrc --keepParent trimmed/OmniBuildShell.app packages/cli/tests/fixtures/shell.app.zip
 ```
@@ -51,7 +51,7 @@ The same shell built for devices, as the E2E tests build it (unsigned, with room
 
 ```sh
 ditto -x -k packages/e2e/build/shells/ios/OmniBuildShell.ipa trimmed-ipa
-xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -Wl,-adhoc_codesign main.c \\
+xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -Wl,-adhoc_codesign main.c \
   -o trimmed-ipa/Payload/OmniBuildShell.app/OmniBuildShell
 cd trimmed-ipa && ditto -c -k --norsrc --keepParent Payload ../packages/cli/tests/fixtures/shell.ipa
 ```
@@ -61,3 +61,17 @@ The tests compare what OmniBuild signs with what `codesign` signs from the same 
 ## `identity.pem` and `profile.mobileprovision`
 
 A key with a self-signed certificate, "OmniBuild Test", for a team that doesn't exist (`ABCDE12345`), and a provisioning profile signed with the same key, which allows it and any bundle ID (`ABCDE12345.*`). Made as the E2E tests' are (see `packages/e2e/README.md`), with `OmniBuild Test`, `ABCDE12345` and `ABCDE12345.*`, and written to `identity.pem` and `profile.mobileprovision`.
+
+## `keystores/`
+
+PKCS #12 keystores, as each tool writes one, with the password `omnibuild`: the key tests read each, and check what they find. From the identity above (`key.pem` and `cert.pem`, before `cat`):
+
+| File              | Made by                                                               | How                                                                                                                  |
+| ----------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `openssl.p12`     | OpenSSL 3 and later: PBES2 (AES-256), an HMAC-SHA256 MAC              | `openssl pkcs12 -export -inkey key.pem -in cert.pem -name "OmniBuild Test" -out openssl.p12 -passout pass:omnibuild` |
+| `keychain.p12`    | Keychain Access: 3DES and 40-bit RC2, an HMAC-SHA1 MAC of 1 iteration | `security import openssl.p12` into a new keychain, then `security export -t identities -f pkcs12 -P omnibuild`       |
+| `no-password.p12` | OpenSSL, with an empty password                                       | as `openssl.p12`, with `-passout pass:`                                                                              |
+| `unencrypted.p12` | OpenSSL, with the key and certificate unencrypted                     | as `openssl.p12`, with `-keypbe NONE -certpbe NONE`                                                                  |
+| `no-key.p12`      | OpenSSL, with the certificate alone                                   | `openssl pkcs12 -export -nokeys -in cert.pem -out no-key.p12 -passout pass:omnibuild`                                |
+
+And with keys of their own, from a JDK's keytool: `keytool.p12` (`keytool -genkeypair -keystore keytool.p12 -storetype PKCS12 -storepass omnibuild -alias upload -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Upload, O=OmniBuild"`), `two-keys.p12` (the same twice, with the aliases `first` and `second`), and `ec.p12` (one key, `-keyalg EC -groupname secp256r1`).

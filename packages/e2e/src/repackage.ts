@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,20 +28,25 @@ const APP: {
 /** The colour of every pixel of the app's icon, `app/icon.png`. */
 const APP_ICON = '#E8590C';
 /**
- * What a build for devices is signed with: a key with a self-signed
- * certificate, and a provisioning profile allowing it and the app's ID, for
- * a team that doesn't exist. Both were made for these tests, as README.md
- * says: no device would install the app, but codesign checks the signature
- * all the same.
+ * What an iOS build for devices is signed with: a key with a self-signed
+ * certificate, in a keystore as Keychain Access exports one, and a
+ * provisioning profile allowing it and the app's ID, for a team that
+ * doesn't exist. Both were made for these tests, as README.md says: no
+ * device would install the app, but codesign checks the signature all the
+ * same.
  */
 const SIGNING_KEY = fileURLToPath(
-  new URL('../app/signing-key.pem', import.meta.url),
+  new URL('../app/signing-key.p12', import.meta.url),
 );
 const PROFILE = fileURLToPath(
   new URL('../app/OmniBuildE2E.mobileprovision', import.meta.url),
 );
 const SIGNER = 'OmniBuild E2E';
 const TEAM = 'OMNIBUILD0';
+/** The keystores' password, the iOS key's and the upload key's. */
+const KEY_PASSWORD = 'omnibuild-e2e';
+/** The subject of the upload key omni-build creates for an app bundle. */
+const UPLOAD_KEY = 'CN=OmniBuild E2E Upload';
 
 /** The OS a repackaged app's file name says it was repackaged on. */
 const OS_NAMES: Partial<Record<NodeJS.Platform, string>> = {
@@ -114,9 +125,12 @@ export const expected = (
   if (platform === 'android') {
     return {
       ...values,
-      // The debug key omni-build creates and signs with when it's given
-      // no key: only it could have signed the app with this.
-      signer: 'CN=OmniBuild Debug, O=OmniBuild',
+      // An app bundle is signed with the upload key omni-build created for
+      // it, and an APK with the debug key it creates and signs with when
+      // it's given no key: only omni-build could have made either.
+      signer: app.endsWith('.aab')
+        ? UPLOAD_KEY
+        : 'CN=OmniBuild Debug, O=OmniBuild',
     };
   }
   if (app.endsWith('.ipa')) {
@@ -159,14 +173,33 @@ export const repackage = async ({
     outDir,
     `${path.basename(shell, extension)}-${OS_NAMES[process.platform] ?? process.platform}${extension}`,
   );
-  // A build for devices has to be signed with a key and a profile.
-  const signing = shell.endsWith('.ipa')
-    ? ['--signing-key', SIGNING_KEY, '--profile', PROFILE]
-    : [];
-  await run(
-    omniBuildBinary(),
-    ['repackage', shell, '--config', APP_CONFIG, ...signing, '--out', output],
-    { log, env: toolchainFree() },
-  );
+  const binary = omniBuildBinary();
+  const env = { ...toolchainFree(), OMNI_BUILD_KEY_PASSWORD: KEY_PASSWORD };
+  // A hidden folder, which no stage takes for an app.
+  const keys = mkdtempSync(path.join(outDir, '.keys-'));
+  try {
+    let signing: string[] = [];
+    if (extension === '.ipa') {
+      // A build for devices has to be signed with a key and a profile.
+      signing = ['--signing-key', SIGNING_KEY, '--profile', PROFILE];
+    } else if (extension === '.aab') {
+      // An app bundle is signed as Google Play takes one: with an upload
+      // key, which omni-build creates first, as a developer without a JDK
+      // would.
+      const keystore = path.join(keys, 'upload.p12');
+      await run(binary, ['key', 'create', keystore, '--subject', UPLOAD_KEY], {
+        log,
+        env,
+      });
+      signing = ['--signing-key', keystore];
+    }
+    await run(
+      binary,
+      ['repackage', shell, '--config', APP_CONFIG, ...signing, '--out', output],
+      { log, env },
+    );
+  } finally {
+    rmSync(keys, { recursive: true, force: true });
+  }
   return output;
 };

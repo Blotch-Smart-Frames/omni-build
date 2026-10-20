@@ -36,7 +36,10 @@ const fakePlatform = (): Platform<string, string> => ({
     path.join(outDir, 'Shell.apk'),
     path.join(outDir, 'Shell.aab'),
   ]),
-  verify: vi.fn(async () => ({ signer })),
+  // Each app signed as it should be: an app bundle with an upload key.
+  verify: vi.fn(async ({ app }) => ({
+    signer: expected('android', app).signer,
+  })),
   startDevice: vi.fn(async () => 'starting'),
   waitForDevice: vi.fn(async () => 'device'),
   runApp: vi.fn(async () => REPORTED),
@@ -228,8 +231,11 @@ describe('run', () => {
       const apk = path.join(packageDir, 'App-linux.apk');
       const aab = path.join(packageDir, 'App-linux.aab');
       // An app bundle is installed as the APK made from it.
+      const bundleSigner = expected('android', aab).signer;
       vi.mocked(platform.verify).mockImplementation(async ({ app }) =>
-        app === aab ? { installable: 'universal.apk', signer } : { signer },
+        app === aab
+          ? { installable: 'universal.apk', signer: bundleSigner }
+          : { signer },
       );
 
       expect(await runWith('test', '--platform', 'android', apk, aab)).toBe(0);
