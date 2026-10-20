@@ -12,11 +12,19 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { run } from './process.ts';
-import { expected, repackage } from './repackage.ts';
+import { expected, omniBuild, repackage } from './repackage.ts';
 import { SHELL } from './shell.ts';
 
+// omni-build, reporting to a build tool that each command worked: the
+// keystore `key create` was given, or the app `repackage` wrote.
 vi.mock('./process.ts', () => ({
-  run: vi.fn(async () => ({ code: 0, stdout: '', output: '' })),
+  run: vi.fn(async (_command: string, args: string[]) => {
+    const event =
+      args[0] === 'key'
+        ? { event: 'key-created', key: 'upload', path: args[2] }
+        : { event: 'repackaged', out: args[args.indexOf('--out') + 1] };
+    return { code: 0, stdout: `${JSON.stringify(event)}\n`, output: '' };
+  }),
 }));
 
 // The real file system, but with existsSync() a spy, so a test can say the
@@ -131,7 +139,7 @@ describe('repackage', () => {
     expect(statSync(outDir).isDirectory()).toBe(true);
     expect(run).toHaveBeenCalledWith(
       binary,
-      ['repackage', shell, '--config', APP_CONFIG, '--out', app],
+      ['repackage', shell, '--config', APP_CONFIG, '--out', app, '--json'],
       { log: 'commands.log', env: ENV },
     );
   });
@@ -145,7 +153,7 @@ describe('repackage', () => {
     expect(app).toBe(path.join(outDir, 'OmniBuildShell-macos.zip'));
     expect(run).toHaveBeenCalledWith(
       binary,
-      ['repackage', shell, '--config', APP_CONFIG, '--out', app],
+      ['repackage', shell, '--config', APP_CONFIG, '--out', app, '--json'],
       { log: 'commands.log', env: ENV },
     );
   });
@@ -172,6 +180,7 @@ describe('repackage', () => {
         ),
         '--out',
         app,
+        '--json',
       ],
       { log: 'commands.log', env: ENV },
     );
@@ -188,7 +197,14 @@ describe('repackage', () => {
     expect(path.basename(path.dirname(keystore))).toMatch(/^\.keys-/);
     expect(create).toEqual([
       binary,
-      ['key', 'create', keystore, '--subject', 'CN=OmniBuild E2E Upload'],
+      [
+        'key',
+        'create',
+        keystore,
+        '--subject',
+        'CN=OmniBuild E2E Upload',
+        '--json',
+      ],
       { log: 'commands.log', env: ENV },
     ]);
     expect(sign).toEqual([
@@ -202,6 +218,7 @@ describe('repackage', () => {
         keystore,
         '--out',
         app,
+        '--json',
       ],
       { log: 'commands.log', env: ENV },
     ]);
@@ -258,5 +275,44 @@ describe('repackage', () => {
       `There's no omni-build binary at ${missing}. Build one with \`npm run build -w @omni-build/cli\`, or set OMNI_BUILD_BINARY to one.`,
     );
     expect(run).not.toHaveBeenCalled();
+  });
+});
+
+describe('omniBuild', () => {
+  const options = { log: 'commands.log' };
+
+  it("fails when the command's result isn't what was expected", async () => {
+    vi.mocked(run).mockResolvedValueOnce({
+      code: 0,
+      stdout:
+        '{"event":"key-created","key":"debug","path":"key.pem"}\n{"event":"repackaged","out":"other.apk"}\n',
+      output: '',
+    });
+
+    await expect(
+      omniBuild(
+        ['repackage'],
+        { event: 'repackaged', out: 'app.apk' },
+        options,
+      ),
+    ).rejects.toThrow(
+      'omni-build ended with {"event":"repackaged","out":"other.apk"}, where out should be "app.apk"',
+    );
+  });
+
+  it('fails when omni-build reports something other than JSON, or nothing', async () => {
+    for (const stdout of ['Repackaged shell.apk into app.apk\n', '']) {
+      vi.mocked(run).mockResolvedValueOnce({ code: 0, stdout, output: stdout });
+
+      await expect(
+        omniBuild(
+          ['repackage'],
+          { event: 'repackaged', out: 'app.apk' },
+          options,
+        ),
+      ).rejects.toThrow(
+        `omni-build ended with ${stdout.trim() || 'nothing'}, where event should be "repackaged" and out should be "app.apk"`,
+      );
+    }
   });
 });

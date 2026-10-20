@@ -237,9 +237,12 @@ impl SigningKey {
 /// Where OmniBuild keeps its debug key: in the user's home folder, as the
 /// Android SDK keeps its own in `~/.android`.
 pub fn debug_key_path() -> PathBuf {
+    // A part at a time, so that the path OmniBuild reports has the
+    // system's separators throughout, `\` on Windows.
     std::env::home_dir()
         .unwrap_or_default()
-        .join(".omni-build/android-debug-key.pem")
+        .join(".omni-build")
+        .join("android-debug-key.pem")
 }
 
 /// The first PEM block with this label, or nothing.

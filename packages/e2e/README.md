@@ -18,6 +18,8 @@ They follow how OmniBuild is meant to be used ([#1](https://github.com/Blotch-Sm
 
 **No toolchain in reach.** GitHub's Linux and Windows runners come with a JDK and the Android SDK, and its macOS runners with Xcode. So the harness runs omni-build, to repackage and to install, with only `HOME`, `USERPROFILE`, the temporary folder variables and `SystemRoot`: no `PATH` (it can't start a program by name) and no `JAVA_HOME`, `ANDROID_HOME` or `DEVELOPER_DIR`. A step that quietly relied on a vendor tool fails in CI, not on a user's machine without one.
 
+**As a build tool runs it.** The harness runs omni-build with `--json`, and checks the event each command ends with: the keystore `key create` wrote, the app `repackage` wrote, and the device `install` installed it on (`omniBuild()` in `src/repackage.ts`). So what omni-build reports is checked on all three OSes, as well as what it makes.
+
 ## Run it
 
 ```sh

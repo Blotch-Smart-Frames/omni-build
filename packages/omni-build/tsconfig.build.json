@@ -4,6 +4,8 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
+    // Types for the API build tools import (src/index.ts).
+    "declaration": true,
     "rootDir": "src",
     "outDir": "dist"
   },

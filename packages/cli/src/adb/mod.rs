@@ -39,7 +39,14 @@ impl Device {
     /// Connects to `device`, an emulator's name or a device's address and
     /// port, or without one to the only emulator listening on one of
     /// `emulator_ports`, and proves OmniBuild's identity with `key`.
-    pub fn connect(device: Option<&str>, emulator_ports: &[u16], key: &AdbKey) -> Result<Self> {
+    /// Calls `authorizing` with the device's name when the device asks its
+    /// user whether to allow the key, and waits for the answer.
+    pub fn connect(
+        device: Option<&str>,
+        emulator_ports: &[u16],
+        key: &AdbKey,
+        authorizing: &dyn Fn(&str),
+    ) -> Result<Self> {
         let (serial, stream) = match device {
             Some(device) => (device.to_owned(), reach(device)?),
             None => only_emulator(emulator_ports)?,
@@ -51,9 +58,19 @@ impl Device {
             .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)))
             .and_then(|()| stream.set_nodelay(true))
             .map_err(anyhow::Error::from)
-            .and_then(|()| Connection::open(stream, key))
+            .and_then(|()| Connection::open(stream, key, &|| authorizing(&serial)))
             .with_context(|| format!("couldn't connect to {serial}"))?;
         Ok(Self { serial, connection })
+    }
+
+    /// Its name, as adb's: `emulator-5554`, or its address.
+    pub fn serial(&self) -> &str {
+        &self.serial
+    }
+
+    /// Its model, as its user knows it, if it says.
+    pub fn model(&self) -> Option<&str> {
+        self.connection.property("ro.product.model")
     }
 
     /// Installs an APK, or updates the app with its ID, as `adb install`
@@ -101,7 +118,7 @@ impl fmt::Display for Device {
     /// Its model, as its user knows it, then its name: "Pixel 8
     /// (emulator-5554)".
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.connection.property("ro.product.model") {
+        match self.model() {
             Some(model) => write!(f, "{model} ({})", self.serial),
             None => f.write_str(&self.serial),
         }
@@ -164,16 +181,31 @@ fn only_emulator(ports: &[u16]) -> Result<(String, TcpStream)> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::net::TcpListener;
     use std::path::Path;
     use std::sync::LazyLock;
 
-    use super::connection::tests::{BANNER, exec_device, serve};
+    use super::connection::tests::{BANNER, asking, exec_device, serve};
     use super::{AdbKey, Device, emulator_ports};
 
     const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/adb/adbkey");
     static KEY: LazyLock<AdbKey> =
         LazyLock::new(|| AdbKey::at(Path::new(FIXTURE), "omnibuild@test").unwrap().0);
+
+    thread_local! {
+        /// The devices that asked their user to allow the key, by name, in
+        /// this thread's test.
+        static ASKED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Connects as `install` does, with the fixture key, noting each device
+    /// that asks its user to allow the key in `ASKED`.
+    fn connect(device: Option<&str>, emulator_ports: &[u16]) -> anyhow::Result<Device> {
+        Device::connect(device, emulator_ports, &KEY, &|name| {
+            ASKED.with_borrow_mut(|asked| asked.push(name.to_owned()));
+        })
+    }
 
     /// A port on this computer with something listening, and its number.
     fn listening() -> (TcpListener, u16) {
@@ -193,10 +225,14 @@ mod tests {
         let device = serve(listener, exec_device(4096, BANNER, Some(b"Success\n")));
         let apk = vec![7; 10_000];
 
-        let mut connected = Device::connect(Some(&format!("127.0.0.1:{port}")), &[], &KEY).unwrap();
+        let mut connected = connect(Some(&format!("127.0.0.1:{port}")), &[]).unwrap();
         connected.install(&apk).unwrap();
 
         assert_eq!(connected.to_string(), format!("Pixel 8 (127.0.0.1:{port})"));
+        assert_eq!(connected.serial(), format!("127.0.0.1:{port}"));
+        assert_eq!(connected.model(), Some("Pixel 8"));
+        // The device didn't check the key, let alone ask its user.
+        assert_eq!(ASKED.take(), Vec::<String>::new());
         drop(connected);
         assert_eq!(
             device.join().unwrap(),
@@ -213,10 +249,25 @@ mod tests {
         );
         let name = format!("emulator-{}", port - 1);
 
-        let connected = Device::connect(Some(&name), &[], &KEY).unwrap();
+        let connected = connect(Some(&name), &[]).unwrap();
 
         // A banner without the model, as early versions of Android send.
         assert_eq!(connected.to_string(), name);
+    }
+
+    #[test]
+    fn says_when_the_device_asks_its_user_to_allow_the_key() {
+        let (listener, port) = listening();
+        serve(
+            listener,
+            asking(exec_device(4096, BANNER, Some(b"Success\n"))),
+        );
+        let name = format!("emulator-{}", port - 1);
+
+        let mut connected = connect(Some(&name), &[]).unwrap();
+        connected.install(&[7; 100]).unwrap();
+
+        assert_eq!(ASKED.take(), [name]);
     }
 
     #[test]
@@ -224,7 +275,7 @@ mod tests {
         let (listener, port) = listening();
         serve(listener, exec_device(4096, BANNER, Some(b"Success\n")));
 
-        let connected = Device::connect(None, &[closed(), port], &KEY).unwrap();
+        let connected = connect(None, &[closed(), port]).unwrap();
 
         assert_eq!(
             connected.to_string(),
@@ -236,7 +287,7 @@ mod tests {
     fn asks_which_emulator_when_several_are_running() {
         let ((_first, one), (_second, two)) = (listening(), listening());
 
-        let error = Device::connect(None, &[one, two], &KEY).err().unwrap();
+        let error = connect(None, &[one, two]).err().unwrap();
 
         assert_eq!(
             error.to_string(),
@@ -250,7 +301,7 @@ mod tests {
 
     #[test]
     fn says_when_it_finds_no_device() {
-        let error = Device::connect(None, &[closed()], &KEY).err().unwrap();
+        let error = connect(None, &[closed()]).err().unwrap();
 
         assert!(error.to_string().starts_with("found no Android device"));
     }
@@ -263,10 +314,10 @@ mod tests {
         // read it: hanging up on unread bytes would reset the connection.
         serve(listener, |_| None);
 
-        let refused = Device::connect(Some(&format!("emulator-{}", port - 1)), &[], &KEY);
-        let unknown = Device::connect(Some("R5CT1234"), &[], &KEY);
-        let out_of_range = Device::connect(Some("emulator-65535"), &[], &KEY);
-        let hung_up = Device::connect(Some(&format!("127.0.0.1:{open}")), &[], &KEY);
+        let refused = connect(Some(&format!("emulator-{}", port - 1)), &[]);
+        let unknown = connect(Some("R5CT1234"), &[]);
+        let out_of_range = connect(Some("emulator-65535"), &[]);
+        let hung_up = connect(Some(&format!("127.0.0.1:{open}")), &[]);
 
         let message = |result: anyhow::Result<Device>| format!("{:#}", result.err().unwrap());
         assert!(message(refused).starts_with(&format!("couldn't reach emulator-{}: ", port - 1)));
@@ -283,8 +334,7 @@ mod tests {
         let install = |banner: &'static [u8], output: &'static [u8]| {
             let (listener, port) = listening();
             serve(listener, exec_device(4096, banner, Some(output)));
-            let mut device =
-                Device::connect(Some(&format!("127.0.0.1:{port}")), &[], &KEY).unwrap();
+            let mut device = connect(Some(&format!("127.0.0.1:{port}")), &[]).unwrap();
             let error = device.install(b"apk").err().unwrap();
             format!("{error:#}").replace(&port.to_string(), "PORT")
         };
@@ -318,7 +368,7 @@ mod tests {
         let (listener, port) = listening();
         // A device that connects, then hangs up when the app comes.
         serve(listener, exec_device(4096, BANNER, None));
-        let mut device = Device::connect(Some(&format!("127.0.0.1:{port}")), &[], &KEY).unwrap();
+        let mut device = connect(Some(&format!("127.0.0.1:{port}")), &[]).unwrap();
 
         let error = device.install(b"apk").err().unwrap();
 

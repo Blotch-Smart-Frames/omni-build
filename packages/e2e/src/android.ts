@@ -16,7 +16,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { Artifacts, Platform } from './run.ts';
 import { type RunOptions, poll, run } from './process.ts';
-import { omniBuildBinary, toolchainFree } from './repackage.ts';
+import { omniBuild, toolchainFree } from './repackage.ts';
 
 const PROJECT = fileURLToPath(new URL('../fixtures/android/', import.meta.url));
 const BUILD_DIR = fileURLToPath(new URL('../build/', import.meta.url));
@@ -396,10 +396,11 @@ const runApp: Platform<Started, Device>['runApp'] = async ({
   if (reachable(device.serial)) {
     // As a user without the Android SDK installs it: with omni-build, which
     // gets no PATH and no toolchain variables, as in the repackage stage.
-    await run(omniBuildBinary(), ['install', app, '--device', device.serial], {
-      log,
-      env: toolchainFree(),
-    });
+    await omniBuild(
+      ['install', app, '--device', device.serial],
+      { event: 'installed', device: device.serial },
+      { log, env: toolchainFree() },
+    );
   } else {
     await onDevice(['install', app]);
   }

@@ -92,9 +92,12 @@ impl AdbKey {
 
 /// Where adb keeps its key: in `.android` in the user's home folder.
 pub fn key_path() -> PathBuf {
+    // A part at a time, so that the path OmniBuild reports has the
+    // system's separators throughout, `\` on Windows.
     std::env::home_dir()
         .unwrap_or_default()
-        .join(".android/adbkey")
+        .join(".android")
+        .join("adbkey")
 }
 
 /// The public key's file, beside the private key's.
