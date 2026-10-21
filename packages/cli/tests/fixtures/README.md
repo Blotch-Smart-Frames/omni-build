@@ -34,7 +34,7 @@ The Rust tests find files in both Android shells by name, and resources by their
 
 ## `shell.app.zip`
 
-The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. Its executable, its framework's (`Frameworks/ShellKit.framework`), its extensions' (`PlugIns/ShellNotifications.appex`, an app extension, and `Extensions/ShellIntents.appex`, an ExtensionKit extension), its watch app's (`Watch/ShellWatch.app`, linked for the watchOS Simulator) and its App Clip's (`AppClips/ShellClip.app`) are tiny programs instead of the shell's Swift, linked for the Simulator's two architectures and signed by the linker: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, its English translation (`en.lproj/InfoPlist.strings`), its icon, in the asset catalog (`Assets.car`) and the PNGs beside it, and its signatures, but never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
+The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. Its executable, its framework's (`Frameworks/ShellKit.framework`), its extensions' (`PlugIns/ShellNotifications.appex`, an app extension, and `Extensions/ShellIntents.appex`, an ExtensionKit extension), its watch app's (`Watch/ShellWatch.app`, linked for the watchOS Simulator) and its widgets' (`PlugIns/ShellWatchWidgets.appex` in the watch app), and its App Clip's (`AppClips/ShellClip.app`) and the App Clip's copy of the framework (`Frameworks/ShellKit.framework` in the App Clip) are tiny programs instead of the shell's Swift, linked for the Simulator's two architectures and signed by the linker: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, its English translation (`en.lproj/InfoPlist.strings`), its icon, in the asset catalog (`Assets.car`) and the PNGs beside it, and its signatures, but never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
 
 ```sh
 node packages/e2e/src/cli.ts build --platform ios
@@ -52,8 +52,14 @@ xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-versio
   -Wl,-adhoc_codesign main.c -o trimmed/OmniBuildShell.app/Extensions/ShellIntents.appex/ShellIntents
 xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-version-min=17.0 \
   -Wl,-adhoc_codesign main.c -o trimmed/OmniBuildShell.app/AppClips/ShellClip.app/ShellClip
+xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-version-min=17.0 \
+  -dynamiclib -install_name @rpath/ShellKit.framework/ShellKit -Wl,-adhoc_codesign lib.c \
+  -o trimmed/OmniBuildShell.app/AppClips/ShellClip.app/Frameworks/ShellKit.framework/ShellKit
 xcrun -sdk watchsimulator clang -arch x86_64 -arch arm64 -mwatchos-simulator-version-min=26.0 \
   -Wl,-adhoc_codesign main.c -o trimmed/OmniBuildShell.app/Watch/ShellWatch.app/ShellWatch
+xcrun -sdk watchsimulator clang -arch x86_64 -arch arm64 -mwatchos-simulator-version-min=26.0 \
+  -Wl,-adhoc_codesign main.c \
+  -o trimmed/OmniBuildShell.app/Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/ShellWatchWidgets
 ditto -c -k --norsrc --keepParent trimmed/OmniBuildShell.app packages/cli/tests/fixtures/shell.app.zip
 ```
 
@@ -74,12 +80,17 @@ xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -Wl,-adhoc_codesign
   -o trimmed-ipa/Payload/OmniBuildShell.app/Extensions/ShellIntents.appex/ShellIntents
 xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -Wl,-adhoc_codesign main.c \
   -o trimmed-ipa/Payload/OmniBuildShell.app/AppClips/ShellClip.app/ShellClip
+xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -dynamiclib \
+  -install_name @rpath/ShellKit.framework/ShellKit -Wl,-adhoc_codesign lib.c \
+  -o trimmed-ipa/Payload/OmniBuildShell.app/AppClips/ShellClip.app/Frameworks/ShellKit.framework/ShellKit
 xcrun -sdk watchos clang -arch arm64 -arch arm64_32 -mwatchos-version-min=26.0 -Wl,-adhoc_codesign main.c \
   -o trimmed-ipa/Payload/OmniBuildShell.app/Watch/ShellWatch.app/ShellWatch
+xcrun -sdk watchos clang -arch arm64 -arch arm64_32 -mwatchos-version-min=26.0 -Wl,-adhoc_codesign main.c \
+  -o trimmed-ipa/Payload/OmniBuildShell.app/Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/ShellWatchWidgets
 cd trimmed-ipa && ditto -c -k --norsrc --keepParent Payload ../packages/cli/tests/fixtures/shell.ipa
 ```
 
-The tests compare what OmniBuild signs with what `codesign` signs from the same files, the framework first, then the extensions, the watch app and the App Clip, then the app, as Xcode signs them: ad hoc, with `codesign --sign - --force` on each bundle of each unzipped shell, and with the identity below, from a keychain, with `codesign --sign "OmniBuild Test" --timestamp=none`. That adds, for the extensions, the watch app, the App Clip and the app, `--entitlements` with the entitlements OmniBuild signs each with (`dev.omnibuild.shell.ShellNotifications`, `dev.omnibuild.shell.ShellIntents`, `dev.omnibuild.shell.watchkitapp`, `dev.omnibuild.shell.Clip` and `dev.omnibuild.shell`): what the profile gives each ID, and for the App Clip and the app, the entitlements that name each other. Each gets its profile copied into it as `embedded.mobileprovision`: `clip.mobileprovision` for the App Clip, and `profile.mobileprovision` for the rest. In the device shell, `codesign` pads each signature with what the linker's left there, and OmniBuild with zeros. So the tests compare each executable up to the end of its signature, the watch app's, which has two architectures (`arm64` and `arm64_32`), whole with each one's padding zeroed, and the app is signed again around the framework, the extensions, the watch app and the App Clip with their padding zeroed. A remade shell needs those values in the tests made again.
+The tests compare what OmniBuild signs with what `codesign` signs from the same files, from the inside out, as Xcode signs them: the framework, the extensions, the watch app's widgets and then the watch app, the App Clip's framework and then the App Clip, and then the app. Ad hoc, with `codesign --sign - --force` on each bundle of each unzipped shell, and with the identity below, from a keychain, with `codesign --sign "OmniBuild Test" --timestamp=none`. That adds, for each program, `--entitlements` with the entitlements OmniBuild signs it with (`dev.omnibuild.shell.ShellNotifications`, `dev.omnibuild.shell.ShellIntents`, `dev.omnibuild.shell.watchkitapp.ShellWatchWidgets`, `dev.omnibuild.shell.watchkitapp`, `dev.omnibuild.shell.Clip` and `dev.omnibuild.shell`), byte for byte as OmniBuild's signature has them: what the profile gives each ID, and for the App Clip and the app, the entitlements that name each other. Each program gets its profile copied into it as `embedded.mobileprovision`: `clip.mobileprovision` for the App Clip, and `profile.mobileprovision` for the rest. In the device shell, `codesign` pads each signature with what the linker's left there, and OmniBuild with zeros. So the tests compare each executable up to the end of its signature, the watch app's and its widgets', which have two architectures (`arm64` and `arm64_32`), whole with each one's padding zeroed, and each bundle with code nested in it, the watch app, the App Clip and the app, is signed around that code with its padding zeroed. With the identity, each CMS signature has the time it was made in it, so the seals of those three bundles, and their code directories' hashes of them, differ each time: the tests check the seals have every file in them as codesign would seal it instead. A remade shell needs those values in the tests made again.
 
 ## `packed-icons.car`
 

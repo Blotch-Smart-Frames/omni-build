@@ -72,6 +72,9 @@ const APP_CLIP_PROFILE = fileURLToPath(
 const WATCH_APP_PROFILE = fileURLToPath(
   new URL('../app/ShellWatch.mobileprovision', import.meta.url),
 );
+const WATCH_WIDGETS_PROFILE = fileURLToPath(
+  new URL('../app/ShellWatchWidgets.mobileprovision', import.meta.url),
+);
 /**
  * The extensions in the iOS shell, under the shell's ID and the app's: an
  * app extension in PlugIns/, and an ExtensionKit extension in Extensions/.
@@ -84,6 +87,8 @@ const INTENTS_EXTENSION = 'ShellIntents';
  */
 const APP_CLIP = 'Clip';
 const WATCH_APP = 'watchkitapp';
+/** The watch app's widgets' ID, under the watch app's. */
+const WATCH_WIDGETS = `${WATCH_APP}.ShellWatchWidgets`;
 const SIGNER = 'OmniBuild E2E';
 const TEAM = 'OMNIBUILD0';
 /** The keystores' password, the iOS key's and the upload key's. */
@@ -246,6 +251,8 @@ export const expected = (
       watchAppId: `${APP.id}.${WATCH_APP}`,
       watchCompanion: APP.id,
       watchAppApplicationIdentifier: `${TEAM}.${APP.id}.${WATCH_APP}`,
+      watchWidgetsId: `${APP.id}.${WATCH_WIDGETS}`,
+      watchWidgetsApplicationIdentifier: `${TEAM}.${APP.id}.${WATCH_WIDGETS}`,
     };
   }
   // Signed ad hoc, as Xcode signs a simulator build, and its framework,
@@ -262,6 +269,7 @@ export const expected = (
     appClipId: `${APP.id}.${APP_CLIP}`,
     watchAppId: `${APP.id}.${WATCH_APP}`,
     watchCompanion: APP.id,
+    watchWidgetsId: `${APP.id}.${WATCH_WIDGETS}`,
     signer: 'ad hoc',
   };
 };
@@ -295,7 +303,8 @@ export const repackage = async ({
     let signing: string[] = [];
     if (extension === '.ipa') {
       // A build for devices has to be signed with a key and a profile, and
-      // each extension, the watch app and the App Clip with one of its own.
+      // each extension, the watch app, its widgets and the App Clip with
+      // one of its own.
       signing = [
         '--signing-key',
         SIGNING_KEY,
@@ -309,6 +318,8 @@ export const repackage = async ({
         APP_CLIP_PROFILE,
         '--profile',
         WATCH_APP_PROFILE,
+        '--profile',
+        WATCH_WIDGETS_PROFILE,
       ];
     } else if (extension === '.aab') {
       // An app bundle is signed as Google Play takes one: with an upload

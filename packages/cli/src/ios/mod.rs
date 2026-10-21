@@ -130,31 +130,17 @@ pub fn repackage(
     Ok(zip::write(&entries).bytes)
 }
 
-/// Gives each app extension, App Clip and watch app in the shell an ID
-/// under the app's, in place of the shell's (`shell_id`), and the app's
-/// version and build number.
+/// Gives each app extension, App Clip and watch app in the shell, and each
+/// extension in those in turn, such as a watch app's widgets, an ID under
+/// the app's, in place of the shell's (`shell_id`), and the app's version
+/// and build number.
 fn rewrite_nested(entries: &mut [Entry], bundle: &str, shell_id: &str, app: &App) -> Result<()> {
-    let folders = EXTENSION_FOLDERS
-        .iter()
-        .map(|&folder| (folder, "appex"))
-        .chain([(APP_CLIPS, "app"), (WATCH, "app")]);
-    for entry in entries.iter_mut() {
-        let is_nested = folders.clone().any(|(folder, kind)| {
-            entry
-                .name
-                .strip_prefix(bundle)
-                .and_then(|file| file.strip_prefix(folder))
-                .and_then(|file| file.strip_suffix("/Info.plist"))
-                .is_some_and(|nested| {
-                    !nested.contains('/')
-                        && Path::new(nested)
-                            .extension()
-                            .is_some_and(|extension| extension == kind)
-                })
-        });
-        if !is_nested {
-            continue;
-        }
+    for program in signing::programs(entries, bundle)? {
+        let name = format!("{program}Info.plist");
+        let entry = entries
+            .iter_mut()
+            .find(|entry| entry.name == name)
+            .with_context(|| format!("the shell has no {name}"))?;
         let shell = entry
             .contents()
             .and_then(|contents| InfoPlist::parse(&contents))
@@ -292,6 +278,9 @@ pub mod tests {
     const APP_CLIP_INFO: &str = "OmniBuildShell.app/AppClips/ShellClip.app/Info.plist";
     /// The watch app's, in `Watch/`.
     const WATCH_INFO: &str = "OmniBuildShell.app/Watch/ShellWatch.app/Info.plist";
+    /// The watch app's widgets', in its own `PlugIns/`.
+    const WIDGETS_INFO: &str =
+        "OmniBuildShell.app/Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/Info.plist";
     /// The colour of every pixel of the app's icon in the tests.
     const ICON: Rgba<u8> = Rgba([0xe8, 0x59, 0x0c, 0xff]);
 
@@ -402,15 +391,20 @@ pub mod tests {
 
         let app = zip::read(&app).unwrap();
         // Signed ad hoc, as Xcode signed it: its executable, the
-        // framework's and the extensions', and the app's seal, which covers
-        // theirs. Their seals are the same as Xcode's, for the same files.
+        // framework's and the extensions', and the seals that cover theirs,
+        // the app's, the watch app's and the App Clip's. Their own seals
+        // are the same as Xcode's, for the same files.
         let signed = [
             EXECUTABLE,
             "OmniBuildShell.app/Frameworks/ShellKit.framework/ShellKit",
             "OmniBuildShell.app/PlugIns/ShellNotifications.appex/ShellNotifications",
             "OmniBuildShell.app/Extensions/ShellIntents.appex/ShellIntents",
+            "OmniBuildShell.app/AppClips/ShellClip.app/Frameworks/ShellKit.framework/ShellKit",
             "OmniBuildShell.app/AppClips/ShellClip.app/ShellClip",
+            "OmniBuildShell.app/AppClips/ShellClip.app/_CodeSignature/CodeResources",
+            "OmniBuildShell.app/Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/ShellWatchWidgets",
             "OmniBuildShell.app/Watch/ShellWatch.app/ShellWatch",
+            "OmniBuildShell.app/Watch/ShellWatch.app/_CodeSignature/CodeResources",
             "OmniBuildShell.app/_CodeSignature/CodeResources",
         ];
         for (entry, shell_entry) in app.iter().zip(&shell) {
@@ -495,12 +489,17 @@ pub mod tests {
         assert_eq!(mode(file(&entries, EXECUTABLE)), 0o100_755);
         // Each extension's ID under the app's, and the App Clip's and the
         // watch app's, and the app's version and build, in PlugIns/ and in
-        // Extensions/ alike.
+        // Extensions/ alike, and the watch app's widgets' under the watch
+        // app's.
         for (info, id) in [
             (EXTENSION_INFO, "dev.example.app.ShellNotifications"),
             (INTENTS_INFO, "dev.example.app.ShellIntents"),
             (APP_CLIP_INFO, "dev.example.app.Clip"),
             (WATCH_INFO, "dev.example.app.watchkitapp"),
+            (
+                WIDGETS_INFO,
+                "dev.example.app.watchkitapp.ShellWatchWidgets",
+            ),
         ] {
             let extension = InfoPlist::parse(&file(&entries, info).contents().unwrap()).unwrap();
             let mut expected = InfoPlist::parse(&file(&shell, info).contents().unwrap()).unwrap();
@@ -667,30 +666,58 @@ pub mod tests {
         assert_eq!(file(&entries, INFO_PLIST), file(&shell, INFO_PLIST));
     }
 
-    #[test]
-    fn signs_a_build_for_devices_with_the_key_and_profile() {
-        let shell = zip::read(SHELL_IPA).unwrap();
+    /// The App Clip's profile for the app `dev.example.app`.
+    fn example_app_clip_profile() -> Vec<u8> {
+        app_clip_profile(
+            "ABCDE12345.dev.example.app.Clip",
+            "ABCDE12345.dev.example.app",
+        )
+    }
+
+    /// The device shell repackaged as `dev.example.app`, and signed with
+    /// the test key, a wildcard profile for the app and the code nested in
+    /// it, and the App Clip's own.
+    fn signed_for_devices() -> Vec<Entry> {
         let app = App {
             id: Some("dev.example.app".to_owned()),
             ..App::default()
         };
-
-        // A wildcard for the app and its extensions, and the App Clip's own.
-        let app_clip = app_clip_profile(
-            "ABCDE12345.dev.example.app.Clip",
-            "ABCDE12345.dev.example.app",
-        );
-
         let ipa = repackage(
-            shell,
+            zip::read(SHELL_IPA).unwrap(),
             "Payload/OmniBuildShell.app/",
             &app,
             Some(&identity()),
-            &[PROFILE.to_vec(), app_clip.clone()],
+            &[PROFILE.to_vec(), example_app_clip_profile()],
         )
         .unwrap();
+        zip::read(&ipa).unwrap()
+    }
 
-        let entries = zip::read(&ipa).unwrap();
+    /// The entitlements in the signature of the device app's `executable`,
+    /// in the code at `code` in it, whose `LC_CODE_SIGNATURE` is at
+    /// `load_command`.
+    fn entitlements_in(
+        entries: &[Entry],
+        executable: &str,
+        code: usize,
+        load_command: usize,
+    ) -> String {
+        let executable = file(entries, &format!("Payload/OmniBuildShell.app/{executable}"))
+            .contents()
+            .unwrap();
+        let executable = &executable[code..];
+        let signature = Reader::at(executable, load_command + 8).u32() as usize;
+        let (_, entitlements) = blobs(&executable[signature..])
+            .into_iter()
+            .find(|(slot, _)| *slot == 5)
+            .unwrap();
+        String::from_utf8_lossy(&entitlements).into_owned()
+    }
+
+    #[test]
+    fn signs_a_build_for_devices_with_the_key_and_profile() {
+        let entries = signed_for_devices();
+
         assert_eq!(
             file(
                 &entries,
@@ -703,42 +730,33 @@ pub mod tests {
         let executable = file(&entries, "Payload/OmniBuildShell.app/OmniBuildShell");
         assert_eq!(mode(executable), 0o100_755);
         // The signatures' entitlements are for the app's own ID, and each
-        // extension's, which is under it. Each executable's is in its arm64
-        // code, at the start of the file but for a watch app's.
-        let in_code = |executable: &str, code: usize, load_command: usize| {
-            let executable = file(&entries, executable).contents().unwrap();
-            let executable = &executable[code..];
-            let signature = Reader::at(executable, load_command + 8).u32() as usize;
-            let (_, entitlements) = blobs(&executable[signature..])
-                .into_iter()
-                .find(|(slot, _)| *slot == 5)
-                .unwrap();
-            String::from_utf8_lossy(&entitlements).into_owned()
-        };
-        let entitlements = |executable: &str| in_code(executable, 0, 784);
+        // extension's, which is under it, each in its arm64 code, at the
+        // start of the file.
+        let entitlements = |executable: &str| entitlements_in(&entries, executable, 0, 784);
         assert!(
-            entitlements("Payload/OmniBuildShell.app/OmniBuildShell")
-                .contains("<string>ABCDE12345.dev.example.app</string>")
+            entitlements("OmniBuildShell").contains("<string>ABCDE12345.dev.example.app</string>")
         );
         for (extension, name) in [
             ("PlugIns/ShellNotifications.appex/", "ShellNotifications"),
             ("Extensions/ShellIntents.appex/", "ShellIntents"),
         ] {
-            let extension = format!("Payload/OmniBuildShell.app/{extension}");
             assert!(
                 entitlements(&format!("{extension}{name}")).contains(&format!(
                     "<string>ABCDE12345.dev.example.app.{name}</string>"
                 ))
             );
             assert_eq!(
-                file(&entries, &format!("{extension}embedded.mobileprovision"))
-                    .contents()
-                    .unwrap(),
+                file(
+                    &entries,
+                    &format!("Payload/OmniBuildShell.app/{extension}embedded.mobileprovision")
+                )
+                .contents()
+                .unwrap(),
                 PROFILE
             );
         }
         // The App Clip and the app name each other, by their App IDs.
-        let clip = "Payload/OmniBuildShell.app/AppClips/ShellClip.app/";
+        let clip = "AppClips/ShellClip.app/";
         assert!(entitlements(&format!("{clip}ShellClip")).contains(
             "\t<key>application-identifier</key>
 \t<string>ABCDE12345.dev.example.app.Clip</string>
@@ -750,29 +768,44 @@ pub mod tests {
 \t</array>
 "
         ));
-        assert!(
-            entitlements("Payload/OmniBuildShell.app/OmniBuildShell").contains(
-                "\t<key>com.apple.developer.associated-appclip-app-identifiers</key>
+        assert!(entitlements("OmniBuildShell").contains(
+            "\t<key>com.apple.developer.associated-appclip-app-identifiers</key>
 \t<array>
 \t\t<string>ABCDE12345.dev.example.app.Clip</string>
 \t</array>
 "
-            )
-        );
+        ));
         assert_eq!(
-            file(&entries, &format!("{clip}embedded.mobileprovision"))
-                .contents()
-                .unwrap(),
-            app_clip
+            file(
+                &entries,
+                &format!("Payload/OmniBuildShell.app/{clip}embedded.mobileprovision")
+            )
+            .contents()
+            .unwrap(),
+            example_app_clip_profile()
         );
-        // The watch app's, in its arm64_32 code too, after its arm64 code,
-        // for its own ID under the app's, from the wildcard.
-        let watch = "Payload/OmniBuildShell.app/Watch/ShellWatch.app/ShellWatch";
-        for (code, load_command) in [(16_384, 784), (65_536, 696)] {
-            assert!(
-                in_code(watch, code, load_command)
-                    .contains("<string>ABCDE12345.dev.example.app.watchkitapp</string>")
-            );
+    }
+
+    #[test]
+    fn signs_a_watch_app_and_its_widgets_for_their_own_ids() {
+        let entries = signed_for_devices();
+
+        // The watch app's and its widgets' entitlements, in their arm64
+        // code and their arm64_32 code after it, each for its own ID under
+        // the app's, from the wildcard.
+        for (executable, id) in [
+            ("Watch/ShellWatch.app/ShellWatch", "watchkitapp"),
+            (
+                "Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/ShellWatchWidgets",
+                "watchkitapp.ShellWatchWidgets",
+            ),
+        ] {
+            for (code, load_command) in [(16_384, 784), (65_536, 696)] {
+                assert!(
+                    entitlements_in(&entries, executable, code, load_command)
+                        .contains(&format!("<string>ABCDE12345.dev.example.app.{id}</string>"))
+                );
+            }
         }
     }
 
@@ -890,6 +923,52 @@ pub mod tests {
             let error = repackage(shell, "OmniBuildShell.app/", &app, None, &[]).unwrap_err();
 
             assert!(format!("{error:#}").starts_with(message), "{error:#}");
+        }
+    }
+
+    #[test]
+    fn reports_code_nested_deeper_it_cant_rewrite() {
+        let cases = [
+            (
+                with_file(&Entry::new(
+                    WIDGETS_INFO,
+                    Method::Stored,
+                    b"<plist><dict><key>CFBundleIdentifier</key><string>dev.omnibuild.watchkitapp.ShellWatchWidgets</string></dict></plist>",
+                )),
+                App {
+                    id: Some("dev.example.app".to_owned()),
+                    ..App::default()
+                },
+                "couldn't rewrite the shell's OmniBuildShell.app/Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/Info.plist: its bundle ID (CFBundleIdentifier) isn't under the app's, dev.omnibuild.shell",
+            ),
+            (
+                zip::read(SHELL_APP)
+                    .unwrap()
+                    .into_iter()
+                    .filter(|entry| entry.name != WIDGETS_INFO)
+                    .collect(),
+                App::default(),
+                "the shell has no OmniBuildShell.app/Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/Info.plist",
+            ),
+            (
+                zip::read(SHELL_APP)
+                    .unwrap()
+                    .into_iter()
+                    .chain([Entry::new(
+                        "OmniBuildShell.app/PlugIns/Share.bundle/Share",
+                        Method::Stored,
+                        b"",
+                    )])
+                    .collect(),
+                App::default(),
+                "the shell has code in its bundle that isn't a framework, an app extension, or the app's App Clip or watch app (OmniBuildShell.app/PlugIns/Share.bundle/Share), which OmniBuild can't sign yet",
+            ),
+        ];
+
+        for (shell, app, message) in cases {
+            let error = repackage(shell, "OmniBuildShell.app/", &app, None, &[]).unwrap_err();
+
+            assert_eq!(format!("{error:#}"), message);
         }
     }
 

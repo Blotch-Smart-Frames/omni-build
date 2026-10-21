@@ -13,6 +13,9 @@
 		0B5E11000000000000000089 /* ShellIntents.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 0B5E11000000000000000080 /* ShellIntents.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0B5E110000000000000000A9 /* ShellClip.app in Embed App Clips */ = {isa = PBXBuildFile; fileRef = 0B5E110000000000000000A0 /* ShellClip.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0B5E110000000000000000C9 /* ShellWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 0B5E110000000000000000C0 /* ShellWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		0B5E110000000000000000AB /* ShellKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0B5E11000000000000000040 /* ShellKit.framework */; };
+		0B5E110000000000000000AC /* ShellKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0B5E11000000000000000040 /* ShellKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		0B5E110000000000000000E9 /* ShellWatchWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0B5E110000000000000000E0 /* ShellWatchWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -50,6 +53,20 @@
 			proxyType = 1;
 			remoteGlobalIDString = 0B5E110000000000000000C6;
 			remoteInfo = ShellWatch;
+		};
+		0B5E110000000000000000AE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0B5E11000000000000000009 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0B5E11000000000000000048;
+			remoteInfo = ShellKit;
+		};
+		0B5E110000000000000000E7 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0B5E11000000000000000009 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0B5E110000000000000000E6;
+			remoteInfo = ShellWatchWidgets;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -109,6 +126,28 @@
 			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0B5E110000000000000000AD /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				0B5E110000000000000000AC /* ShellKit.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0B5E110000000000000000EA /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				0B5E110000000000000000E9 /* ShellWatchWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -118,6 +157,7 @@
 		0B5E11000000000000000080 /* ShellIntents.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = ShellIntents.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		0B5E110000000000000000A0 /* ShellClip.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ShellClip.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0B5E110000000000000000C0 /* ShellWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ShellWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0B5E110000000000000000E0 /* ShellWatchWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShellWatchWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -148,6 +188,13 @@
 				Info.plist,
 			);
 			target = 0B5E110000000000000000A6 /* ShellClip */;
+		};
+		0B5E110000000000000000E2 /* Exceptions for "ShellWatchWidgets" folder in "ShellWatchWidgets" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 0B5E110000000000000000E6 /* ShellWatchWidgets */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -194,6 +241,14 @@
 			path = ShellWatch;
 			sourceTree = "<group>";
 		};
+		0B5E110000000000000000E1 /* ShellWatchWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				0B5E110000000000000000E2 /* Exceptions for "ShellWatchWidgets" folder in "ShellWatchWidgets" target */,
+			);
+			path = ShellWatchWidgets;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -230,10 +285,18 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0B5E110000000000000000AB /* ShellKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		0B5E110000000000000000C4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0B5E110000000000000000E4 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -252,6 +315,7 @@
 				0B5E11000000000000000081 /* ShellIntents */,
 				0B5E110000000000000000A1 /* ShellClip */,
 				0B5E110000000000000000C1 /* ShellWatch */,
+				0B5E110000000000000000E1 /* ShellWatchWidgets */,
 				0B5E11000000000000000006 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -265,6 +329,7 @@
 				0B5E11000000000000000080 /* ShellIntents.appex */,
 				0B5E110000000000000000A0 /* ShellClip.app */,
 				0B5E110000000000000000C0 /* ShellWatch.app */,
+				0B5E110000000000000000E0 /* ShellWatchWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -366,10 +431,12 @@
 				0B5E110000000000000000A3 /* Sources */,
 				0B5E110000000000000000A4 /* Frameworks */,
 				0B5E110000000000000000A5 /* Resources */,
+				0B5E110000000000000000AD /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				0B5E110000000000000000AF /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				0B5E110000000000000000A1 /* ShellClip */,
@@ -386,10 +453,12 @@
 				0B5E110000000000000000C3 /* Sources */,
 				0B5E110000000000000000C4 /* Frameworks */,
 				0B5E110000000000000000C5 /* Resources */,
+				0B5E110000000000000000EA /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				0B5E110000000000000000E8 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				0B5E110000000000000000C1 /* ShellWatch */,
@@ -398,6 +467,25 @@
 			productName = ShellWatch;
 			productReference = 0B5E110000000000000000C0 /* ShellWatch.app */;
 			productType = "com.apple.product-type.application";
+		};
+		0B5E110000000000000000E6 /* ShellWatchWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0B5E110000000000000000F0 /* Build configuration list for PBXNativeTarget "ShellWatchWidgets" */;
+			buildPhases = (
+				0B5E110000000000000000E3 /* Sources */,
+				0B5E110000000000000000E4 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0B5E110000000000000000E1 /* ShellWatchWidgets */,
+			);
+			name = ShellWatchWidgets;
+			productName = ShellWatchWidgets;
+			productReference = 0B5E110000000000000000E0 /* ShellWatchWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -427,6 +515,9 @@
 					0B5E110000000000000000C6 = {
 						CreatedOnToolsVersion = 27.0;
 					};
+					0B5E110000000000000000E6 = {
+						CreatedOnToolsVersion = 27.0;
+					};
 				};
 			};
 			buildConfigurationList = 0B5E11000000000000000030 /* Build configuration list for PBXProject "OmniBuildShell" */;
@@ -449,6 +540,7 @@
 				0B5E11000000000000000086 /* ShellIntents */,
 				0B5E110000000000000000A6 /* ShellClip */,
 				0B5E110000000000000000C6 /* ShellWatch */,
+				0B5E110000000000000000E6 /* ShellWatchWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -520,6 +612,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0B5E110000000000000000E3 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -547,6 +646,16 @@
 			isa = PBXTargetDependency;
 			target = 0B5E110000000000000000C6 /* ShellWatch */;
 			targetProxy = 0B5E110000000000000000C7 /* PBXContainerItemProxy */;
+		};
+		0B5E110000000000000000AF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0B5E11000000000000000048 /* ShellKit */;
+			targetProxy = 0B5E110000000000000000AE /* PBXContainerItemProxy */;
+		};
+		0B5E110000000000000000E8 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0B5E110000000000000000E6 /* ShellWatchWidgets */;
+			targetProxy = 0B5E110000000000000000E7 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -865,6 +974,54 @@
 			};
 			name = Release;
 		};
+		0B5E110000000000000000F1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ShellWatchWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ShellWatchWidgets;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.omnibuild.shell.watchkitapp.ShellWatchWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		0B5E110000000000000000F2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ShellWatchWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ShellWatchWidgets;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.omnibuild.shell.watchkitapp.ShellWatchWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -927,6 +1084,15 @@
 			buildConfigurations = (
 				0B5E110000000000000000D1 /* Debug */,
 				0B5E110000000000000000D2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0B5E110000000000000000F0 /* Build configuration list for PBXNativeTarget "ShellWatchWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0B5E110000000000000000F1 /* Debug */,
+				0B5E110000000000000000F2 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
