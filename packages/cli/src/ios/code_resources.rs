@@ -6,7 +6,9 @@
 //!
 //! - `files`: each file's SHA-1, for iOS versions before 9.
 //! - `files2`: each file's SHA-256, but for `Info.plist`, which the
-//!   signature hashes itself, and `PkgInfo`.
+//!   signature hashes itself, and `PkgInfo`. In a bundle whose executable
+//!   is signed with SHA-1 hashes as well, a watch app for watchOS before 12
+//!   (`macho::needs_sha1`), its SHA-1 too, as codesign seals one.
 //! - `rules` and `rules2`: codesign's rules for which files each list
 //!   seals, and how. OmniBuild applies those its shells' files need:
 //!   localized resources (`.lproj`), but for `Base.lproj`'s, are optional,
@@ -18,27 +20,24 @@ use plist::{Dictionary, Value};
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
-/// The seal of `files`, by their paths in the bundle.
-pub fn code_resources(files: &[(String, Vec<u8>)]) -> Vec<u8> {
+/// The seal of `files`, by their paths in the bundle, with each file's SHA-1
+/// in `files2` too if `sha1`.
+pub fn code_resources(files: &[(String, Vec<u8>)], sha1: bool) -> Vec<u8> {
     let mut files: Vec<&(String, Vec<u8>)> = files
         .iter()
         .filter(|(name, _)| !(is_localized(name) && name.ends_with("/locversion.plist")))
         .collect();
     files.sort_by(|(a, _), (b, _)| a.cmp(b));
     // An optional file's hash is in a dictionary that says so.
-    let hash = |name: &str, key: &str, hash: Vec<u8>| {
-        if is_optional(name) {
-            dictionary(&[(key, Value::Data(hash)), ("optional", Value::Boolean(true))])
-        } else if key == "hash" {
-            Value::Data(hash)
-        } else {
-            dictionary(&[(key, Value::Data(hash))])
-        }
-    };
+    let optional = |name: &str| is_optional(name).then(|| ("optional", Value::Boolean(true)));
     let v1: Dictionary = files
         .iter()
         .map(|(name, contents)| {
-            let hash = hash(name, "hash", Sha1::digest(contents).to_vec());
+            let hash = Value::Data(Sha1::digest(contents).to_vec());
+            let hash = match optional(name) {
+                Some(optional) => dictionary(&[("hash", hash), optional]),
+                None => hash,
+            };
             (name.clone(), hash)
         })
         .collect();
@@ -46,8 +45,15 @@ pub fn code_resources(files: &[(String, Vec<u8>)]) -> Vec<u8> {
         .iter()
         .filter(|(name, _)| name != "Info.plist" && name != "PkgInfo")
         .map(|(name, contents)| {
-            let hash = hash(name, "hash2", Sha256::digest(contents).to_vec());
-            (name.clone(), hash)
+            let hashes: Vec<(&str, Value)> = [
+                sha1.then(|| ("hash", Value::Data(Sha1::digest(contents).to_vec()))),
+                Some(("hash2", Value::Data(Sha256::digest(contents).to_vec()))),
+                optional(name),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            (name.clone(), dictionary(&hashes))
         })
         .collect();
     let seal = dictionary(&[
@@ -166,7 +172,7 @@ mod tests {
         })
         .collect();
 
-        let seal = code_resources(&files);
+        let seal = code_resources(&files, false);
 
         // What codesign wrote signing the same app ad hoc.
         assert_eq!(format!("{:x}", Sha256::digest(&seal)), SIMULATOR_SEAL);
@@ -179,12 +185,15 @@ mod tests {
     fn seals_localized_files_as_optional_but_the_base_ones() {
         let file = |name: &str| (name.to_owned(), name.as_bytes().to_vec());
 
-        let seal = code_resources(&[
-            file("Base.lproj/Main.storyboardc"),
-            file("fr.lproj/InfoPlist.strings"),
-            file("fr.lproj/locversion.plist"),
-            file("Settings.bundle/de.lproj/Root.strings"),
-        ]);
+        let seal = code_resources(
+            &[
+                file("Base.lproj/Main.storyboardc"),
+                file("fr.lproj/InfoPlist.strings"),
+                file("fr.lproj/locversion.plist"),
+                file("Settings.bundle/de.lproj/Root.strings"),
+            ],
+            false,
+        );
 
         let seal = plist::Value::from_reader_xml(seal.as_slice()).unwrap();
         let files = seal.as_dictionary().unwrap()["files2"]
@@ -201,5 +210,35 @@ mod tests {
         assert!(optional("fr.lproj/InfoPlist.strings"));
         assert!(optional("Settings.bundle/de.lproj/Root.strings"));
         assert!(!files.contains_key("fr.lproj/locversion.plist"));
+    }
+
+    #[test]
+    fn seals_with_sha1_hashes_too_where_the_code_has_them() {
+        // A bundle with a watch app's executable for watchOS 11, which
+        // codesign signs with SHA-1 hashes too, and these files.
+        let files: Vec<(String, Vec<u8>)> = [
+            (
+                "Info.plist",
+                &b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>dev.example.watch</string><key>CFBundleExecutable</key><string>Mini</string></dict></plist>\n"[..],
+            ),
+            ("PkgInfo", b"APPL????"),
+            ("payload.txt", b"payload"),
+            ("Base.lproj/Main.strings", b"base"),
+            ("en.lproj/Localizable.strings", b"english"),
+            ("en.lproj/locversion.plist", b"version"),
+        ]
+        .into_iter()
+        .map(|(name, contents)| (name.to_owned(), contents.to_vec()))
+        .collect();
+
+        let seal = code_resources(&files, true);
+
+        // What codesign wrote signing it ad hoc: each file's SHA-1 in
+        // files2 too, before its SHA-256, and the localized one's before
+        // that it's optional.
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&seal)),
+            "4aa7ff0e924a4b424a71b01d83a26cfc8998bf996cfc070d6619b4e3954b282e"
+        );
     }
 }

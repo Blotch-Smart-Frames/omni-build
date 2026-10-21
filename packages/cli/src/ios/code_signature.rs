@@ -11,6 +11,8 @@
 //!   hash of each page of the code and of each "special slot": Info.plist,
 //!   the requirements, the resource seal (`CodeResources`) and the
 //!   entitlements. Its own hash, the cdhash, is what iOS knows the app by.
+//!   Code for older systems has a second one, of SHA-1 hashes, which comes
+//!   first, and the SHA-256 one after the others, as an alternate.
 //! - The requirements: which signatures count as this app's
 //!   ("designated"), by its identifier and its certificate.
 //! - The entitlements, as XML and as DER.
@@ -29,7 +31,7 @@ use const_oid::db::rfc4519::{CN, O, OU};
 use const_oid::db::rfc5911::{
     ID_CONTENT_TYPE, ID_DATA, ID_MESSAGE_DIGEST, ID_SIGNED_DATA, ID_SIGNING_TIME,
 };
-use const_oid::db::rfc5912::{ID_SHA_256, SHA_256_WITH_RSA_ENCRYPTION};
+use const_oid::db::rfc5912::{ID_SHA_1, ID_SHA_256, SHA_256_WITH_RSA_ENCRYPTION};
 use plist::Value;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
@@ -52,8 +54,10 @@ const ENTITLEMENTS: u32 = 0xfade_7171;
 const DER_ENTITLEMENTS: u32 = 0xfade_7172;
 const BLOB_WRAPPER: u32 = 0xfade_0b01;
 
-/// Each blob's slot in the super blob's index.
+/// Each blob's slot in the super blob's index. A code directory beside the
+/// first, of other hashes, is an alternate, from slot 0x1000.
 const CODE_DIRECTORY_SLOT: u32 = 0;
+const ALTERNATE_CODE_DIRECTORY_SLOT: u32 = 0x1000;
 const REQUIREMENTS_SLOT: u32 = 2;
 const ENTITLEMENTS_SLOT: u32 = 5;
 const DER_ENTITLEMENTS_SLOT: u32 = 7;
@@ -65,8 +69,6 @@ const DESIGNATED: u32 = 3;
 const VERSION: u32 = 0x2_0400;
 const CODE_DIRECTORY_HEADER: usize = 88;
 const ADHOC: u32 = 0x2;
-const SHA256_SIZE: u8 = 32;
-const SHA256_TYPE: u8 = 2;
 /// The executable segment's flags: it's the app's main executable, and
 /// may be debugged, which `get-task-allow` allows.
 const MAIN_BINARY: u64 = 0x1;
@@ -106,6 +108,36 @@ const APPLE: &str = "Apple Inc.";
 const WWDR_G3: &[u8] = include_bytes!("apple/AppleWWDRCAG3.cer");
 const APPLE_ROOT: &[u8] = include_bytes!("apple/AppleRootCA.cer");
 
+/// A hash a code directory is made of, with its hash type's number in one.
+#[derive(Clone, Copy)]
+enum Hash {
+    Sha1 = 1,
+    Sha256 = 2,
+}
+
+impl Hash {
+    fn of(self, data: &[u8]) -> Vec<u8> {
+        match self {
+            Self::Sha1 => Sha1::digest(data).to_vec(),
+            Self::Sha256 => Sha256::digest(data).to_vec(),
+        }
+    }
+
+    fn size(self) -> usize {
+        match self {
+            Self::Sha1 => 20,
+            Self::Sha256 => 32,
+        }
+    }
+
+    fn oid(self) -> ObjectIdentifier {
+        match self {
+            Self::Sha1 => ID_SHA_1,
+            Self::Sha256 => ID_SHA_256,
+        }
+    }
+}
+
 /// What goes into an app's signature besides its code.
 #[derive(Clone, Copy)]
 pub struct Signer<'a> {
@@ -130,30 +162,46 @@ impl Signer<'_> {
                 blob(DER_ENTITLEMENTS, &entitlements.der()),
             )
         });
-        // From slot -1 down. Slots -4 and -6 are for what iOS apps don't
-        // have, and are left empty.
+        // What each special slot hashes, from slot -1 down. Slots -4 and -6
+        // are for what iOS apps don't have, and are left empty.
         let mut special = vec![
-            sha256(self.info_plist),
-            sha256(&requirements),
-            sha256(self.code_resources),
+            Some(self.info_plist),
+            Some(&requirements[..]),
+            Some(self.code_resources),
         ];
         if let Some((xml, der)) = &entitlements {
-            special.extend([[0; 32], sha256(xml), [0; 32], sha256(der)]);
+            special.extend([None, Some(&xml[..]), None, Some(&der[..])]);
         }
-        let code_directory = self.code_directory(code, &special);
-        let signature = blob(BLOB_WRAPPER, &self.cms(&code_directory));
+        // SHA-1's first, where it's there, as codesign orders them.
+        let hashes: &[Hash] = if code.sha1 {
+            &[Hash::Sha1, Hash::Sha256]
+        } else {
+            &[Hash::Sha256]
+        };
+        let directories: Vec<(Hash, Vec<u8>)> = hashes
+            .iter()
+            .map(|&hash| (hash, self.code_directory(code, hash, &special)))
+            .collect();
+        let signature = blob(BLOB_WRAPPER, &self.cms(&directories));
+        let mut directories = directories.into_iter().map(|(_, directory)| directory);
         let mut blobs = vec![
-            (CODE_DIRECTORY_SLOT, code_directory),
+            (
+                CODE_DIRECTORY_SLOT,
+                directories.next().expect("there's one"),
+            ),
             (REQUIREMENTS_SLOT, requirements),
         ];
         if let Some((xml, der)) = entitlements {
             blobs.extend([(ENTITLEMENTS_SLOT, xml), (DER_ENTITLEMENTS_SLOT, der)]);
         }
+        blobs.extend((ALTERNATE_CODE_DIRECTORY_SLOT..).zip(directories));
         blobs.push((SIGNATURE_SLOT, signature));
         super_blob(EMBEDDED_SIGNATURE, &blobs)
     }
 
-    fn code_directory(&self, code: &Code, special: &[[u8; 32]]) -> Vec<u8> {
+    /// The code directory of `hash` hashes of the code's pages and of what
+    /// each special slot has, `special`: nothing, for an empty one.
+    fn code_directory(&self, code: &Code, hash: Hash, special: &[Option<&[u8]>]) -> Vec<u8> {
         let mut strings = [self.identifier.as_bytes(), &[0]].concat();
         let team_offset = match self.key.and_then(|key| team(key.x509())) {
             Some(team) => {
@@ -164,9 +212,17 @@ impl Signer<'_> {
             }
             None => 0,
         };
-        let pages: Vec<[u8; 32]> = code.bytes.chunks(1 << code.page_size).map(sha256).collect();
-        let hash_offset = CODE_DIRECTORY_HEADER + strings.len() + special.len() * 32;
-        let length = hash_offset + pages.len() * 32;
+        let pages: Vec<Vec<u8>> = code
+            .bytes
+            .chunks(1 << code.page_size)
+            .map(|page| hash.of(page))
+            .collect();
+        let special: Vec<Vec<u8>> = special
+            .iter()
+            .map(|slot| slot.map_or_else(|| vec![0; hash.size()], |data| hash.of(data)))
+            .collect();
+        let hash_offset = CODE_DIRECTORY_HEADER + strings.len() + special.len() * hash.size();
+        let length = hash_offset + pages.len() * hash.size();
         let debuggable = self
             .entitlements
             .and_then(|entitlements| entitlements.get("get-task-allow"))
@@ -188,7 +244,12 @@ impl Signer<'_> {
         }
         // The hash size and type, the platform (0, not Apple's own), and
         // the page size.
-        directory.extend([SHA256_SIZE, SHA256_TYPE, 0, code.page_size]);
+        directory.extend([
+            u8::try_from(hash.size()).expect("a hash's size fits"),
+            hash as u8,
+            0,
+            code.page_size,
+        ]);
         // A spare field, no scatter vector, the team, and another spare.
         for field in [0, 0, u32_of(team_offset), 0] {
             directory.extend(field.to_be_bytes());
@@ -249,44 +310,55 @@ impl Signer<'_> {
         super_blob(REQUIREMENTS, designated.as_slice())
     }
 
-    /// The CMS signature of the code directory, as codesign makes it: with
-    /// the certificates, and among the signed attributes the cdhash, which
-    /// iOS reads to know which code directory was signed.
-    fn cms(&self, code_directory: &[u8]) -> Vec<u8> {
+    /// The CMS signature of the first of the code directories, each with
+    /// the hash it's of, as codesign makes it: with the certificates, and
+    /// among the signed attributes each one's cdhash, its own hash by the
+    /// hash it's of, which iOS reads to know which were signed.
+    fn cms(&self, code_directories: &[(Hash, Vec<u8>)]) -> Vec<u8> {
         let Some(key) = self.key else {
             return Vec::new();
         };
-        let digest = Sha256::digest(code_directory);
-        let mut cd_hashes = Vec::new();
+        let digest = Sha256::digest(&code_directories[0].1);
+        let cd_hashes: Vec<(Hash, Vec<u8>)> = code_directories
+            .iter()
+            .map(|(hash, directory)| (*hash, hash.of(directory)))
+            .collect();
+        // As a property list, each truncated to 20 bytes.
+        let mut truncated = Vec::new();
         Value::Dictionary(
             [(
                 "cdhashes".to_owned(),
-                Value::Array(vec![Value::Data(digest[..20].to_vec())]),
+                Value::Array(
+                    cd_hashes
+                        .iter()
+                        .map(|(_, cd_hash)| Value::Data(cd_hash[..20].to_vec()))
+                        .collect(),
+                ),
             )]
             .into_iter()
             .collect(),
         )
-        .to_writer_xml(&mut cd_hashes)
+        .to_writer_xml(&mut truncated)
         .expect("writing into memory can't fail");
-        cd_hashes.push(b'\n');
+        truncated.push(b'\n');
+        // And whole, each with its hash.
+        let whole = cd_hashes.iter().map(|(hash, cd_hash)| {
+            Any::new(
+                Tag::Sequence,
+                [
+                    der(&hash.oid()),
+                    der(&OctetString::new(cd_hash.clone()).expect("a digest fits")),
+                ]
+                .concat(),
+            )
+        });
         let time = UtcTime::from_system_time(SystemTime::now()).expect("it's before 2050");
         let signed_attributes = SetOfVec::try_from(vec![
-            signed_attribute(ID_CONTENT_TYPE, Any::encode_from(&ID_DATA)),
-            signed_attribute(ID_SIGNING_TIME, Any::encode_from(&time)),
-            signed_attribute(ID_MESSAGE_DIGEST, octets(&digest)),
-            signed_attribute(
-                CD_HASHES_2,
-                Ok(Any::new(
-                    Tag::Sequence,
-                    [
-                        der(&ID_SHA_256),
-                        der(&OctetString::new(digest.to_vec()).expect("a digest fits")),
-                    ]
-                    .concat(),
-                )
-                .expect("a digest fits a sequence")),
-            ),
-            signed_attribute(CD_HASHES, octets(&cd_hashes)),
+            signed_attribute(ID_CONTENT_TYPE, [Any::encode_from(&ID_DATA)]),
+            signed_attribute(ID_SIGNING_TIME, [Any::encode_from(&time)]),
+            signed_attribute(ID_MESSAGE_DIGEST, [octets(&digest)]),
+            signed_attribute(CD_HASHES_2, whole),
+            signed_attribute(CD_HASHES, [octets(&truncated)]),
         ])
         .expect("the attributes are distinct");
 
@@ -378,11 +450,18 @@ fn attribute(name: &Name, oid: ObjectIdentifier) -> Option<String> {
         .and_then(|attribute| String::from_utf8(attribute.value.value().to_vec()).ok())
 }
 
-fn signed_attribute(oid: ObjectIdentifier, value: x509_cert::der::Result<Any>) -> Attribute {
+/// A signed attribute with `values`, which DER puts in order.
+fn signed_attribute(
+    oid: ObjectIdentifier,
+    values: impl IntoIterator<Item = x509_cert::der::Result<Any>>,
+) -> Attribute {
+    let values: Vec<Any> = values
+        .into_iter()
+        .map(|value| value.expect("the attribute encodes"))
+        .collect();
     Attribute {
         oid,
-        values: SetOfVec::try_from(vec![value.expect("the attribute encodes")])
-            .expect("one value is a set"),
+        values: SetOfVec::try_from(values).expect("the values are distinct"),
     }
 }
 
@@ -438,10 +517,6 @@ fn data(expression: &mut Vec<u8>, bytes: &[u8]) {
     expression.resize(expression.len().next_multiple_of(4), 0);
 }
 
-fn sha256(data: &[u8]) -> [u8; 32] {
-    Sha256::digest(data).into()
-}
-
 fn u32_of(value: usize) -> u32 {
     u32::try_from(value).expect("signatures are under 4 GiB")
 }
@@ -452,7 +527,9 @@ pub mod tests {
 
     use cms::content_info::ContentInfo;
     use cms::signed_data::SignedData;
+    use sha1::Sha1;
     use sha2::{Digest, Sha256};
+    use x509_cert::der::asn1::OctetString;
     use x509_cert::der::{Decode, Encode};
 
     use x509_cert::Certificate;
@@ -507,6 +584,7 @@ pub mod tests {
             bytes,
             page_size: 14,
             text: (0, 32_768),
+            sha1: false,
         }
     }
 
@@ -635,6 +713,112 @@ pub mod tests {
             signer.signature.as_bytes()
         ));
         assert_eq!(signed_data.certificates.unwrap().0.len(), 1);
+    }
+
+    #[test]
+    fn signs_code_for_older_systems_with_a_sha1_code_directory_too() {
+        let key = identity();
+        let entitlements = shell_entitlements();
+        let bytes = vec![7; 100];
+        let signer = Signer {
+            identifier: "dev.omnibuild.shell.watchkitapp",
+            info_plist: b"Info.plist",
+            code_resources: b"CodeResources",
+            entitlements: Some(&entitlements),
+            key: Some(&key),
+            main: true,
+        };
+
+        let signature = signer.sign(&Code {
+            sha1: true,
+            ..code(&bytes)
+        });
+
+        // SHA-1's first, then SHA-256's after the entitlements, as codesign
+        // orders them.
+        let blobs = blobs(&signature);
+        let slots: Vec<u32> = blobs.iter().map(|(slot, _)| *slot).collect();
+        assert_eq!(slots, [0, 2, 5, 7, 0x1000, 0x1_0000]);
+        let (sha1, sha256) = (&blobs[0].1, &blobs[4].1);
+        // Each of its own hashes, of the same code and special slots: the
+        // 20-byte SHA-1 (type 1) and the 32-byte SHA-256 (type 2).
+        assert_eq!((sha1[36], sha1[37]), (20, 1));
+        assert_eq!((sha256[36], sha256[37]), (32, 2));
+        let identifier = 88 + "dev.omnibuild.shell.watchkitapp".len() + 1;
+        assert_eq!(field(sha1, 16) as usize, identifier + 7 * 20);
+        assert_eq!(field(sha256, 16) as usize, identifier + 7 * 32);
+        assert_eq!(
+            sha1[identifier..identifier + 20],
+            *Sha1::digest(&blobs[3].1).as_slice()
+        );
+        assert_eq!(sha1[identifier + 20..identifier + 40], [0; 20]);
+        assert_eq!(
+            sha1[identifier + 7 * 20..],
+            *Sha1::digest(&bytes).as_slice()
+        );
+        // The rest of their headers, and their identifiers, the same: but
+        // for their lengths, where their hashes start, and their kinds.
+        for range in [8..16, 20..36, 38..identifier] {
+            assert_eq!(sha1[range.clone()], sha256[range]);
+        }
+
+        // The CMS signs the first, and names both by their own hashes.
+        let cms = ContentInfo::from_der(&blobs[5].1[8..]).unwrap();
+        let signed_data = cms.content.decode_as::<SignedData>().unwrap();
+        let signer = signed_data.signer_infos.0.get(0).unwrap();
+        let attributes = signer.signed_attrs.as_ref().unwrap();
+        let values = |oid: &str| -> Vec<Vec<u8>> {
+            attributes
+                .iter()
+                .find(|attribute| attribute.oid.to_string() == oid)
+                .unwrap()
+                .values
+                .iter()
+                .map(|value| value.to_der().unwrap())
+                .collect()
+        };
+        let octets = |bytes: &[u8]| OctetString::new(bytes).unwrap().to_der().unwrap();
+        assert_eq!(
+            values("1.2.840.113549.1.9.4"),
+            [octets(&Sha256::digest(sha1))]
+        );
+        // Each with its hash's OID, SHA-1's (1.3.14.3.2.26) first, as DER
+        // orders a set.
+        let sequence = |oid: &[u8], digest: &[u8]| {
+            [
+                &[0x30, u8::try_from(oid.len() + 2 + digest.len()).unwrap()][..],
+                oid,
+                &octets(digest),
+            ]
+            .concat()
+        };
+        assert_eq!(
+            values("1.2.840.113635.100.9.2"),
+            [
+                sequence(&hex("06052b0e03021a"), &Sha1::digest(sha1)),
+                sequence(&hex("0609608648016503040201"), &Sha256::digest(sha256)),
+            ]
+        );
+        let plist = &values("1.2.840.113635.100.9.1")[0];
+        let cdhashes = plist::Value::from_reader(std::io::Cursor::new(&plist[4..]))
+            .unwrap()
+            .into_dictionary()
+            .unwrap();
+        let cdhashes: Vec<&[u8]> = cdhashes["cdhashes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|cdhash| cdhash.as_data().unwrap())
+            .collect();
+        assert_eq!(
+            cdhashes,
+            [&Sha1::digest(sha1)[..], &Sha256::digest(sha256)[..20]]
+        );
+        assert!(verifies(
+            key.public_key(),
+            &attributes.to_der().unwrap(),
+            signer.signature.as_bytes()
+        ));
     }
 
     #[test]

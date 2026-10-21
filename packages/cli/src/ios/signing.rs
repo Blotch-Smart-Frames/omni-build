@@ -19,7 +19,7 @@ use super::code_resources::code_resources;
 use super::code_signature::Signer;
 use super::entitlements::{Entitlement, Entitlements};
 use super::info_plist::InfoPlist;
-use super::macho;
+use super::macho::Executable;
 use super::profile::Profile;
 use super::{APP_CLIPS, EXTENSION_FOLDERS, WATCH};
 use crate::key::SigningKey;
@@ -410,6 +410,17 @@ fn sign_bundle(
         .with_context(|| {
             format!("the shell's {folder}Info.plist has no executable (CFBundleExecutable)")
         })?;
+    let index = entries
+        .iter()
+        .position(|entry| entry.name == executable)
+        .with_context(|| {
+            format!("the shell has no {executable}, the executable its Info.plist names")
+        })?;
+    let cant_sign = || format!("couldn't sign {executable}");
+    let contents = entries[index].contents().with_context(cant_sign)?;
+    let code = Executable::read(&contents).with_context(cant_sign)?;
+    // The seal has SHA-1 hashes too when the code does.
+    let sha1 = code.needs_sha1();
     let signature_folder = format!("{folder}_CodeSignature/");
     let mut files = Vec::new();
     for entry in entries.iter() {
@@ -423,7 +434,8 @@ fn sign_bundle(
             files.push((file.to_owned(), entry.contents()?));
         }
     }
-    let seal = code_resources(&files);
+    let seal = code_resources(&files, sha1);
+    // After the executable, if it's new, so `index` stays where that is.
     put(entries, &format!("{signature_folder}CodeResources"), &seal);
 
     let info_plist = files
@@ -436,16 +448,7 @@ fn sign_bundle(
         code_resources: &seal,
         ..*signer
     };
-    let index = entries
-        .iter()
-        .position(|entry| entry.name == executable)
-        .with_context(|| {
-            format!("the shell has no {executable}, the executable its Info.plist names")
-        })?;
-    let code = entries[index]
-        .contents()
-        .and_then(|code| macho::sign(&code, |code| signer.sign(code)))
-        .with_context(|| format!("couldn't sign {executable}"))?;
+    let code = code.sign(|code| signer.sign(code));
     entries[index] = entries[index].with_contents(&code);
     Ok(())
 }
@@ -493,14 +496,15 @@ mod tests {
         format!("{:x}", Sha256::digest(bytes))
     }
 
-    /// The code directory in a signed executable for devices, whose
-    /// `LC_CODE_SIGNATURE` is at `load_command`.
-    fn code_directory(executable: &[u8], load_command: usize) -> Vec<u8> {
+    /// The code directory in `slot` in a signed executable for devices,
+    /// whose `LC_CODE_SIGNATURE` is at `load_command`: 0 for the first, or
+    /// 0x1000 for SHA-256's beside a SHA-1 one.
+    fn code_directory(executable: &[u8], load_command: usize, slot: u32) -> Vec<u8> {
         // Where its LC_CODE_SIGNATURE says the signature is.
         let start = Reader::at(executable, load_command + 8).u32() as usize;
         blobs(&executable[start..])
             .into_iter()
-            .find(|(slot, _)| *slot == 0)
+            .find(|(found, _)| *found == slot)
             .unwrap()
             .1
     }
@@ -552,11 +556,11 @@ mod tests {
         );
         assert_eq!(
             hash("Watch/ShellWatch.app/ShellWatch"),
-            "e7a06e33a43b214e82737dd8bd4f78809804dec41923417f4ae9f8744bf248e6"
+            "71bf2739415e31d56596e3dda29e2aef478b21244e4f2bf69f9a99e5b84f2942"
         );
         assert_eq!(
             hash("Watch/ShellWatch.app/_CodeSignature/CodeResources"),
-            "8792ccb9f1789636d69978179a9a6e09c266018dc026aa12833ad0d98e4a4c1b"
+            "553d46f56b37607686bf3bee8258ce82342acaee6b36d289166d505696566ae7"
         );
         // The App Clip's copy of the framework, signed as the app's is.
         assert_eq!(
@@ -579,11 +583,11 @@ mod tests {
         );
         assert_eq!(
             hash("OmniBuildShell"),
-            "32198e66a5739461e5f7c401a4dca7a14f6b997dfbb40f64983108f3e8158905"
+            "110f4e203b72feb6c9b891a67b2ebb4d65548e7bac7d525e6e85b911eb92414c"
         );
         assert_eq!(
             hash("_CodeSignature/CodeResources"),
-            "d9a6e1052162d718c577a6dce72ed355968a714de5ce189a61a3a28a0e38109a"
+            "19c0c9bfa737fea32a4f75dd6d237bcb6e908a93a2b262ea03e09f78c3c06a54"
         );
         let names = |entries: &[Entry]| -> Vec<String> {
             entries.iter().map(|entry| entry.name.clone()).collect()
@@ -633,10 +637,10 @@ mod tests {
         assert_eq!(app_clip_framework, framework);
         // The watch app's and its widgets' have two architectures, arm64
         // and arm64_32: all of each, with the padding after each signature
-        // zeroed.
+        // zeroed. The watch app's, for watchOS 11, with SHA-1 hashes too.
         assert_eq!(
             sha256(&app("Watch/ShellWatch.app/ShellWatch")),
-            "5ed9ddaa1fb2466e40129a667189cf26b4a0a0a069a11ba544205e076efff05e"
+            "527895c1ed78fd0056c4d88af9cb2b7d884005a562357daec948373df7af5bc8"
         );
         assert_eq!(
             sha256(&app(
@@ -671,7 +675,7 @@ mod tests {
         );
         assert_eq!(
             sha256(&app("Watch/ShellWatch.app/_CodeSignature/CodeResources")),
-            "886699158684fa42124f96bb19a481c3e9b211416755c1720e5c5c4f9dc163c5"
+            "8f0c948a4c2bdb8a5d426d16c82ca3b0d17b8003270156ea7cf62c0410107549"
         );
         assert_eq!(
             app(
@@ -686,12 +690,12 @@ mod tests {
         let executable = app("OmniBuildShell");
         assert_eq!(
             sha256(&executable[..33_300]),
-            "691ebd47df60573b497f111034f3907afee81be0b11502a0564d4c6223ecf8b8"
+            "080a49e8ac0a3cc80f61f4bb85b3e22bf165b9e545e25d0933504ce7d4ecbf66"
         );
         assert_eq!(executable[33_300..], [0; 12]);
         assert_eq!(
             sha256(&app("_CodeSignature/CodeResources")),
-            "e599946c837d53e0afdc583ae4b4d2e23850103de4e2ef9eda1812c01af430c0"
+            "0c0730bf76b78ecdc98f46ab2ad207b7108375df665cd31042944edc85084fa7"
         );
     }
 
@@ -729,8 +733,8 @@ mod tests {
 
     /// The seal of the signed bundle in the device app's folder `folder`,
     /// whose executable is `executable`, as codesign would write it for
-    /// what OmniBuild signed in it.
-    fn seal_of(signed: &[Entry], folder: &str, executable: &str) -> Vec<u8> {
+    /// what OmniBuild signed in it, with SHA-1 hashes too if `sha1`.
+    fn seal_of(signed: &[Entry], folder: &str, executable: &str, sha1: bool) -> Vec<u8> {
         let files: Vec<(String, Vec<u8>)> = signed
             .iter()
             .filter_map(|entry| {
@@ -742,7 +746,7 @@ mod tests {
                 sealed.then(|| (name.to_owned(), entry.contents().unwrap()))
             })
             .collect();
-        code_resources(&files)
+        code_resources(&files, sha1)
     }
 
     #[test]
@@ -802,14 +806,15 @@ mod tests {
             ),
             app(&signed, seal)
         );
-        for (folder, executable) in [
-            ("", "OmniBuildShell"),
-            ("Watch/ShellWatch.app/", "ShellWatch"),
-            ("AppClips/ShellClip.app/", "ShellClip"),
+        // The watch app's with SHA-1 hashes too, as its code has them.
+        for (folder, executable, sha1) in [
+            ("", "OmniBuildShell", false),
+            ("Watch/ShellWatch.app/", "ShellWatch", true),
+            ("AppClips/ShellClip.app/", "ShellClip", false),
         ] {
             assert_eq!(
                 app(&signed, &format!("{folder}_CodeSignature/CodeResources")),
-                seal_of(&signed, folder, executable),
+                seal_of(&signed, folder, executable, sha1),
                 "{folder}"
             );
         }
@@ -832,13 +837,19 @@ mod tests {
         // first page's hash after the 88-byte header, the identifier, and
         // the special slots: 7 of each program's, the third from last its
         // seal's, and 3 of the framework's. The extensions' and the
-        // widgets' seals are the same each time.
-        let without = |executable: &[u8], load_command: usize, hashes: &[usize]| {
-            let mut directory = code_directory(executable, load_command);
+        // widgets' seals are the same each time. In the first code
+        // directory, but for the watch app's SHA-256 one.
+        let in_slot = |executable: &[u8], load_command: usize, slot: u32, hashes: &[usize]| {
+            let mut directory = code_directory(executable, load_command, slot);
+            // Each hash as long as the code directory says.
+            let size = usize::from(directory[36]);
             for &hash in hashes {
-                directory[hash..hash + 32].fill(0);
+                directory[hash..hash + size].fill(0);
             }
             sha256(&directory)
+        };
+        let without = |executable: &[u8], load_command: usize, hashes: &[usize]| {
+            in_slot(executable, load_command, 0, hashes)
         };
         assert_eq!(
             without(&app(&signed, "OmniBuildShell"), 784, &[332, 332 - 3 * 32]),
@@ -857,16 +868,31 @@ mod tests {
             "5db5f7ce8c37a83fadaab49f0310bc9a260135a4832314de3529897f03c15ba8"
         );
         // The watch app's and its widgets' for each of their architectures,
-        // the arm64_32 code with its 32-bit load commands.
+        // the arm64_32 code with its 32-bit load commands. The watch app's
+        // code, for watchOS 11, has a SHA-1 code directory first, of 20-byte
+        // hashes, and its SHA-256 one in slot 0x1000.
         let watch = app(&signed, "Watch/ShellWatch.app/ShellWatch");
-        assert_eq!(
-            without(&watch[16_384..], 784, &[344, 344 - 3 * 32]),
-            "d05ccb9330c586647129819354722cef7cc750cdb80b115de9189d11deef850f"
-        );
-        assert_eq!(
-            without(&watch[65_536..], 696, &[344, 344 - 3 * 32]),
-            "aa380df0e78019609ace2bb72091429d4efbb1f9bf801cae9725a8cc30f8dacd"
-        );
+        for (code, load_command, sha1, sha256) in [
+            (
+                16_384,
+                784,
+                "67b15e725b08bdeb63b256c651eadfe594e969c323c5621e47b9a83652c3b07e",
+                "c781639c49450cbb4841e0ea7db466f7e41318a6172f5e0290bf4a96fb73eaeb",
+            ),
+            (
+                65_536,
+                696,
+                "b970404d6627f8694548f40935fcdcd9652f436c2e76f599912f886d60206fc3",
+                "bb01a373747cbddb02064678b76832734eb7e1e937b677fd31b91326aeb7d7c9",
+            ),
+        ] {
+            let code = &watch[code..];
+            assert_eq!(in_slot(code, load_command, 0, &[260, 260 - 3 * 20]), sha1);
+            assert_eq!(
+                in_slot(code, load_command, 0x1000, &[344, 344 - 3 * 32]),
+                sha256
+            );
+        }
         let widgets = app(
             &signed,
             "Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/ShellWatchWidgets",
@@ -1014,7 +1040,7 @@ mod tests {
                 &signed,
                 "OmniBuildShell.app/_CodeSignature/CodeResources"
             )),
-            "d9a6e1052162d718c577a6dce72ed355968a714de5ce189a61a3a28a0e38109a"
+            "19c0c9bfa737fea32a4f75dd6d237bcb6e908a93a2b262ea03e09f78c3c06a54"
         );
         assert_eq!(signed.len(), shell.len() - 4);
         assert_eq!(nested, programs(&signed, SIMULATOR).unwrap());
@@ -1181,6 +1207,27 @@ mod tests {
     }
 
     #[test]
+    fn reports_a_file_it_cant_read() {
+        let shell_info = info(&zip::read(SHELL_APP).unwrap(), SIMULATOR);
+
+        let mut corrupt = Entry::new("OmniBuildShell.app/payload.txt", Method::Deflated, b"");
+        corrupt.data = vec![0xff; 8];
+        assert!(
+            sign(shell_with(corrupt), SIMULATOR, &shell_info, None)
+                .unwrap_err()
+                .to_string()
+                .ends_with("is corrupt")
+        );
+        let mut corrupt = Entry::new("OmniBuildShell.app/OmniBuildShell", Method::Deflated, b"");
+        corrupt.data = vec![0xff; 8];
+        let error = sign(shell_with(corrupt), SIMULATOR, &shell_info, None).unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "couldn't sign OmniBuildShell.app/OmniBuildShell: OmniBuildShell.app/OmniBuildShell is corrupt: corrupt deflate stream"
+        );
+    }
+
+    #[test]
     fn reports_an_app_it_cant_sign() {
         let shell = zip::read(SHELL_APP).unwrap();
         let profiles = [Profile::parse(PROFILE).unwrap()];
@@ -1273,14 +1320,6 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "the shell's OmniBuildShell.app/Info.plist has no executable (CFBundleExecutable)"
-        );
-        let mut corrupt = Entry::new("OmniBuildShell.app/payload.txt", Method::Deflated, b"");
-        corrupt.data = vec![0xff; 8];
-        assert!(
-            sign(with(corrupt), SIMULATOR, &shell_info, None)
-                .unwrap_err()
-                .to_string()
-                .ends_with("is corrupt")
         );
     }
 }

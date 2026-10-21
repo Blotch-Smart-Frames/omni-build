@@ -34,7 +34,7 @@ The Rust tests find files in both Android shells by name, and resources by their
 
 ## `shell.app.zip`
 
-The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. Its executable, its framework's (`Frameworks/ShellKit.framework`), its extensions' (`PlugIns/ShellNotifications.appex`, an app extension, and `Extensions/ShellIntents.appex`, an ExtensionKit extension), its watch app's (`Watch/ShellWatch.app`, linked for the watchOS Simulator) and its widgets' (`PlugIns/ShellWatchWidgets.appex` in the watch app), and its App Clip's (`AppClips/ShellClip.app`) and the App Clip's copy of the framework (`Frameworks/ShellKit.framework` in the App Clip) are tiny programs instead of the shell's Swift, linked for the Simulator's two architectures and signed by the linker: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, its English translation (`en.lproj/InfoPlist.strings`), its icon, in the asset catalog (`Assets.car`) and the PNGs beside it, and its signatures, but never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
+The iOS E2E shell (`packages/e2e/fixtures/ios`), as Xcode builds it for the Simulator, zipped by `ditto` as the E2E tests zip it, so each file keeps its mode. Its executable, its framework's (`Frameworks/ShellKit.framework`), its extensions' (`PlugIns/ShellNotifications.appex`, an app extension, and `Extensions/ShellIntents.appex`, an ExtensionKit extension), its watch app's (`Watch/ShellWatch.app`, linked for the watchOS Simulator, for watchOS 11) and its widgets' (`PlugIns/ShellWatchWidgets.appex` in the watch app, for watchOS 26), and its App Clip's (`AppClips/ShellClip.app`) and the App Clip's copy of the framework (`Frameworks/ShellKit.framework` in the App Clip) are tiny programs instead of the shell's Swift, linked for the Simulator's two architectures and signed by the linker: the Rust tests read and rewrite its `Info.plist`, a binary property list with Xcode's `DT*` keys, its English translation (`en.lproj/InfoPlist.strings`), its icon, in the asset catalog (`Assets.car`) and the PNGs beside it, and its signatures, but never run it. `--norsrc` leaves out the `._` files that would otherwise carry each file's extended attributes.
 
 ```sh
 node packages/e2e/src/cli.ts build --platform ios
@@ -55,7 +55,7 @@ xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-versio
 xcrun -sdk iphonesimulator clang -arch x86_64 -arch arm64 -mios-simulator-version-min=17.0 \
   -dynamiclib -install_name @rpath/ShellKit.framework/ShellKit -Wl,-adhoc_codesign lib.c \
   -o trimmed/OmniBuildShell.app/AppClips/ShellClip.app/Frameworks/ShellKit.framework/ShellKit
-xcrun -sdk watchsimulator clang -arch x86_64 -arch arm64 -mwatchos-simulator-version-min=26.0 \
+xcrun -sdk watchsimulator clang -arch x86_64 -arch arm64 -mwatchos-simulator-version-min=11.0 \
   -Wl,-adhoc_codesign main.c -o trimmed/OmniBuildShell.app/Watch/ShellWatch.app/ShellWatch
 xcrun -sdk watchsimulator clang -arch x86_64 -arch arm64 -mwatchos-simulator-version-min=26.0 \
   -Wl,-adhoc_codesign main.c \
@@ -65,7 +65,7 @@ ditto -c -k --norsrc --keepParent trimmed/OmniBuildShell.app packages/cli/tests/
 
 ## `shell.ipa`
 
-The same shell built for devices, as the E2E tests build it (unsigned, with room for a signature), in an `.ipa`, with tiny programs for its executables, linked for arm64 and signed by the linker. Its PNGs are Apple's variant, as Xcode writes them for devices.
+The same shell built for devices, as the E2E tests build it (unsigned, with room for a signature), in an `.ipa`, with tiny programs for its executables, linked for arm64 and signed by the linker. The watch app's and its widgets' are linked for `arm64_32` too: the watch app's for watchOS 11, which `codesign` signs with SHA-1 hashes as well as SHA-256 ones, and so the `arm64` code beside it, which clang raises to watchOS 26, and the widgets' for watchOS 26, which it signs with SHA-256 alone. Its PNGs are Apple's variant, as Xcode writes them for devices.
 
 ```sh
 ditto -x -k packages/e2e/build/shells/ios/OmniBuildShell.ipa trimmed-ipa
@@ -83,7 +83,7 @@ xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -Wl,-adhoc_codesign
 xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=17.0 -dynamiclib \
   -install_name @rpath/ShellKit.framework/ShellKit -Wl,-adhoc_codesign lib.c \
   -o trimmed-ipa/Payload/OmniBuildShell.app/AppClips/ShellClip.app/Frameworks/ShellKit.framework/ShellKit
-xcrun -sdk watchos clang -arch arm64 -arch arm64_32 -mwatchos-version-min=26.0 -Wl,-adhoc_codesign main.c \
+xcrun -sdk watchos clang -arch arm64 -arch arm64_32 -mwatchos-version-min=11.0 -Wl,-adhoc_codesign main.c \
   -o trimmed-ipa/Payload/OmniBuildShell.app/Watch/ShellWatch.app/ShellWatch
 xcrun -sdk watchos clang -arch arm64 -arch arm64_32 -mwatchos-version-min=26.0 -Wl,-adhoc_codesign main.c \
   -o trimmed-ipa/Payload/OmniBuildShell.app/Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/ShellWatchWidgets
