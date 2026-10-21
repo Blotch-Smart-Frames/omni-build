@@ -7,6 +7,11 @@
 //! `Frameworks/`, with no entitlements, then each app extension, in its
 //! `PlugIns/` or `Extensions/`, its watch app, in its `Watch/`, and each App
 //! Clip, in its `AppClips/`, with a profile and entitlements of their own.
+//! An extension, a watch app or an App Clip has frameworks and extensions
+//! of its own in turn, such as a watch app's widgets, or the frameworks an
+//! App Clip embeds, which download with it rather than with the app: those
+//! are signed before it, the same way, so that signing goes from the inside
+//! out, as Apple asks.
 
 use anyhow::{Context, Result, bail};
 
@@ -23,8 +28,10 @@ use crate::zip::{Entry, Method};
 const FRAMEWORKS: &str = "Frameworks/";
 /// The App IDs of an app's App Clips, as its signature names them.
 const APP_CLIP_APPLICATIONS: &str = "com.apple.developer.associated-appclip-app-identifiers";
-/// What a nested bundle's own folders would hold of code nested in it in
-/// turn, which would have to be signed before it.
+/// What a framework's own folders would hold of code nested in it in turn,
+/// which would have to be signed before it. iOS frameworks have none, so
+/// OmniBuild refuses it there, rather than sign it as it does in a
+/// program.
 const NESTED_CODE: [&str; 2] = [".framework/", ".appex/"];
 /// A symbolic link's file type, in a zip entry's Unix mode.
 const SYMBOLIC_LINK: u32 = 0o120_000;
@@ -87,17 +94,20 @@ pub fn sign(
     info: &InfoPlist,
     identity: Option<&Identity>,
 ) -> Result<Vec<Entry>> {
-    // What ditto stores of each file's extended attributes, which
-    // unzipping with anything but ditto turns into files of their own,
-    // outside the seal.
     let mut entries: Vec<Entry> = entries
         .into_iter()
-        .filter(|entry| {
-            let file = entry.name.rsplit('/').find(|part| !part.is_empty());
-            !entry.name.starts_with("__MACOSX/") && !file.is_some_and(|file| file.starts_with("._"))
-        })
+        .filter(|entry| !is_extended_attributes(&entry.name))
         .collect();
-    let nested = nested_code(&entries, bundle)?;
+    if let Some(link) = entries
+        .iter()
+        .find(|entry| entry.attributes >> 16 & FILE_TYPE == SYMBOLIC_LINK)
+    {
+        bail!(
+            "{} is a symbolic link, which OmniBuild can't sign yet",
+            link.name
+        );
+    }
+    let nested = nested_code(&entries, bundle, true)?;
 
     let identifier = info
         .id()
@@ -114,48 +124,19 @@ pub fn sign(
         );
     }
 
-    for framework in &nested.frameworks {
-        let framework_info = bundle_info(&entries, framework)?;
-        sign_bundle(
-            &mut entries,
-            framework,
-            &framework_info,
-            &Signer {
-                identifier: bundle_id(&framework_info, framework)?,
-                info_plist: &[],
-                code_resources: &[],
-                entitlements: None,
-                key,
-                main: false,
-            },
-        )?;
-    }
-    // Each with a profile for its own ID.
-    for program in nested.extensions.iter().chain(&nested.watch_apps) {
-        let program_info = bundle_info(&entries, program)?;
-        let id = bundle_id(&program_info, program)?;
-        let profile = identity
-            .map(|identity| identity.for_bundle(id))
-            .transpose()?;
-        sign_program(
-            &mut entries,
-            program,
-            &program_info,
-            id,
-            key,
-            profile.as_ref(),
-        )?;
-    }
+    sign_nested(&mut entries, &nested, identity)?;
     let mut app_clips = Vec::new();
     for app_clip in &nested.app_clips {
-        let app_clip_info = bundle_info(&entries, app_clip)?;
-        let id = bundle_id(&app_clip_info, app_clip)?;
+        sign_nested(&mut entries, &app_clip.nested, identity)?;
+        let folder = &app_clip.folder;
+        let app_clip_info = bundle_info(&entries, folder)?;
+        let id = bundle_id(&app_clip_info, folder)?;
         let profile = identity
             .map(|identity| identity.for_app_clip(id, identifier))
             .transpose()?;
         sign_program(
             &mut entries,
-            app_clip,
+            folder,
             &app_clip_info,
             id,
             key,
@@ -187,6 +168,44 @@ pub fn sign(
         },
     )?;
     Ok(entries)
+}
+
+/// Signs the frameworks, app extensions and watch apps `nested` in a
+/// bundle, each after the code nested in it in turn, with `identity`'s key,
+/// and each program with a profile for its own ID.
+fn sign_nested(
+    entries: &mut Vec<Entry>,
+    nested: &Nested,
+    identity: Option<&Identity>,
+) -> Result<()> {
+    let key = identity.map(|identity| identity.key);
+    for framework in &nested.frameworks {
+        let framework_info = bundle_info(entries, framework)?;
+        sign_bundle(
+            entries,
+            framework,
+            &framework_info,
+            &Signer {
+                identifier: bundle_id(&framework_info, framework)?,
+                info_plist: &[],
+                code_resources: &[],
+                entitlements: None,
+                key,
+                main: false,
+            },
+        )?;
+    }
+    for program in nested.extensions.iter().chain(&nested.watch_apps) {
+        sign_nested(entries, &program.nested, identity)?;
+        let folder = &program.folder;
+        let program_info = bundle_info(entries, folder)?;
+        let id = bundle_id(&program_info, folder)?;
+        let profile = identity
+            .map(|identity| identity.for_bundle(id))
+            .transpose()?;
+        sign_program(entries, folder, &program_info, id, key, profile.as_ref())?;
+    }
+    Ok(())
 }
 
 /// Signs the app extension, App Clip or watch app in the folder `folder`,
@@ -222,91 +241,139 @@ fn sign_program(
     )
 }
 
-/// The code nested in an app, each bundle a folder, in the order it's
-/// signed in, before the app.
+/// The code nested in a bundle, each bundle a folder, in the order it's
+/// signed in, before the bundle.
 #[derive(Default)]
 struct Nested {
     frameworks: Vec<String>,
     /// In both the folders they go in.
-    extensions: Vec<String>,
-    watch_apps: Vec<String>,
-    app_clips: Vec<String>,
+    extensions: Vec<Program>,
+    /// Only an app has these.
+    watch_apps: Vec<Program>,
+    app_clips: Vec<Program>,
 }
 
-/// The code nested in the app in the folder `bundle`. Refuses what
-/// OmniBuild can't sign, or seal: any other code, and symbolic links.
-fn nested_code(entries: &[Entry], bundle: &str) -> Result<Nested> {
-    let mut nested = Nested::default();
+/// An app extension, a watch app or an App Clip, which runs on its own: the
+/// folder it's in, and the code nested in it in turn.
+struct Program {
+    folder: String,
+    nested: Nested,
+}
+
+/// The folders of the programs nested in the app in the folder `bundle`, at
+/// every depth: its app extensions, watch app and App Clips, and the
+/// extensions nested in those in turn, each of which is given an ID under
+/// the app's. Refuses what OmniBuild can't sign, as signing would.
+pub fn programs(entries: &[Entry], bundle: &str) -> Result<Vec<String>> {
+    fn add(programs: &[Program], folders: &mut Vec<String>) {
+        for program in programs {
+            folders.push(program.folder.clone());
+            add(&program.nested.extensions, folders);
+        }
+    }
+    let nested = nested_code(entries, bundle, true)?;
+    let mut folders = Vec::new();
+    for programs in [&nested.extensions, &nested.watch_apps, &nested.app_clips] {
+        add(programs, &mut folders);
+    }
+    Ok(folders)
+}
+
+/// What ditto stores of each file's extended attributes, which unzipping
+/// with anything but ditto turns into files of their own, outside the seal.
+fn is_extended_attributes(name: &str) -> bool {
+    let file = name.rsplit('/').find(|part| !part.is_empty());
+    name.starts_with("__MACOSX/") || file.is_some_and(|file| file.starts_with("._"))
+}
+
+/// The code nested in the bundle in the folder `bundle`, and in that code in
+/// turn: in an app (`app`), or in a program nested in one, which has
+/// frameworks and extensions but no watch app or App Clip of its own.
+/// Refuses what OmniBuild can't sign: any other code.
+fn nested_code(entries: &[Entry], bundle: &str, app: bool) -> Result<Nested> {
+    let mut frameworks = Vec::new();
+    let mut extensions = Vec::new();
+    let mut watch_apps = Vec::new();
+    let mut app_clips = Vec::new();
     for entry in entries {
-        let file = entry.name.strip_prefix(bundle).unwrap_or_default();
-        if let Some(framework) = nested_bundle(&entry.name, file, FRAMEWORKS, ".framework")? {
-            nested
-                .frameworks
-                .push(format!("{bundle}{FRAMEWORKS}{framework}/"));
+        // What ditto stores of extended attributes, which signing leaves
+        // out, isn't code, though it's named after it (`._Share.appex`).
+        let Some(file) = entry
+            .name
+            .strip_prefix(bundle)
+            .filter(|_| !is_extended_attributes(&entry.name))
+        else {
+            continue;
+        };
+        if let Some((framework, inside)) =
+            nested_bundle(&entry.name, file, FRAMEWORKS, ".framework")?
+        {
+            if NESTED_CODE.iter().any(|code| inside.contains(code)) {
+                bail!(cant_sign(&entry.name));
+            }
+            frameworks.push(format!("{bundle}{FRAMEWORKS}{framework}/"));
         }
         for folder in EXTENSION_FOLDERS {
-            if let Some(extension) = nested_bundle(&entry.name, file, folder, ".appex")? {
-                nested
-                    .extensions
-                    .push(format!("{bundle}{folder}{extension}/"));
+            if let Some((extension, _)) = nested_bundle(&entry.name, file, folder, ".appex")? {
+                extensions.push(format!("{bundle}{folder}{extension}/"));
             }
         }
-        if let Some(watch_app) = nested_bundle(&entry.name, file, WATCH, ".app")? {
-            nested
-                .watch_apps
-                .push(format!("{bundle}{WATCH}{watch_app}/"));
-        }
-        if let Some(app_clip) = nested_bundle(&entry.name, file, APP_CLIPS, ".app")? {
-            nested
-                .app_clips
-                .push(format!("{bundle}{APP_CLIPS}{app_clip}/"));
-        }
-        if entry.attributes >> 16 & FILE_TYPE == SYMBOLIC_LINK {
-            bail!(
-                "{} is a symbolic link, which OmniBuild can't sign yet",
-                entry.name
-            );
+        for (folder, programs) in [(WATCH, &mut watch_apps), (APP_CLIPS, &mut app_clips)] {
+            if let Some((program, _)) = nested_bundle(&entry.name, file, folder, ".app")? {
+                if !app {
+                    bail!(cant_sign(&entry.name));
+                }
+                programs.push(format!("{bundle}{folder}{program}/"));
+            }
         }
     }
-    for bundles in [
-        &mut nested.frameworks,
-        &mut nested.extensions,
-        &mut nested.watch_apps,
-        &mut nested.app_clips,
-    ] {
-        bundles.sort();
-        bundles.dedup();
-    }
-    Ok(nested)
+    let programs = |mut folders: Vec<String>| -> Result<Vec<Program>> {
+        folders.sort();
+        folders.dedup();
+        folders
+            .into_iter()
+            .map(|folder| {
+                let nested = nested_code(entries, &folder, false)?;
+                Ok(Program { folder, nested })
+            })
+            .collect()
+    };
+    frameworks.sort();
+    frameworks.dedup();
+    Ok(Nested {
+        frameworks,
+        extensions: programs(extensions)?,
+        watch_apps: programs(watch_apps)?,
+        app_clips: programs(app_clips)?,
+    })
 }
 
 /// Why OmniBuild refuses the code at `name`.
 fn cant_sign(name: &str) -> String {
     format!(
-        "the shell has code in its bundle that isn't a framework, an app extension, an App Clip or a watch app ({name}), which OmniBuild can't sign yet"
+        "the shell has code in its bundle that isn't a framework, an app extension, or the app's App Clip or watch app ({name}), which OmniBuild can't sign yet"
     )
 }
 
 /// The name of the bundle the app's file `file` is in, if it's in `folder`,
 /// where every bundle is a `Name<kind>/`, such as a framework in
-/// `Frameworks/`. Anything else there, or code nested in the bundle, which
-/// would have to be signed on its own first, is refused. `name` is the
-/// file's entry.
+/// `Frameworks/`, and the file's path inside it. Anything else there is
+/// refused. `name` is the file's entry.
 fn nested_bundle<'a>(
     name: &str,
     file: &'a str,
     folder: &str,
     kind: &str,
-) -> Result<Option<&'a str>> {
+) -> Result<Option<(&'a str, &'a str)>> {
     // The folder's own entry, which isn't code.
     let Some(code) = file.strip_prefix(folder).filter(|code| !code.is_empty()) else {
         return Ok(None);
     };
     let (nested, inside) = code.split_once('/').unwrap_or((code, ""));
-    if !nested.ends_with(kind) || NESTED_CODE.iter().any(|code| inside.contains(code)) {
+    if !nested.ends_with(kind) {
         bail!(cant_sign(name));
     }
-    Ok(Some(nested))
+    Ok(Some((nested, inside)))
 }
 
 /// The Info.plist of the nested bundle in the folder `folder`.
@@ -395,7 +462,7 @@ fn put(entries: &mut Vec<Entry>, name: &str, contents: &[u8]) {
 mod tests {
     use sha2::{Digest, Sha256};
 
-    use super::{Identity, sign};
+    use super::{Identity, programs, sign};
     use crate::bytes::Reader;
     use crate::ios::code_resources::code_resources;
     use crate::ios::code_signature::tests::{blobs, identity};
@@ -445,7 +512,9 @@ mod tests {
         let signed = sign(shell.clone(), SIMULATOR, &info(&shell, SIMULATOR), None).unwrap();
 
         // What `codesign --sign -` wrote for the same app, signing its
-        // framework, its extensions, its watch app and its App Clip first.
+        // framework, its extensions, its watch app and its App Clip first,
+        // and the watch app's widgets and the App Clip's framework before
+        // those.
         let hash = |name: &str| sha256(&file(&signed, &format!("{SIMULATOR}{name}")));
         assert_eq!(
             hash("Frameworks/ShellKit.framework/ShellKit"),
@@ -472,28 +541,49 @@ mod tests {
             "2457e2567324ae0b2782bc3994aef4892eef6c5cc7c059a3e1181f0b56323ce0"
         );
         assert_eq!(
+            hash("Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/ShellWatchWidgets"),
+            "0d17553a913e101628a15bd802a6be9b9718a753a70464c1fd03a3708cd26b8e"
+        );
+        assert_eq!(
+            hash(
+                "Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/_CodeSignature/CodeResources"
+            ),
+            "5a7ceda9903a27c8fb76adbb56b7e43cbd440216ed3536fa2568ec8ad2dd2bbc"
+        );
+        assert_eq!(
             hash("Watch/ShellWatch.app/ShellWatch"),
-            "a8d7babc5256de8c8821cd22da4337ac0712306834d9dc1d9d20983777fb54df"
+            "e7a06e33a43b214e82737dd8bd4f78809804dec41923417f4ae9f8744bf248e6"
         );
         assert_eq!(
             hash("Watch/ShellWatch.app/_CodeSignature/CodeResources"),
-            "e638c3a0ba541f97cc83e88e7840c75a39f2fed3742fc0ee483b38785a143556"
+            "8792ccb9f1789636d69978179a9a6e09c266018dc026aa12833ad0d98e4a4c1b"
+        );
+        // The App Clip's copy of the framework, signed as the app's is.
+        assert_eq!(
+            hash("AppClips/ShellClip.app/Frameworks/ShellKit.framework/ShellKit"),
+            "162318c03013062dbe5eb0aa9338bb927af6e6ba7a7d274ba1dd9f7c299b7439"
+        );
+        assert_eq!(
+            hash(
+                "AppClips/ShellClip.app/Frameworks/ShellKit.framework/_CodeSignature/CodeResources"
+            ),
+            "d7044e4217aa0def54023d0779ed9ae5925eea2fa6da7cace8cc6f9e9f7e4efa"
         );
         assert_eq!(
             hash("AppClips/ShellClip.app/ShellClip"),
-            "10537c686665533e74075f8fb959265eab571ea2144f9c71722ca5a01b1c98c3"
+            "b46b901c9cc1d530644753b6cfa623ffe07a1b8836004cbeadbf737dfe4f155b"
         );
         assert_eq!(
             hash("AppClips/ShellClip.app/_CodeSignature/CodeResources"),
-            "605d21573e0e0c040b9ac2394d101d7d674d1546b096d88535d2e04ac36c9a7f"
+            "417f072dab2e6d83298fd169c6bd09f2cb785f7fc2b6d05ed6c311a30af96071"
         );
         assert_eq!(
             hash("OmniBuildShell"),
-            "7958a070d5f2e15911da87693076291d8f86c9ef76b8aa3f88421ae214a51e77"
+            "32198e66a5739461e5f7c401a4dca7a14f6b997dfbb40f64983108f3e8158905"
         );
         assert_eq!(
             hash("_CodeSignature/CodeResources"),
-            "a7002bb89b7ff5a81cfe27dc3370f36079b23e38f4a3a22c11df71564968e9a3"
+            "d9a6e1052162d718c577a6dce72ed355968a714de5ce189a61a3a28a0e38109a"
         );
         let names = |entries: &[Entry]| -> Vec<String> {
             entries.iter().map(|entry| entry.name.clone()).collect()
@@ -509,10 +599,10 @@ mod tests {
 
         let app = |name: &str| file(&ad_hoc, &format!("{DEVICE}{name}"));
         // The framework's, the extensions', the watch app's and the App
-        // Clip's, as codesign signs them, up
-        // to the end of their signatures. codesign pads each with what the
-        // linker's signature left there, OmniBuild with zeros: nothing
-        // covers the padding.
+        // Clip's, and the watch app's widgets' and the App Clip's
+        // framework's, as codesign signs them, up to the end of their
+        // signatures. codesign pads each with what the linker's signature
+        // left there, OmniBuild with zeros: nothing covers the padding.
         let framework = app("Frameworks/ShellKit.framework/ShellKit");
         assert_eq!(
             sha256(&framework[..33_245]),
@@ -535,18 +625,28 @@ mod tests {
         let app_clip = app("AppClips/ShellClip.app/ShellClip");
         assert_eq!(
             sha256(&app_clip[..33_305]),
-            "278f63fec073352b47dd0de4e896c36dbfb8a3407dddacf76543a6f893b5e01c"
+            "6ac6467974f457850e50fc95e9b7a445826e1a4a6dba3e00a59b2adb6a6fbbe1"
         );
         assert_eq!(app_clip[33_305..], [0; 23]);
-        // The watch app's has two architectures, arm64 and arm64_32: all of
-        // it, with the padding after each signature zeroed.
+        let app_clip_framework =
+            app("AppClips/ShellClip.app/Frameworks/ShellKit.framework/ShellKit");
+        assert_eq!(app_clip_framework, framework);
+        // The watch app's and its widgets' have two architectures, arm64
+        // and arm64_32: all of each, with the padding after each signature
+        // zeroed.
         assert_eq!(
             sha256(&app("Watch/ShellWatch.app/ShellWatch")),
-            "2d612b376e6de45d194049c3174771b03e71f7da5566d82eae094bd49a2ccbad"
+            "5ed9ddaa1fb2466e40129a667189cf26b4a0a0a069a11ba544205e076efff05e"
+        );
+        assert_eq!(
+            sha256(&app(
+                "Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/ShellWatchWidgets"
+            )),
+            "48c9f25dfc4c36b61268138b30d01931353d64626dade8e11e2e189262b236ae"
         );
         // Their seals, and the app's executable, up to the end of its
-        // signature, and seal, as codesign signs the app around that
-        // framework, those extensions, that watch app and that App Clip.
+        // signature, and seal, as codesign signs each bundle around the code
+        // in it, with that code's padding zeroed.
         let seal = "Frameworks/ShellKit.framework/_CodeSignature/CodeResources";
         assert_eq!(
             sha256(&app(seal)),
@@ -564,28 +664,41 @@ mod tests {
             "b81a25462ebf381000f24bbf2fc2618c316c88a85feebbf40f3d77d39ce8b37d"
         );
         assert_eq!(
+            sha256(&app(
+                "Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/_CodeSignature/CodeResources"
+            )),
+            "3543351c50065d5659c249f4293999db8600943124699279d24954d32cea9af3"
+        );
+        assert_eq!(
             sha256(&app("Watch/ShellWatch.app/_CodeSignature/CodeResources")),
-            "64bedcecd03a7922fe898bf14a22a774fdf8efd0628e13245ec610e2c81c4e8c"
+            "886699158684fa42124f96bb19a481c3e9b211416755c1720e5c5c4f9dc163c5"
+        );
+        assert_eq!(
+            app(
+                "AppClips/ShellClip.app/Frameworks/ShellKit.framework/_CodeSignature/CodeResources"
+            ),
+            app(seal)
         );
         assert_eq!(
             sha256(&app("AppClips/ShellClip.app/_CodeSignature/CodeResources")),
-            "f337a57f6a8ef05fc59aef78f29711d555705639a48fe3ba7b3dd83c753b9444"
+            "def99de64284e838427592212fab894f0edc4e4e571af91c94b3ce2648a24851"
         );
         let executable = app("OmniBuildShell");
         assert_eq!(
             sha256(&executable[..33_300]),
-            "e234cac14827a3e6a5e04721a9cf61ceb80ad7372ff3ac07d925f77a27928821"
+            "691ebd47df60573b497f111034f3907afee81be0b11502a0564d4c6223ecf8b8"
         );
         assert_eq!(executable[33_300..], [0; 12]);
         assert_eq!(
             sha256(&app("_CodeSignature/CodeResources")),
-            "75f3a6f1e7ad538192f27229833d7712d7650edde15cfc3b74af2356b701795d"
+            "e599946c837d53e0afdc583ae4b4d2e23850103de4e2ef9eda1812c01af430c0"
         );
     }
 
     /// The device shell signed with the test identity: a wildcard profile
-    /// for the app and its extensions, and the App Clip's own. codesign
-    /// signing the same files with the test identity, and the extensions,
+    /// for the app, its extensions, its watch app and the watch app's
+    /// widgets, and the App Clip's own. codesign signing the same files with
+    /// the test identity, and the extensions, the widgets, the watch app,
     /// the App Clip and the app with the entitlements their profiles give
     /// each, the App Clip and the app naming each other, wrote what the
     /// tests below compare.
@@ -614,6 +727,24 @@ mod tests {
         file(signed, &format!("{DEVICE}{name}"))
     }
 
+    /// The seal of the signed bundle in the device app's folder `folder`,
+    /// whose executable is `executable`, as codesign would write it for
+    /// what OmniBuild signed in it.
+    fn seal_of(signed: &[Entry], folder: &str, executable: &str) -> Vec<u8> {
+        let files: Vec<(String, Vec<u8>)> = signed
+            .iter()
+            .filter_map(|entry| {
+                let name = entry.name.strip_prefix(&format!("{DEVICE}{folder}"))?;
+                let sealed = !name.is_empty()
+                    && !name.ends_with('/')
+                    && name != executable
+                    && !name.starts_with("_CodeSignature/");
+                sealed.then(|| (name.to_owned(), entry.contents().unwrap()))
+            })
+            .collect();
+        code_resources(&files)
+    }
+
     #[test]
     fn seals_a_device_build_with_an_identity_as_codesign_does() {
         let signed = signed_with_identity();
@@ -621,15 +752,17 @@ mod tests {
         let app = device_app;
         let seal = "Frameworks/ShellKit.framework/_CodeSignature/CodeResources";
         let extension_seal = "PlugIns/ShellNotifications.appex/_CodeSignature/CodeResources";
-        // Each bundle's profile, and the seals codesign wrote, but for the
-        // app's: a CMS signature has the time it was made, so the
-        // framework's signed executable differs each time, and with it the
-        // app's seal.
+        // Each bundle's profile, and the seals codesign wrote, but for those
+        // of the bundles with code nested in them, the app's, the watch
+        // app's and the App Clip's: a CMS signature has the time it was
+        // made, so each nested executable differs each time, and with it
+        // the seal around it.
         assert_eq!(app(&signed, "embedded.mobileprovision"), PROFILE);
         for extension in [
             "PlugIns/ShellNotifications.appex/",
             "Extensions/ShellIntents.appex/",
             "Watch/ShellWatch.app/",
+            "Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/",
         ] {
             assert_eq!(
                 app(&signed, &format!("{extension}embedded.mobileprovision")),
@@ -658,32 +791,28 @@ mod tests {
         assert_eq!(
             sha256(&app(
                 &signed,
-                "AppClips/ShellClip.app/_CodeSignature/CodeResources"
+                "Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/_CodeSignature/CodeResources"
             )),
-            "bcbe335323f1d7af5d6da1066504d4f4973234c91ee54fb79877a6cefe5ca8c5"
+            "2066ee48d5c14e46cef561e57560a3b6c55a78c4215cf1bf4b76e85909b62175"
         );
         assert_eq!(
-            sha256(&app(
+            app(
                 &signed,
-                "Watch/ShellWatch.app/_CodeSignature/CodeResources"
-            )),
-            "380ec3fba6589d9cc98ebd7dc3b76f997c71533eb196cc638d6afc650776b7c8"
+                "AppClips/ShellClip.app/Frameworks/ShellKit.framework/_CodeSignature/CodeResources"
+            ),
+            app(&signed, seal)
         );
-        let files: Vec<(String, Vec<u8>)> = signed
-            .iter()
-            .filter_map(|entry| {
-                let name = entry.name.strip_prefix(DEVICE)?;
-                let sealed = !name.is_empty()
-                    && !name.ends_with('/')
-                    && name != "OmniBuildShell"
-                    && !name.starts_with("_CodeSignature/");
-                sealed.then(|| (name.to_owned(), entry.contents().unwrap()))
-            })
-            .collect();
-        assert_eq!(
-            app(&signed, "_CodeSignature/CodeResources"),
-            code_resources(&files)
-        );
+        for (folder, executable) in [
+            ("", "OmniBuildShell"),
+            ("Watch/ShellWatch.app/", "ShellWatch"),
+            ("AppClips/ShellClip.app/", "ShellClip"),
+        ] {
+            assert_eq!(
+                app(&signed, &format!("{folder}_CodeSignature/CodeResources")),
+                seal_of(&signed, folder, executable),
+                "{folder}"
+            );
+        }
     }
 
     #[test]
@@ -697,12 +826,13 @@ mod tests {
         // The code directories codesign wrote, but for the hash of the
         // first page. That page has the load commands, which say how much
         // room the signature has: codesign leaves 16 KB more than it needs,
-        // OmniBuild none. And the app's seal, which differs each time.
-        // Each with its LC_CODE_SIGNATURE where it is, and its first page's
-        // hash after the 88-byte header, the identifier, and the special
-        // slots: 7 of the app's, each extension's and the App Clip's, the
-        // third from last their seal's, and 3 of the framework's. The
-        // extensions' and the App Clip's seals are the same each time.
+        // OmniBuild none. And the seals of the bundles with code nested in
+        // them, the app's, the watch app's and the App Clip's, which differ
+        // each time. Each with its LC_CODE_SIGNATURE where it is, and its
+        // first page's hash after the 88-byte header, the identifier, and
+        // the special slots: 7 of each program's, the third from last its
+        // seal's, and 3 of the framework's. The extensions' and the
+        // widgets' seals are the same each time.
         let without = |executable: &[u8], load_command: usize, hashes: &[usize]| {
             let mut directory = code_directory(executable, load_command);
             for &hash in hashes {
@@ -723,28 +853,42 @@ mod tests {
             "4b6ee1211feb0b840209977b8efe24765274b08e4c0af49fab5fa7f156f694c9"
         );
         assert_eq!(
-            without(&app(&signed, app_clip), 784, &[337]),
-            "17b54b9e8f7b9049f80a79e403058ba085fc6847412f32f12410507f57ba7e4d"
+            without(&app(&signed, app_clip), 784, &[337, 337 - 3 * 32]),
+            "5db5f7ce8c37a83fadaab49f0310bc9a260135a4832314de3529897f03c15ba8"
         );
-        // The watch app's for each of its architectures, the arm64_32 code
-        // with its 32-bit load commands.
+        // The watch app's and its widgets' for each of their architectures,
+        // the arm64_32 code with its 32-bit load commands.
         let watch = app(&signed, "Watch/ShellWatch.app/ShellWatch");
         assert_eq!(
-            without(&watch[16_384..], 784, &[344]),
-            "3d5e23072fa27bf8420818fe06fe5dbe18d7f6f98d0227c76aa7978f36381f09"
+            without(&watch[16_384..], 784, &[344, 344 - 3 * 32]),
+            "d05ccb9330c586647129819354722cef7cc750cdb80b115de9189d11deef850f"
         );
         assert_eq!(
-            without(&watch[65_536..], 696, &[344]),
-            "4d2789106d9c7753c8a71881f1ca1502b34712d289ba29f0bb3d477af3420bb7"
+            without(&watch[65_536..], 696, &[344, 344 - 3 * 32]),
+            "aa380df0e78019609ace2bb72091429d4efbb1f9bf801cae9725a8cc30f8dacd"
+        );
+        let widgets = app(
+            &signed,
+            "Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/ShellWatchWidgets",
         );
         assert_eq!(
-            without(
-                &app(&signed, "Frameworks/ShellKit.framework/ShellKit"),
-                720,
-                &[213]
-            ),
-            "9fbd90b02c41c4df12db009fb09de9540ab5d75e0b3e283da7b4c1c69193a573"
+            without(&widgets[16_384..], 784, &[362]),
+            "d8e0c6394ac0a46bf1e94729bc948e835d62a96d42d74acd12596727502f73e8"
         );
+        assert_eq!(
+            without(&widgets[65_536..], 696, &[362]),
+            "91c976d370f7955df2cce8e98ac4dd47ac8613f14509443e6f07ca9fdcf392d1"
+        );
+        // The framework's, and the App Clip's copy of it, signed the same.
+        for framework in [
+            "Frameworks/ShellKit.framework/ShellKit",
+            "AppClips/ShellClip.app/Frameworks/ShellKit.framework/ShellKit",
+        ] {
+            assert_eq!(
+                without(&app(&signed, framework), 720, &[213]),
+                "9fbd90b02c41c4df12db009fb09de9540ab5d75e0b3e283da7b4c1c69193a573"
+            );
+        }
     }
 
     #[test]
@@ -781,6 +925,7 @@ mod tests {
             profile_for("ABCDE12345.dev.omnibuild.shell"),
             profile_for("ABCDE12345.dev.omnibuild.shell.Shell*"),
             profile_for("ABCDE12345.dev.omnibuild.shell.watchkitapp"),
+            profile_for("ABCDE12345.dev.omnibuild.shell.watchkitapp.*"),
         ];
         let cases = [
             (
@@ -789,7 +934,7 @@ mod tests {
             ),
             (
                 &others[..],
-                "none of the provisioning profiles includes dev.omnibuild.shell.Clip, as their App IDs say (ABCDE12345.dev.omnibuild.shell, ABCDE12345.dev.omnibuild.shell.Shell*, ABCDE12345.dev.omnibuild.shell.watchkitapp): give one that does with --profile",
+                "none of the provisioning profiles includes dev.omnibuild.shell.Clip, as their App IDs say (ABCDE12345.dev.omnibuild.shell, ABCDE12345.dev.omnibuild.shell.Shell*, ABCDE12345.dev.omnibuild.shell.watchkitapp, ABCDE12345.dev.omnibuild.shell.watchkitapp.*): give one that does with --profile",
             ),
         ];
 
@@ -840,6 +985,10 @@ mod tests {
         assert_eq!(embedded("PlugIns/ShellNotifications.appex/"), PROFILE);
         assert_eq!(embedded("Extensions/ShellIntents.appex/"), PROFILE);
         assert_eq!(embedded("Watch/ShellWatch.app/"), PROFILE);
+        assert_eq!(
+            embedded("Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/"),
+            PROFILE
+        );
         assert_eq!(embedded("AppClips/ShellClip.app/"), CLIP_PROFILE);
     }
 
@@ -850,11 +999,14 @@ mod tests {
             "OmniBuildShell.app/._Assets.car",
             "OmniBuildShell.app/.__CodeSignature",
             "__MACOSX/OmniBuildShell.app/._PkgInfo",
+            // Not an extension, though it's named like one, in PlugIns/.
+            "OmniBuildShell.app/PlugIns/._ShellNotifications.appex",
         ] {
             shell.push(Entry::new(name, Method::Stored, b"attributes"));
         }
 
         let signed = sign(shell.clone(), SIMULATOR, &info(&shell, SIMULATOR), None).unwrap();
+        let nested = programs(&shell, SIMULATOR).unwrap();
 
         // Sealed as before.
         assert_eq!(
@@ -862,9 +1014,31 @@ mod tests {
                 &signed,
                 "OmniBuildShell.app/_CodeSignature/CodeResources"
             )),
-            "a7002bb89b7ff5a81cfe27dc3370f36079b23e38f4a3a22c11df71564968e9a3"
+            "d9a6e1052162d718c577a6dce72ed355968a714de5ce189a61a3a28a0e38109a"
         );
-        assert_eq!(signed.len(), shell.len() - 3);
+        assert_eq!(signed.len(), shell.len() - 4);
+        assert_eq!(nested, programs(&signed, SIMULATOR).unwrap());
+    }
+
+    #[test]
+    fn lists_the_programs_nested_at_every_depth() {
+        let shell = zip::read(SHELL_IPA).unwrap();
+
+        let nested = programs(&shell, DEVICE).unwrap();
+
+        // Extensions, the watch app and its widgets, and the App Clip, but
+        // no framework, which has no ID of its own to give.
+        assert_eq!(
+            nested,
+            [
+                "Extensions/ShellIntents.appex/",
+                "PlugIns/ShellNotifications.appex/",
+                "Watch/ShellWatch.app/",
+                "Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/",
+                "AppClips/ShellClip.app/",
+            ]
+            .map(|folder| format!("{DEVICE}{folder}"))
+        );
     }
 
     /// The Simulator shell with `entry` in place of its file of the same
@@ -885,15 +1059,19 @@ mod tests {
         let shell_info = info(&shell, SIMULATOR);
         let cases = [
             "OmniBuildShell.app/Watch/Watch.appex/Watch",
-            "OmniBuildShell.app/Watch/ShellWatch.app/PlugIns/Widgets.appex/Widgets",
             "OmniBuildShell.app/AppClips/Clip.appex/Clip",
-            "OmniBuildShell.app/AppClips/ShellClip.app/Frameworks/A.framework/A",
             "OmniBuildShell.app/PlugIns/Share.bundle/Share",
             "OmniBuildShell.app/Extensions/Intents.bundle/Intents",
-            "OmniBuildShell.app/Extensions/ShellIntents.appex/PlugIns/A.appex/A",
-            "OmniBuildShell.app/PlugIns/ShellNotifications.appex/Frameworks/A.framework/A",
             "OmniBuildShell.app/Frameworks/libswiftCore.dylib",
             "OmniBuildShell.app/Frameworks/A.framework/Frameworks/B.framework/B",
+            // The same in the code nested in the app, and in that in turn.
+            "OmniBuildShell.app/Watch/ShellWatch.app/PlugIns/Widgets.bundle/Widgets",
+            "OmniBuildShell.app/AppClips/ShellClip.app/Frameworks/libswiftCore.dylib",
+            "OmniBuildShell.app/AppClips/ShellClip.app/Frameworks/ShellKit.framework/PlugIns/A.appex/A",
+            "OmniBuildShell.app/Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/Frameworks/libA.dylib",
+            // Only the app has a watch app or App Clips.
+            "OmniBuildShell.app/Watch/ShellWatch.app/Watch/Other.app/Other",
+            "OmniBuildShell.app/PlugIns/ShellNotifications.appex/AppClips/Clip.app/Clip",
         ];
 
         for name in cases {
@@ -904,7 +1082,7 @@ mod tests {
             assert_eq!(
                 error.to_string(),
                 format!(
-                    "the shell has code in its bundle that isn't a framework, an app extension, an App Clip or a watch app ({name}), which OmniBuild can't sign yet"
+                    "the shell has code in its bundle that isn't a framework, an app extension, or the app's App Clip or watch app ({name}), which OmniBuild can't sign yet"
                 )
             );
         }
@@ -950,6 +1128,17 @@ mod tests {
             (
                 with_file("Watch/Other.app/Other", b""),
                 "the shell has no OmniBuildShell.app/Watch/Other.app/Info.plist",
+            ),
+            (
+                with_file("Watch/ShellWatch.app/PlugIns/Other.appex/Other", b""),
+                "the shell has no OmniBuildShell.app/Watch/ShellWatch.app/PlugIns/Other.appex/Info.plist",
+            ),
+            (
+                with_file(
+                    "AppClips/ShellClip.app/Frameworks/ShellKit.framework/Info.plist",
+                    b"not a plist",
+                ),
+                "couldn't read the shell's OmniBuildShell.app/AppClips/ShellClip.app/Frameworks/ShellKit.framework/Info.plist",
             ),
             (
                 with_file("AppClips/Other.app/Other", b""),

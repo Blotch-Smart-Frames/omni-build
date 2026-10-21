@@ -506,12 +506,15 @@ describe('verify', () => {
   it("reads each nested bundle's own ID and what its profile allowed it", async () => {
     const bundle = path.join(unzipped, 'Payload', 'OmniBuildShell.app');
     // An app extension, an ExtensionKit extension in a folder of its own,
-    // an App Clip and a watch app.
+    // an App Clip and a watch app, and the watch app's widgets.
     const folders: Record<string, string[]> = {
       [path.join(bundle, 'PlugIns')]: ['README', 'ShellNotifications.appex'],
       [path.join(bundle, 'Extensions')]: ['ShellIntents.appex'],
       [path.join(bundle, 'AppClips')]: ['ShellClip.app'],
       [path.join(bundle, 'Watch')]: ['ShellWatch.app'],
+      [path.join(bundle, 'Watch', 'ShellWatch.app', 'PlugIns')]: [
+        'ShellWatchWidgets.appex',
+      ],
     };
     const nested = Object.entries(folders).map(([folder, names]) =>
       path.join(folder, names.at(-1) ?? ''),
@@ -521,11 +524,14 @@ describe('verify', () => {
     );
     vi.mocked(existsSync).mockImplementation((file) => String(file) in folders);
     vi.mocked(readFileSync).mockReturnValue('the payload');
-    /** The ID of the bundle a command names, by the nested one it names. */
+    /**
+     * The ID of the bundle a command names, by the nested one it names: the
+     * innermost, since the watch app's folder holds its widgets'.
+     */
     const id = (args: string[]) => {
-      const named = nested.find((folder) =>
-        args.some((arg) => arg.startsWith(folder)),
-      );
+      const named = nested
+        .filter((folder) => args.some((arg) => arg.startsWith(folder)))
+        .sort((a, b) => b.length - a.length)[0];
       return named
         ? `dev.omnibuild.e2e.app.${path.parse(named).name}`
         : 'dev.omnibuild.e2e.app';
@@ -577,6 +583,9 @@ describe('verify', () => {
       watchAppId: 'dev.omnibuild.e2e.app.ShellWatch',
       watchCompanion: 'dev.omnibuild.e2e.app',
       watchAppApplicationIdentifier: 'TEAM.dev.omnibuild.e2e.app.ShellWatch',
+      watchWidgetsId: 'dev.omnibuild.e2e.app.ShellWatchWidgets',
+      watchWidgetsApplicationIdentifier:
+        'TEAM.dev.omnibuild.e2e.app.ShellWatchWidgets',
     });
   });
 

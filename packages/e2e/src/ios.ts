@@ -212,17 +212,22 @@ const verify: Platform['verify'] = ({ app, log }) =>
         ).stdout,
       );
       return {
+        folder: signed,
         id: info.CFBundleIdentifier,
         info,
         entitlements: await entitlements(signed),
       };
     };
     // An app extension, an ExtensionKit extension, which Xcode puts in a
-    // folder of its own, an App Clip and a watch app.
+    // folder of its own, an App Clip and a watch app, and the watch app's
+    // widgets, an extension in its own PlugIns/.
     const plugIn = await bundleIn(path.join(bundle, 'PlugIns'), '.appex');
     const intents = await bundleIn(path.join(bundle, 'Extensions'), '.appex');
     const appClip = await bundleIn(path.join(bundle, 'AppClips'), '.app');
     const watchApp = await bundleIn(path.join(bundle, 'Watch'), '.app');
+    const watchWidgets =
+      watchApp &&
+      (await bundleIn(path.join(watchApp.folder, 'PlugIns'), '.appex'));
     const own = await entitlements(bundle);
     // What iOS shows in English: the strings the app has in English, over
     // Info.plist's.
@@ -283,6 +288,12 @@ const verify: Platform['verify'] = ({ app, log }) =>
         watchCompanion: watchApp?.info.WKCompanionAppBundleIdentifier,
         watchAppApplicationIdentifier: appId(
           watchApp?.entitlements ?? '',
+          'application-identifier',
+        ),
+        // Its widgets, under the watch app.
+        watchWidgetsId: watchWidgets?.id,
+        watchWidgetsApplicationIdentifier: appId(
+          watchWidgets?.entitlements ?? '',
           'application-identifier',
         ),
       },
