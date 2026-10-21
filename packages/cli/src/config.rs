@@ -36,12 +36,30 @@ pub struct App {
     /// added to any the shell has.
     #[serde(rename = "urlSchemes")]
     pub url_schemes: Option<Vec<String>>,
+    /// Which way up the app's screen is on phones: the launcher activity's
+    /// on Android, and the iPhone's orientations in `Info.plist` on iOS.
+    pub orientation: Option<Orientation>,
     /// What only Android apps have.
     #[serde(default)]
     pub android: Android,
     /// What only iOS apps have.
     #[serde(default)]
     pub ios: Ios,
+}
+
+/// Which way up an app's screen is on phones. Tablets turn every app every
+/// way, or soon will: Apple asks iPad apps to support every orientation,
+/// and Android 16 ignores an app's on large screens once it targets it.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Orientation {
+    /// Upright.
+    Portrait,
+    /// On its side, either way round.
+    Landscape,
+    /// Turning with the phone, as the system turns apps by default:
+    /// upright or on either side, but not upside down.
+    Any,
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq, Eq)]
@@ -172,7 +190,7 @@ impl App {
 mod tests {
     use std::fs;
 
-    use super::{AdaptiveIcon, Android, App, Background, Ios, check_url_scheme};
+    use super::{AdaptiveIcon, Android, App, Background, Ios, Orientation, check_url_scheme};
 
     #[test]
     fn reads_an_app_config() {
@@ -182,6 +200,7 @@ mod tests {
             &path,
             r#"{ "id": "dev.example.app", "name": "Example", "version": "2.5.0", "build": 42,
                 "icon": "icon.png", "payload": "bundle", "urlSchemes": ["example"],
+                "orientation": "landscape",
                 "android": {
                     "adaptiveIcon": { "foreground": "front.png", "background": "back.png", "monochrome": "mono.png" },
                     "permissions": ["CAMERA"], "abis": ["arm64-v8a"]
@@ -201,6 +220,7 @@ mod tests {
                 icon: Some(dir.path().join("icon.png")),
                 payload: Some(dir.path().join("bundle")),
                 url_schemes: Some(vec!["example".to_owned()]),
+                orientation: Some(Orientation::Landscape),
                 android: Android {
                     adaptive_icon: Some(AdaptiveIcon {
                         foreground: dir.path().join("front.png"),
@@ -266,10 +286,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("app.json");
         let colour = dir.path().join("colour.json");
+        let orientation = dir.path().join("orientation.json");
         fs::write(&path, r#"{ "id": "dev.example.app", "colour": "blue" }"#).unwrap();
+        fs::write(&orientation, r#"{ "orientation": "upside down" }"#).unwrap();
 
         let missing = App::read(&dir.path().join("missing.json")).unwrap_err();
         let unknown_field = App::read(&path).unwrap_err();
+        let unknown_orientation = App::read(&orientation).unwrap_err();
         let bad_colours: Vec<String> = ["#2F6FE", "#2F6FEG", "#2F6FEB00"]
             .iter()
             .map(|background| {
@@ -290,6 +313,12 @@ mod tests {
                 .starts_with("couldn't read the app config ")
         );
         assert!(format!("{unknown_field:#}").contains("unknown field `colour`"));
+        assert!(
+            format!("{unknown_orientation:#}").contains(
+                "unknown variant `upside down`, expected one of `portrait`, `landscape`, `any`"
+            ),
+            "{unknown_orientation:#}"
+        );
         for (error, background) in bad_colours.iter().zip(["#2F6FE", "#2F6FEG", "#2F6FEB00"]) {
             assert!(
                 error.contains(&format!(

@@ -8,7 +8,7 @@ use std::io::Cursor;
 use anyhow::{Context, Result, bail};
 use plist::{Dictionary, Value};
 
-use crate::config::{App, check_url_scheme};
+use crate::config::{App, Orientation, check_url_scheme};
 
 /// The start of a binary property list, the format Xcode writes an app's
 /// Info.plist in.
@@ -16,6 +16,11 @@ const BINARY: &[u8] = b"bplist00";
 /// The ID of the iPhone app a watch app pairs with, which watchOS installs
 /// it for.
 const WATCH_COMPANION: &str = "WKCompanionAppBundleIdentifier";
+/// The orientations an iPhone turns the app to, which it reads over those
+/// an iPad reads too (`UISupportedInterfaceOrientations`), as iOS reads a
+/// key for one kind of device over the key for all. Xcode's templates
+/// write both kinds' own.
+const IPHONE_ORIENTATIONS: &str = "UISupportedInterfaceOrientations~iphone";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InfoPlist {
@@ -133,6 +138,9 @@ impl InfoPlist {
         if let Some(schemes) = &app.url_schemes {
             self.add_url_schemes(schemes)?;
         }
+        if let Some(orientation) = app.orientation {
+            self.set_orientation(orientation);
+        }
         for (key, description) in app.ios.usage_descriptions.iter().flatten() {
             if !is_usage_description(key) {
                 bail!(
@@ -205,6 +213,36 @@ impl InfoPlist {
             }
         }
         Ok(())
+    }
+
+    /// Turns the app's screen on an iPhone as `orientation` says. An iPad
+    /// keeps the shell's orientations: Apple asks iPad apps to support
+    /// every one, so that they can share the screen, and Xcode warns that it
+    /// will soon require it.
+    fn set_orientation(&mut self, orientation: Orientation) {
+        let orientations: &[&str] = match orientation {
+            Orientation::Portrait => &["UIInterfaceOrientationPortrait"],
+            Orientation::Landscape => &[
+                "UIInterfaceOrientationLandscapeLeft",
+                "UIInterfaceOrientationLandscapeRight",
+            ],
+            // As Xcode's templates have them: iPhones with Face ID don't
+            // turn apps upside down.
+            Orientation::Any => &[
+                "UIInterfaceOrientationPortrait",
+                "UIInterfaceOrientationLandscapeLeft",
+                "UIInterfaceOrientationLandscapeRight",
+            ],
+        };
+        self.dictionary.insert(
+            IPHONE_ORIENTATIONS.to_owned(),
+            Value::Array(
+                orientations
+                    .iter()
+                    .map(|&orientation| Value::String(orientation.to_owned()))
+                    .collect(),
+            ),
+        );
     }
 
     /// Gives an app extension, an App Clip or a watch app what follows
@@ -312,7 +350,7 @@ mod tests {
     use plist::Value;
 
     use super::{InfoPlist, WATCH_COMPANION};
-    use crate::config::App;
+    use crate::config::{App, Orientation};
     use crate::ios::tests::shell_info_plist;
 
     const XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -422,6 +460,59 @@ mod tests {
                 .to_string()
                 .starts_with("\"https\" is the web's")
         );
+    }
+
+    #[test]
+    fn turns_the_apps_screen_on_an_iphone() {
+        let orientations = |info: &InfoPlist, key: &str| -> Vec<String> {
+            info.dictionary[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|orientation| orientation.as_string().unwrap().to_owned())
+                .collect()
+        };
+        let mut info = InfoPlist::parse(&shell_info_plist()).unwrap();
+        let shell = orientations(&info, "UISupportedInterfaceOrientations");
+
+        let mut turned = Vec::new();
+        for orientation in [
+            Orientation::Portrait,
+            Orientation::Landscape,
+            Orientation::Any,
+        ] {
+            info.rewrite(&App {
+                orientation: Some(orientation),
+                ..App::default()
+            })
+            .unwrap();
+            turned.push(orientations(
+                &info,
+                "UISupportedInterfaceOrientations~iphone",
+            ));
+        }
+
+        assert_eq!(
+            turned,
+            [
+                vec!["UIInterfaceOrientationPortrait"],
+                vec![
+                    "UIInterfaceOrientationLandscapeLeft",
+                    "UIInterfaceOrientationLandscapeRight"
+                ],
+                vec![
+                    "UIInterfaceOrientationPortrait",
+                    "UIInterfaceOrientationLandscapeLeft",
+                    "UIInterfaceOrientationLandscapeRight"
+                ],
+            ]
+        );
+        // What an iPad reads stays the shell's.
+        assert_eq!(
+            orientations(&info, "UISupportedInterfaceOrientations"),
+            shell
+        );
+        assert_eq!(shell, ["UIInterfaceOrientationPortrait"]);
     }
 
     /// An app extension's Info.plist, with this bundle ID.

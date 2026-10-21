@@ -259,6 +259,12 @@ const verify: Platform['verify'] = ({ app, log }) =>
         )
           .flatMap((type) => type.CFBundleURLSchemes ?? [])
           .join(', '),
+        // The orientations an iPhone turns the app to: its own
+        // (`~iphone`), over those for every device, as iOS reads them.
+        orientations: (
+          (info['UISupportedInterfaceOrientations~iphone'] ??
+            info.UISupportedInterfaceOrientations) as string[] | undefined
+        )?.join(', '),
         extensionId: plugIn?.id,
         extensionApplicationIdentifier: appId(
           plugIn?.entitlements ?? '',

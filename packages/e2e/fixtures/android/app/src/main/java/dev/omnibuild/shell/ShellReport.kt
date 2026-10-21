@@ -3,7 +3,9 @@ package dev.omnibuild.shell
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
@@ -51,16 +53,30 @@ object ShellReport {
             // Only an intent filter for the app's URL scheme leads its link
             // here.
             .put("openedWith", openedWith ?: JSONObject.NULL)
+            // Which way up the launcher activity's screen is, as Android
+            // read it from the manifest.
+            .put("orientation", orientation(launcherActivity(context).activityInfo))
     }
 
-    private fun launcherLabel(context: Context): String {
+    private fun launcherActivity(context: Context): ResolveInfo {
         val launcher = Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_LAUNCHER)
             .setPackage(context.packageName)
         @Suppress("DEPRECATION") // The flags overload is API 33 and up.
-        val activity = context.packageManager.queryIntentActivities(launcher, 0).first()
-        return activity.loadLabel(context.packageManager).toString()
+        return context.packageManager.queryIntentActivities(launcher, 0).first()
     }
+
+    private fun launcherLabel(context: Context): String =
+        launcherActivity(context).loadLabel(context.packageManager).toString()
+
+    /** Its `android:screenOrientation`, as the manifest names it. */
+    private fun orientation(activity: ActivityInfo): String =
+        when (activity.screenOrientation) {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED -> "unspecified"
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT -> "portrait"
+            ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE -> "userLandscape"
+            else -> activity.screenOrientation.toString()
+        }
 
     private fun abis(context: Context): String =
         ZipFile(context.applicationInfo.sourceDir).use { apk ->
