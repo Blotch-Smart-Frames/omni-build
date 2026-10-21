@@ -10,6 +10,10 @@
 //! as `android:scheme`: Android finds attributes by resource ID, which the
 //! resource map gives the first strings in the pool, in order, so its name
 //! goes after theirs, and the indexes of the strings after it move up one.
+//! The other is an attribute added to an element, such as an activity's
+//! `android:screenOrientation`, which goes among the element's others in
+//! order of their resource IDs, as aapt2 sorts them and Android looks them
+//! up.
 
 use anyhow::{Context, Result, bail};
 
@@ -317,6 +321,81 @@ impl Document for BinaryXml {
         Ok(())
     }
 
+    fn set_enum(&mut self, node: usize, attribute: (&str, u32), value: (&str, i32)) {
+        let (name, id) = attribute;
+        // Its number, as aapt2 compiles an enum's value: aapt2 keeps no
+        // text for one in binary XML.
+        let data = value.1.cast_unsigned();
+        if let Some(index) = self
+            .attributes
+            .iter()
+            .position(|attribute| attribute.node == node && attribute.resource_id == Some(id))
+        {
+            self.set_int(index, data);
+            return;
+        }
+        let read = "the document was read once already";
+        let name = self.attribute_name(name, id);
+        // Read again, for the attributes' places now that the strings and
+        // the resource map have moved.
+        let document = self.with_nodes(self.nodes.clone()).expect(read);
+        // The namespace the document's other android: attributes are in.
+        let namespace = document
+            .attributes
+            .iter()
+            .zip(&document.offsets)
+            .find(|(attribute, _)| attribute.resource_id.is_some())
+            .map(|(_, &offset)| Reader::at(&document.nodes, offset).u32())
+            .expect("the element is one an android: attribute was found on, or in");
+        let chunks = chunks(&document.nodes, 0, document.nodes.len()).expect(read);
+        let element = chunks
+            .iter()
+            .filter(|chunk| chunk.kind == START_ELEMENT)
+            .nth(node)
+            .expect("the element is the document's");
+        let body = element.body();
+        let mut fields = Reader::at(&document.nodes, body + 8);
+        let (start, size, count) = (
+            usize::from(fields.u16()),
+            usize::from(fields.u16()),
+            usize::from(fields.u16()),
+        );
+        // Before the first attribute with a greater resource ID, or none.
+        let place = (0..count)
+            .find(|&index| {
+                let name = Reader::at(&document.nodes, body + start + index * size + 4).u32();
+                document
+                    .resource_map
+                    .get(offset(name))
+                    .is_none_or(|&other| other > id)
+            })
+            .unwrap_or(count);
+        let mut record = Vec::new();
+        for field in [namespace, name, NO_STRING] {
+            record.extend(field.to_le_bytes());
+        }
+        record.extend([8, 0, 0, TYPE_INT_DEC]);
+        record.extend(data.to_le_bytes());
+        record.resize(size, 0);
+
+        let mut nodes = document.nodes.clone();
+        let at = body + start + place * size;
+        nodes.splice(at..at, record);
+        let element_size = u32_of(element.size + size);
+        nodes[element.start + 4..element.start + 8].copy_from_slice(&element_size.to_le_bytes());
+        // Its count of attributes, and the places, counted from 1, of its
+        // android:id, class and style attributes, which move up one after
+        // the new one.
+        for (field, added) in [(12, true), (14, false), (16, false), (18, false)] {
+            let at = body + field;
+            let value = Reader::at(&nodes, at).u16();
+            if added || usize::from(value) > place {
+                nodes[at..at + 2].copy_from_slice(&(value + 1).to_le_bytes());
+            }
+        }
+        *self = document.with_nodes(nodes).expect(read);
+    }
+
     fn to_bytes(&self) -> Vec<u8> {
         let pool = self.pool.to_bytes();
         let size =
@@ -419,10 +498,12 @@ fn u32_of(value: usize) -> u32 {
 #[cfg(test)]
 pub mod tests {
     use super::{
-        BinaryXml, CDATA, NO_STRING, TYPE_INT_DEC, TYPE_INT_HEX, TYPE_REFERENCE, TYPE_STRING, node,
+        BinaryXml, CDATA, NO_STRING, START_ELEMENT, TYPE_INT_DEC, TYPE_INT_HEX, TYPE_REFERENCE,
+        TYPE_STRING, chunks, node,
     };
     use crate::android::manifest::{Attribute, Document, Element as Added, Value as Typed};
     use crate::android::string_pool::tests::empty;
+    use crate::bytes::Reader;
     use crate::zip::{self, tests::SHELL};
 
     pub enum Value<'a> {
@@ -810,6 +891,112 @@ pub mod tests {
                 message
             );
         }
+    }
+
+    #[test]
+    fn sets_an_enum_adding_it_among_the_elements_attributes() {
+        let android = |name, id, value| (name, Some(id), value);
+        let mut xml = BinaryXml::parse(&binary_xml(&[
+            ("manifest", vec![("package", None, Value::Str("a.b"))]),
+            (
+                "activity",
+                vec![
+                    android("name", 0x0101_0003, Value::Str(".Main")),
+                    android("configChanges", 0x0101_001f, Value::Int(0x80)),
+                    ("tools", None, Value::Str("x")),
+                ],
+            ),
+        ]))
+        .unwrap();
+        // Its android:id, class and style attributes, counted from 1, as if
+        // they were its second, first and third.
+        let start = chunks(&xml.nodes, 0, xml.nodes.len())
+            .unwrap()
+            .into_iter()
+            .filter(|chunk| chunk.kind == START_ELEMENT)
+            .nth(1)
+            .unwrap()
+            .body();
+        for (field, index) in [(14, 2u16), (16, 1), (18, 3)] {
+            xml.nodes[start + field..start + field + 2].copy_from_slice(&index.to_le_bytes());
+        }
+        let orientation = ("screenOrientation", 0x0101_001e);
+
+        xml.set_enum(1, orientation, ("userLandscape", 11));
+        let added = BinaryXml::parse(&xml.to_bytes()).unwrap();
+        xml.set_enum(1, orientation, ("unspecified", -1));
+
+        let activity: Vec<(&str, Option<u32>, &Typed)> = added
+            .attributes()
+            .iter()
+            .filter(|attribute| attribute.node == 1)
+            .map(|attribute| {
+                (
+                    attribute.name.as_str(),
+                    attribute.resource_id,
+                    &attribute.value,
+                )
+            })
+            .collect();
+        // In order of their resource IDs, and those without one last.
+        assert_eq!(
+            activity,
+            [
+                (
+                    "name",
+                    Some(0x0101_0003),
+                    &Typed::String(".Main".to_owned())
+                ),
+                ("screenOrientation", Some(0x0101_001e), &Typed::Int(11)),
+                ("configChanges", Some(0x0101_001f), &Typed::Int(0x80)),
+                ("tools", None, &Typed::String("x".to_owned())),
+            ]
+        );
+        let start = chunks(&added.nodes, 0, added.nodes.len())
+            .unwrap()
+            .into_iter()
+            .filter(|chunk| chunk.kind == START_ELEMENT)
+            .nth(1)
+            .unwrap()
+            .body();
+        let fields: Vec<u16> = (12..20)
+            .step_by(2)
+            .map(|field| Reader::at(&added.nodes, start + field).u16())
+            .collect();
+        // Four attributes now, and those after the new one a place further.
+        assert_eq!(fields, [4, 3, 1, 4]);
+        // The value changes in place.
+        let changed = BinaryXml::parse(&xml.to_bytes()).unwrap();
+        assert_eq!(changed.attributes()[2].value, Typed::Int(u32::MAX));
+        assert_eq!(xml.to_bytes().len(), added.to_bytes().len());
+    }
+
+    #[test]
+    fn adds_an_enum_in_the_android_namespace() {
+        let mut xml = BinaryXml::parse(&shell_manifest()).unwrap();
+        let activity = xml
+            .attributes()
+            .iter()
+            .find(|attribute| attribute.element == "activity")
+            .unwrap()
+            .node;
+
+        xml.set_enum(
+            activity,
+            ("screenOrientation", 0x0101_001e),
+            ("portrait", 1),
+        );
+
+        let namespace = |name: &str| {
+            let index = xml
+                .attributes()
+                .iter()
+                .position(|attribute| attribute.node == activity && attribute.name == name)
+                .unwrap();
+            Reader::at(&xml.nodes, xml.offsets[index]).u32()
+        };
+        assert_eq!(namespace("screenOrientation"), namespace("name"));
+        assert_ne!(namespace("name"), NO_STRING);
     }
 
     #[test]

@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::{App, check_url_scheme};
+use crate::config::{App, Orientation, check_url_scheme};
 
 // The android: attributes OmniBuild reads or rewrites, by resource ID, as
 // Android itself identifies them (android.R.attr).
@@ -24,6 +24,7 @@ const BACKUP_AGENT: u32 = 0x0101_027f;
 const PARENT_ACTIVITY_NAME: u32 = 0x0101_03a7;
 const ROUND_ICON: u32 = 0x0101_052c;
 const SCHEME: u32 = 0x0101_0027;
+const SCREEN_ORIENTATION: u32 = 0x0101_001e;
 
 /// The elements that start an app's components. The intent filters
 /// inside one come after it in document order, before the next one.
@@ -111,6 +112,13 @@ pub trait Document {
     /// its place in document order: the root is 0. Where among the
     /// parent's children it goes is each format's own.
     fn add_element(&mut self, parent: usize, element: &Element) -> Result<()>;
+    /// Sets the android: attribute `attribute`, by name and resource ID, of
+    /// the element `node`, by its place in document order, to `value`, one
+    /// of the attribute's enum's: its name, and the number aapt2 compiles it
+    /// to. Adds the attribute if the element hasn't one, in the namespace of
+    /// the document's others: the element is one an android: attribute was
+    /// found on, or in.
+    fn set_enum(&mut self, node: usize, attribute: (&str, u32), value: (&str, i32));
     fn to_bytes(&self) -> Vec<u8>;
 }
 
@@ -150,6 +158,9 @@ pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
     }
     if let Some(schemes) = &app.url_schemes {
         add_url_schemes(manifest, schemes)?;
+    }
+    if let Some(orientation) = app.orientation {
+        set_orientation(manifest, orientation)?;
     }
     if let Some(version) = &app.version {
         let index = find(manifest, "manifest", VERSION_NAME)
@@ -219,6 +230,8 @@ struct Component {
     /// The labels a launcher shows for it in place of the application's:
     /// its own, and its intent filters'.
     labels: Vec<usize>,
+    /// An alias's activity, by its name.
+    target: Option<String>,
     main: bool,
     launcher: bool,
 }
@@ -250,6 +263,9 @@ fn launchers(manifest: &dyn Document) -> Vec<Component> {
         match (element, attribute.resource_id, &attribute.value) {
             ("activity" | "activity-alias" | "intent-filter", Some(LABEL), _) => {
                 component.labels.push(index);
+            }
+            ("activity-alias", Some(TARGET_ACTIVITY), Value::String(target)) => {
+                component.target = Some(target.clone());
             }
             ("action", Some(NAME), Value::String(action)) if action == MAIN => {
                 component.main = true;
@@ -304,6 +320,54 @@ fn add_url_schemes(manifest: &mut dyn Document, schemes: &[String]) -> Result<()
         .collect(),
     };
     manifest.add_element(launcher, &filter)
+}
+
+/// Turns the screen of the launcher activity, which shows the whole app in
+/// a shell, as `orientation` says, on phones: Android 16 and later ignore
+/// it on large screens, in apps that target them. For an alias a launcher
+/// shows, that's the activity it stands for.
+fn set_orientation(manifest: &mut dyn Document, orientation: Orientation) -> Result<()> {
+    let value = match orientation {
+        Orientation::Portrait => ("portrait", 1),
+        // On either side, as the phone is held, unless its user has locked
+        // the screen's rotation.
+        Orientation::Landscape => ("userLandscape", 11),
+        // The system's choice, as without the attribute.
+        Orientation::Any => ("unspecified", -1),
+    };
+    let launchers = launchers(manifest);
+    if launchers.is_empty() {
+        bail!("it has no launcher activity to turn the app's screen in");
+    }
+    let package = package(manifest)?;
+    let mut activities = Vec::new();
+    for launcher in launchers {
+        let activity = match &launcher.target {
+            None => launcher.node,
+            Some(target) => {
+                let target = absolute(target, &package);
+                manifest
+                    .attributes()
+                    .iter()
+                    .find(|attribute| {
+                        attribute.element == "activity"
+                            && attribute.resource_id == Some(NAME)
+                            && matches!(&attribute.value, Value::String(name) if absolute(name, &package) == target)
+                    })
+                    .map(|attribute| attribute.node)
+                    .with_context(|| {
+                        format!("its launcher alias is for an activity it doesn't have, {target}")
+                    })?
+            }
+        };
+        if !activities.contains(&activity) {
+            activities.push(activity);
+        }
+    }
+    for activity in activities {
+        manifest.set_enum(activity, ("screenOrientation", SCREEN_ORIENTATION), value);
+    }
+    Ok(())
 }
 
 /// Gives the app the permissions it asks for, `android.permission.` and
@@ -481,14 +545,14 @@ mod tests {
 
     use super::{
         AUTHORITIES, BACKUP_AGENT, Changes, Document, Element, NAME, PERMISSION, SCHEME,
-        TARGET_ACTIVITY, VERSION_CODE, Value as Typed, rewrite,
+        SCREEN_ORIENTATION, TARGET_ACTIVITY, VERSION_CODE, Value as Typed, rewrite,
     };
     use crate::android::binary_xml::BinaryXml;
     use crate::android::binary_xml::tests::{
         Value::{Int, Ref, Str},
         binary_xml, names, shell_manifest, texts,
     };
-    use crate::config::{AdaptiveIcon, Android, App, Background};
+    use crate::config::{AdaptiveIcon, Android, App, Background, Orientation};
 
     /// The manifest rewritten, and the changes elsewhere.
     fn rewritten(data: &[u8], app: &App) -> Result<(Vec<u8>, Changes)> {
@@ -937,6 +1001,133 @@ mod tests {
 
             assert!(error.starts_with(message), "{error}");
         }
+    }
+
+    fn turned(orientation: Orientation) -> App {
+        App {
+            orientation: Some(orientation),
+            ..App::default()
+        }
+    }
+
+    /// The `android:screenOrientation` of each element that has one.
+    fn orientations(manifest: &[u8]) -> Vec<(String, Typed)> {
+        BinaryXml::parse(manifest)
+            .unwrap()
+            .attributes()
+            .iter()
+            .filter(|attribute| attribute.resource_id == Some(SCREEN_ORIENTATION))
+            .map(|attribute| (attribute.element.clone(), attribute.value.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn turns_the_screen_of_the_launcher_activity() {
+        let shell = shell_manifest();
+
+        let turned: Vec<Vec<(String, Typed)>> = [
+            Orientation::Landscape,
+            Orientation::Portrait,
+            Orientation::Any,
+        ]
+        .into_iter()
+        .map(|orientation| orientations(&rewritten(&shell, &turned(orientation)).unwrap().0))
+        .collect();
+
+        let activity = |value| vec![("activity".to_owned(), Typed::Int(value))];
+        assert_eq!(
+            turned,
+            // userLandscape, portrait, and unspecified, -1.
+            [activity(11), activity(1), activity(u32::MAX)]
+        );
+        assert_eq!(orientations(&shell), []);
+    }
+
+    #[test]
+    fn turns_the_activity_a_launcher_alias_is_for() {
+        let name = |value| ("name", Some(NAME), Str(value));
+        let launcher = || {
+            [
+                ("intent-filter", vec![]),
+                ("action", vec![name("android.intent.action.MAIN")]),
+                ("category", vec![name("android.intent.category.LAUNCHER")]),
+            ]
+        };
+        let manifest = |target| {
+            let mut elements = vec![
+                (
+                    "manifest",
+                    vec![("package", None, Str("dev.omnibuild.shell"))],
+                ),
+                ("activity", vec![name("dev.omnibuild.shell.Other")]),
+                ("activity", vec![name(".MainActivity")]),
+                (
+                    "activity-alias",
+                    vec![
+                        name(".Alias"),
+                        ("targetActivity", Some(TARGET_ACTIVITY), Str(target)),
+                    ],
+                ),
+            ];
+            elements.extend(launcher());
+            // A second launcher for the same activity, as an app with
+            // icons to choose from has.
+            elements.push((
+                "activity-alias",
+                vec![
+                    name(".OtherIcon"),
+                    ("targetActivity", Some(TARGET_ACTIVITY), Str("MainActivity")),
+                ],
+            ));
+            elements.extend(launcher());
+            binary_xml(&elements)
+        };
+
+        let portrait = rewritten(&manifest(".MainActivity"), &turned(Orientation::Portrait))
+            .unwrap()
+            .0;
+        let error = rewritten(&manifest(".Gone"), &turned(Orientation::Portrait))
+            .unwrap_err()
+            .to_string();
+
+        let xml = BinaryXml::parse(&portrait).unwrap();
+        let screens: Vec<(usize, &Typed)> = xml
+            .attributes()
+            .iter()
+            .filter(|attribute| attribute.resource_id == Some(SCREEN_ORIENTATION))
+            .map(|attribute| (attribute.node, &attribute.value))
+            .collect();
+        // The second activity, once.
+        assert_eq!(screens, [(2, &Typed::Int(1))]);
+        assert_eq!(
+            error,
+            "its launcher alias is for an activity it doesn't have, dev.omnibuild.shell.Gone"
+        );
+    }
+
+    #[test]
+    fn says_why_it_cant_turn_the_apps_screen() {
+        let name = |value| ("name", Some(NAME), Str(value));
+        let no_launcher = binary_xml(&[("activity", vec![name(".MainActivity")])]);
+        let no_package = binary_xml(&[
+            ("activity", vec![name(".MainActivity")]),
+            ("action", vec![name("android.intent.action.MAIN")]),
+            ("category", vec![name("android.intent.category.LAUNCHER")]),
+        ]);
+
+        let errors = [no_launcher, no_package].map(|manifest| {
+            rewritten(&manifest, &turned(Orientation::Any))
+                .unwrap_err()
+                .to_string()
+        });
+
+        assert_eq!(
+            errors,
+            [
+                "it has no launcher activity to turn the app's screen in",
+                "it has no package to change"
+            ]
+        );
     }
 
     fn with_permissions(id: Option<&str>, permissions: &[&str]) -> App {

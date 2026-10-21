@@ -31,7 +31,8 @@ const ANDROID: &str = "http://schemas.android.com/apk/res/android";
 
 enum Edit {
     String(String),
-    Int(u32),
+    /// A number, and its text.
+    Int(i32, String),
 }
 
 pub struct ProtoXml {
@@ -60,9 +61,11 @@ impl ProtoXml {
 fn read(element: &str, node: usize, attribute: &[Field]) -> Attribute {
     let item = protobuf::message(attribute, ATTRIBUTE_COMPILED_ITEM);
     let primitive = protobuf::message(&item, ITEM_PRIMITIVE);
+    // A negative int32, such as an enum's -1, is sign-extended to 64 bits,
+    // of which the low 32 are its own.
     let int = protobuf::uint(&primitive, PRIMITIVE_INT_DECIMAL)
         .or_else(|| protobuf::uint(&primitive, PRIMITIVE_INT_HEX))
-        .and_then(|value| u32::try_from(value).ok());
+        .map(|value| u32::try_from(value & u64::from(u32::MAX)).expect("it's 32 bits"));
     let value = if protobuf::bytes(&item, ITEM_REFERENCE).is_some() {
         let reference = protobuf::message(&item, ITEM_REFERENCE);
         Value::Reference(
@@ -173,6 +176,16 @@ fn change_node(
     protobuf::encode(&fields)
 }
 
+/// The compiled item of an integer attribute, as aapt2 compiles a number
+/// or an enum's value: an `int32`, which protobuf sign-extends.
+fn int_item(value: i32) -> Vec<u8> {
+    let primitive = protobuf::encode(&[Field::varint(
+        PRIMITIVE_INT_DECIMAL,
+        i64::from(value).cast_unsigned(),
+    )]);
+    protobuf::encode(&[Field::bytes(ITEM_PRIMITIVE, primitive)])
+}
+
 /// `element` and the elements in it as an `XmlNode`, its attributes in
 /// order of their resource IDs, as aapt2 writes them: plain strings, with
 /// no compiled item.
@@ -206,7 +219,7 @@ impl Document for ProtoXml {
     }
 
     fn set_int(&mut self, index: usize, value: u32) {
-        self.edits[index] = Some(Edit::Int(value));
+        self.edits[index] = Some(Edit::Int(value.cast_signed(), value.to_string()));
         self.attributes[index].value = Value::Int(value);
     }
 
@@ -249,6 +262,35 @@ impl Document for ProtoXml {
         Ok(())
     }
 
+    fn set_enum(&mut self, node: usize, attribute: (&str, u32), value: (&str, i32)) {
+        let (name, id) = attribute;
+        let (text, number) = value;
+        if let Some(index) = self
+            .attributes
+            .iter()
+            .position(|attribute| attribute.node == node && attribute.resource_id == Some(id))
+        {
+            self.edits[index] = Some(Edit::Int(number, text.to_owned()));
+            self.attributes[index].value = Value::Int(number.cast_unsigned());
+            return;
+        }
+        let attribute = protobuf::encode(&[
+            Field::bytes(ATTRIBUTE_NAMESPACE, ANDROID),
+            Field::bytes(ATTRIBUTE_NAME, name),
+            Field::bytes(ATTRIBUTE_VALUE, text),
+            Field::varint(ATTRIBUTE_RESOURCE_ID, u64::from(id)),
+            Field::bytes(ATTRIBUTE_COMPILED_ITEM, int_item(number)),
+        ]);
+        // After the element's other attributes, before its children.
+        *self = change_element(&self.to_bytes(), node, &mut |element| {
+            let at = element
+                .iter()
+                .position(|field| field.number == ELEMENT_CHILD)
+                .unwrap_or(element.len());
+            element.insert(at, Field::bytes(ELEMENT_ATTRIBUTE, attribute.clone()));
+        });
+    }
+
     fn to_bytes(&self) -> Vec<u8> {
         let mut index = 0;
         walk(&self.data, &mut |_, _, attribute| {
@@ -259,14 +301,12 @@ impl Document for ProtoXml {
                     protobuf::set(attribute, Field::bytes(ATTRIBUTE_VALUE, value.as_str()));
                     attribute.retain(|field| field.number != ATTRIBUTE_COMPILED_ITEM);
                 }
-                Some(Edit::Int(value)) => {
-                    protobuf::set(attribute, Field::bytes(ATTRIBUTE_VALUE, value.to_string()));
-                    let primitive = protobuf::encode(&[Field::varint(
-                        PRIMITIVE_INT_DECIMAL,
-                        u64::from(*value),
-                    )]);
-                    let item = protobuf::encode(&[Field::bytes(ITEM_PRIMITIVE, primitive)]);
-                    protobuf::set(attribute, Field::bytes(ATTRIBUTE_COMPILED_ITEM, item));
+                Some(Edit::Int(value, text)) => {
+                    protobuf::set(attribute, Field::bytes(ATTRIBUTE_VALUE, text.as_str()));
+                    protobuf::set(
+                        attribute,
+                        Field::bytes(ATTRIBUTE_COMPILED_ITEM, int_item(*value)),
+                    );
                 }
                 None => {}
             }
@@ -465,6 +505,52 @@ pub mod tests {
             &Value::String("Repackaged".to_owned())
         );
         assert_eq!(attribute(&xml, "manifest", "versionCode"), &Value::Int(42));
+    }
+
+    #[test]
+    fn sets_an_enum_adding_it_where_its_missing() {
+        let mut xml = ProtoXml::parse(&shell_manifest()).unwrap();
+        let activity = xml
+            .attributes()
+            .iter()
+            .find(|attribute| attribute.element == "activity")
+            .unwrap()
+            .node;
+        let orientation = ("screenOrientation", 0x0101_001e);
+
+        xml.set_enum(activity, orientation, ("userLandscape", 11));
+        let added = xml.to_bytes();
+        xml.set_enum(activity, orientation, ("unspecified", -1));
+        let changed = xml.to_bytes();
+
+        let contains =
+            |bytes: &[u8], part: &[u8]| bytes.windows(part.len()).any(|window| window == part);
+        let read = ProtoXml::parse(&added).unwrap();
+        let names: Vec<&str> = read
+            .attributes()
+            .iter()
+            .filter(|attribute| attribute.node == activity)
+            .map(|attribute| attribute.name.as_str())
+            .collect();
+        // After the activity's others, and with its name as text, as aapt2
+        // writes one.
+        assert_eq!(names, ["exported", "label", "name", "screenOrientation"]);
+        assert_eq!(
+            attribute(&read, "activity", "screenOrientation"),
+            &Value::Int(11)
+        );
+        assert!(contains(&added, b"userLandscape"));
+        // -1, which protobuf sign-extends to 64 bits.
+        assert_eq!(
+            attribute(
+                &ProtoXml::parse(&changed).unwrap(),
+                "activity",
+                "screenOrientation"
+            ),
+            &Value::Int(u32::MAX)
+        );
+        assert!(contains(&changed, b"unspecified"));
+        assert!(contains(&changed, &encode(&[Field::varint(6, u64::MAX)])));
     }
 
     #[test]

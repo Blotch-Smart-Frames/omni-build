@@ -446,8 +446,15 @@ describe('verify', () => {
         { CFBundleURLSchemes: ['first', 'second'] },
         { CFBundleURLName: 'no schemes' },
       ],
+      UISupportedInterfaceOrientations: ['UIInterfaceOrientationPortrait'],
     };
-    let display = { CFBundleDisplayName: 'OmniBuild E2E' };
+    let display: Record<string, unknown> = {
+      CFBundleDisplayName: 'OmniBuild E2E',
+      'UISupportedInterfaceOrientations~iphone': [
+        'UIInterfaceOrientationLandscapeLeft',
+        'UIInterfaceOrientationLandscapeRight',
+      ],
+    };
     respond = (program, args) => {
       if (program === 'plutil') {
         return { stdout: JSON.stringify({ ...info, ...display }) };
@@ -464,7 +471,7 @@ describe('verify', () => {
     };
 
     const verified = await ios.verify({ ...artifacts, app: 'app.ipa' });
-    display = {} as typeof display;
+    display = {};
     respond = (
       (previous) => (program: string, args: string[]) =>
         args.includes('--entitlements')
@@ -483,6 +490,9 @@ describe('verify', () => {
         payload: 'the payload',
         applicationIdentifier: 'TEAM.dev.omnibuild.e2e.app',
         urlSchemes: 'first, second',
+        // An iPhone's own, over those for every device.
+        orientations:
+          'UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight',
       },
     });
     expect(commands().slice(0, 5)).toEqual([
@@ -496,9 +506,11 @@ describe('verify', () => {
       path.join(bundle, 'payload.txt'),
       'utf8',
     );
-    // Without a display name, the bundle's name is under the icon.
+    // Without a display name, the bundle's name is under the icon, and
+    // without an iPhone's own orientations, it has those for every device.
     expect(nameless.report).toMatchObject({
       name: 'OmniBuildShell',
+      orientations: 'UIInterfaceOrientationPortrait',
       applicationIdentifier: undefined,
     });
   });

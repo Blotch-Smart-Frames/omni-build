@@ -21,6 +21,10 @@ struct ShellReport: Encodable {
     /// The URL schemes whose links open the app, which iOS reads from its
     /// Info.plist's URL types.
     let urlSchemes: String?
+    /// The orientations iOS turns the app to on an iPhone, which Bundle
+    /// reads as iOS does: an iPhone's own (`~iphone`) over those for every
+    /// device.
+    let orientations: String?
     /// The embedded framework's name, which the app only knows if the
     /// framework loaded.
     let framework: String
@@ -54,6 +58,8 @@ struct ShellReport: Encodable {
         cameraUsage = shown["NSCameraUsageDescription"] as? String
         urlSchemes = (info["CFBundleURLTypes"] as? [[String: Any]])?
             .flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
+            .joined(separator: ", ")
+        orientations = (info["UISupportedInterfaceOrientations"] as? [String])?
             .joined(separator: ", ")
         framework = ShellKit.name
         extensionId = bundle.builtInPlugInsURL.flatMap { Self.bundleId(in: $0, kind: "appex") }
