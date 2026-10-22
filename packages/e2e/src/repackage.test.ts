@@ -118,6 +118,7 @@ describe('expected', () => {
       urlSchemes: 'omnibuild-e2e',
       orientations:
         'UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight',
+      nonExemptEncryption: 'false',
       extensionId: 'dev.omnibuild.e2e.app.ShellNotifications',
       intentsExtensionId: 'dev.omnibuild.e2e.app.ShellIntents',
       appClipId: 'dev.omnibuild.e2e.app.Clip',
@@ -142,6 +143,7 @@ describe('expected', () => {
       urlSchemes: 'omnibuild-e2e',
       orientations:
         'UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight',
+      nonExemptEncryption: 'false',
       extensionId: 'dev.omnibuild.e2e.app.ShellNotifications',
       extensionApplicationIdentifier:
         'OMNIBUILD0.dev.omnibuild.e2e.app.ShellNotifications',

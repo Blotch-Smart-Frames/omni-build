@@ -32,6 +32,7 @@
           "com.apple.security.application-groups": ["group.dev.omnibuild.e2e"]
         }
       }
-    }
+    },
+    "usesNonExemptEncryption": false
   }
 }

@@ -144,6 +144,13 @@ pub struct Ios {
     /// app's, which is the same in the shell, such as `ShellNotifications`
     /// for `dev.example.app.ShellNotifications`.
     pub bundles: Option<BTreeMap<String, Bundle>>,
+    /// Whether the app uses encryption that export regulations don't
+    /// exempt, `ITSAppUsesNonExemptEncryption` in `Info.plist`, which App
+    /// Store Connect asks of every build that doesn't say.
+    pub uses_non_exempt_encryption: Option<bool>,
+    /// The code Apple gives an app that does, once it has reviewed the
+    /// app's export compliance documents: `ITSEncryptionExportComplianceCode`.
+    pub encryption_export_compliance_code: Option<String>,
 }
 
 /// What a bundle nested in the app has of its own.
@@ -358,7 +365,28 @@ mod tests {
                         ]
                         .into()
                     ),
+                    ..Ios::default()
                 },
+            }
+        );
+    }
+
+    #[test]
+    fn reads_what_the_app_says_about_its_encryption() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.json");
+        fs::write(
+            &path,
+            r#"{ "ios": { "usesNonExemptEncryption": true, "encryptionExportComplianceCode": "a code" } }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            App::read(&path).unwrap().ios,
+            Ios {
+                uses_non_exempt_encryption: Some(true),
+                encryption_export_compliance_code: Some("a code".to_owned()),
+                ..Ios::default()
             }
         );
     }

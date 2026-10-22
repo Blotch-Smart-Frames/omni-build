@@ -25,6 +25,10 @@ struct ShellReport: Encodable {
     /// reads as iOS does: an iPhone's own (`~iphone`) over those for every
     /// device.
     let orientations: String?
+    /// Whether the app uses encryption that export regulations don't
+    /// exempt, which App Store Connect reads from Info.plist rather than
+    /// asking of each build.
+    let nonExemptEncryption: String?
     /// The embedded framework's name, which the app only knows if the
     /// framework loaded.
     let framework: String
@@ -61,6 +65,7 @@ struct ShellReport: Encodable {
             .joined(separator: ", ")
         orientations = (info["UISupportedInterfaceOrientations"] as? [String])?
             .joined(separator: ", ")
+        nonExemptEncryption = (info["ITSAppUsesNonExemptEncryption"] as? Bool).map { String($0) }
         framework = ShellKit.name
         extensionId = bundle.builtInPlugInsURL.flatMap { Self.bundleId(in: $0, kind: "appex") }
         intentsExtensionId = Self.bundleId(
