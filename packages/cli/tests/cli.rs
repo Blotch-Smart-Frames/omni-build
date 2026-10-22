@@ -368,10 +368,13 @@ fn requests_an_apple_certificate_and_signs_with_it_once_issued() {
         "apple.p12 has a key but no certificate yet: add the one Apple issues for its request with `omni-build key import`\n"
     ));
     assert!(imported.status.success(), "{}", stderr(&imported));
-    assert!(
-        String::from_utf8_lossy(&imported.stdout).starts_with(&format!(
-            r#"{{"event":"certificate-imported","path":"{keystore}","certificate":"Apple Distribution: Jane Doe (ABCDE12345)","expires":""#
-        ))
+    // Parsed, since JSON escapes the backslashes of a path on Windows.
+    let event: serde_json::Value = serde_json::from_slice(&imported.stdout).unwrap();
+    assert_eq!(event["event"], "certificate-imported");
+    assert_eq!(event["path"], keystore);
+    assert_eq!(
+        event["certificate"],
+        "Apple Distribution: Jane Doe (ABCDE12345)"
     );
     assert!(signed.status.success(), "{}", stderr(&signed));
     let apk = fs::read(apk).unwrap();
