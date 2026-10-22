@@ -17,6 +17,7 @@ mod macho;
 mod profile;
 mod signing;
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
@@ -28,7 +29,7 @@ use crate::zip::{self, Entry, Method};
 use crate::{icon, payload};
 use info_plist::InfoPlist;
 use profile::Profile;
-use signing::Identity;
+use signing::{Claims, Identity};
 
 /// The platforms in `CFBundleSupportedPlatforms` of a build for the
 /// Simulator, and of one for devices.
@@ -114,7 +115,20 @@ pub fn repackage(
     let shell_id = shell
         .id()
         .context("the shell's Info.plist has no bundle ID (CFBundleIdentifier)")?;
-    rewrite_nested(&mut entries, bundle, shell_id, app)?;
+    let nested = rewrite_nested(&mut entries, bundle, shell_id, app)?;
+    if let Some(unknown) = app
+        .ios
+        .bundles
+        .iter()
+        .flatten()
+        .map(|(suffix, _)| suffix)
+        .find(|suffix| !nested.contains(suffix))
+    {
+        bail!(
+            "ios.bundles names {unknown}, which the shell has no bundle for: its app extensions, App Clips and watch apps, by the part of their ID after the app's, are [{}]",
+            nested.join(", ")
+        );
+    }
     drop_translations(&mut entries, bundle, &InfoPlist::translated(app))?;
     if let Some(path) = &app.icon {
         set_icon(&mut entries, bundle, &shell, &icon::load(path)?)?;
@@ -125,17 +139,56 @@ pub fn repackage(
     let identity = key.filter(|_| !profiles.is_empty()).map(|key| Identity {
         key,
         profiles: &profiles,
-        claims: app.ios.entitlements.as_ref(),
+        claims: claims(&info, app),
     });
     let entries = signing::sign(entries, bundle, &info, identity.as_ref())?;
     Ok(zip::write(&entries).bytes)
 }
 
+/// What the app and the bundles nested in it claim, by their IDs: the
+/// app, described by `info`, what `ios.entitlements` gives, and each
+/// bundle, what `ios.bundles` gives it.
+fn claims<'a>(info: &InfoPlist, app: &'a App) -> BTreeMap<String, Claims<'a>> {
+    let id = info.id().unwrap_or_default();
+    let own = app.ios.entitlements.as_ref().map(|entitlements| {
+        (
+            id.to_owned(),
+            Claims {
+                source: "ios.entitlements".to_owned(),
+                entitlements,
+            },
+        )
+    });
+    let nested = app
+        .ios
+        .bundles
+        .iter()
+        .flatten()
+        .filter_map(|(suffix, bundle)| {
+            bundle.entitlements.as_ref().map(|entitlements| {
+                (
+                    format!("{id}.{suffix}"),
+                    Claims {
+                        source: format!("ios.bundles.{suffix}.entitlements"),
+                        entitlements,
+                    },
+                )
+            })
+        });
+    own.into_iter().chain(nested).collect()
+}
+
 /// Gives each app extension, App Clip and watch app in the shell, and each
 /// extension in those in turn, such as a watch app's widgets, an ID under
 /// the app's, in place of the shell's (`shell_id`), and the app's version
-/// and build number.
-fn rewrite_nested(entries: &mut [Entry], bundle: &str, shell_id: &str, app: &App) -> Result<()> {
+/// and build number. Returns the part of each one's ID after the app's.
+fn rewrite_nested(
+    entries: &mut [Entry],
+    bundle: &str,
+    shell_id: &str,
+    app: &App,
+) -> Result<Vec<String>> {
+    let mut suffixes = Vec::new();
     for program in signing::programs(entries, bundle)? {
         let name = format!("{program}Info.plist");
         let entry = entries
@@ -153,8 +206,15 @@ fn rewrite_nested(entries: &mut [Entry], bundle: &str, shell_id: &str, app: &App
         if info != shell {
             *entry = entry.with_contents(&info.to_bytes());
         }
+        suffixes.extend(
+            shell
+                .id()
+                .and_then(|own| own.strip_prefix(shell_id))
+                .and_then(|suffix| suffix.strip_prefix('.'))
+                .map(str::to_owned),
+        );
     }
-    Ok(())
+    Ok(suffixes)
 }
 
 /// Takes the keys out of the shell's translations of its Info.plist,
@@ -247,6 +307,7 @@ fn add_payload(entries: &mut Vec<Entry>, bundle: &str, folder: &Path) -> Result<
 
 #[cfg(test)]
 pub mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::io::Cursor;
     use std::path::Path;
@@ -259,7 +320,7 @@ pub mod tests {
     use super::profile::tests::{PROFILE, app_clip_profile};
     use super::{InfoPlist, bundle, repackage};
     use crate::bytes::Reader;
-    use crate::config::{App, Entitlement, Ios};
+    use crate::config::{App, Bundle, Entitlement, Ios};
     use crate::icon::tests::solid_png;
     use crate::zip::{self, Entry, Method, tests::SHELL, tests::entry};
 
@@ -679,19 +740,33 @@ pub mod tests {
         )
     }
 
-    /// The device shell repackaged as `dev.example.app`, claiming a
-    /// keychain group, and signed with the test key, a wildcard profile for
-    /// the app and the code nested in it, and the App Clip's own.
+    /// A keychain group, claimed for the bundle `ios.entitlements` or
+    /// `ios.bundles` names, as an app config claims it.
+    fn keychain_group(group: &str) -> BTreeMap<String, Entitlement> {
+        [(
+            "keychain-access-groups".to_owned(),
+            Entitlement::Strings(vec![group.to_owned()]),
+        )]
+        .into()
+    }
+
+    /// The device shell repackaged as `dev.example.app`, the app claiming a
+    /// keychain group and its notification extension one of its own, and
+    /// signed with the test key, a wildcard profile for the app and the
+    /// code nested in it, and the App Clip's own.
     fn signed_for_devices() -> Vec<Entry> {
         let app = App {
             id: Some("dev.example.app".to_owned()),
             ios: Ios {
-                entitlements: Some(
+                entitlements: Some(keychain_group("$(AppIdentifierPrefix)dev.example.shared")),
+                bundles: Some(
                     [(
-                        "keychain-access-groups".to_owned(),
-                        Entitlement::Strings(vec![
-                            "$(AppIdentifierPrefix)dev.example.shared".to_owned(),
-                        ]),
+                        "ShellNotifications".to_owned(),
+                        Bundle {
+                            entitlements: Some(keychain_group(
+                                "$(AppIdentifierPrefix)$(CFBundleIdentifier)",
+                            )),
+                        },
                     )]
                     .into(),
                 ),
@@ -753,24 +828,40 @@ pub mod tests {
         assert!(
             entitlements("OmniBuildShell").contains("<string>ABCDE12345.dev.example.app</string>")
         );
-        // The app claims the keychain group it asks for, which the profile
-        // allows, and its extensions don't.
-        assert!(entitlements("OmniBuildShell").contains(
-            "\t<key>keychain-access-groups</key>
+        // The app and its notification extension each claim the keychain
+        // group they ask for, which the profile allows, the extension's
+        // named after its own ID, and the other extension claims none.
+        let keychain_group = |group: &str| {
+            format!(
+                "\t<key>keychain-access-groups</key>
 \t<array>
-\t\t<string>ABCDE12345.dev.example.shared</string>
+\t\t<string>{group}</string>
 \t</array>
 "
-        ));
+            )
+        };
+        assert!(
+            entitlements("OmniBuildShell")
+                .contains(&keychain_group("ABCDE12345.dev.example.shared"))
+        );
+        assert!(
+            entitlements("PlugIns/ShellNotifications.appex/ShellNotifications").contains(
+                &keychain_group("ABCDE12345.dev.example.app.ShellNotifications")
+            )
+        );
+        assert!(
+            !entitlements("Extensions/ShellIntents.appex/ShellIntents")
+                .contains("keychain-access-groups")
+        );
         for (extension, name) in [
             ("PlugIns/ShellNotifications.appex/", "ShellNotifications"),
             ("Extensions/ShellIntents.appex/", "ShellIntents"),
         ] {
-            let claimed = entitlements(&format!("{extension}{name}"));
-            assert!(claimed.contains(&format!(
-                "<string>ABCDE12345.dev.example.app.{name}</string>"
-            )));
-            assert!(!claimed.contains("keychain-access-groups"));
+            assert!(
+                entitlements(&format!("{extension}{name}")).contains(&format!(
+                    "<string>ABCDE12345.dev.example.app.{name}</string>"
+                ))
+            );
             assert_eq!(
                 file(
                     &entries,
@@ -913,9 +1004,70 @@ pub mod tests {
 
         assert_eq!(
             format!("{device:#}"),
-            "the provisioning profile for dev.omnibuild.shell doesn't allow aps-environment, which the app claims (ios.entitlements): turn the capability on for its App ID, and make the profile again"
+            "the provisioning profile for dev.omnibuild.shell doesn't allow aps-environment, which it claims in ios.entitlements: turn the capability on for its App ID, and make the profile again"
         );
         assert!(simulator.is_ok());
+    }
+
+    #[test]
+    fn checks_each_bundles_entitlements_against_its_own_profile() {
+        let with_bundles = |bundles: &[(&str, Option<BTreeMap<String, Entitlement>>)]| App {
+            id: Some("dev.example.app".to_owned()),
+            ios: Ios {
+                bundles: Some(
+                    bundles
+                        .iter()
+                        .map(|(suffix, entitlements)| {
+                            (
+                                (*suffix).to_owned(),
+                                Bundle {
+                                    entitlements: entitlements.clone(),
+                                },
+                            )
+                        })
+                        .collect(),
+                ),
+                ..Ios::default()
+            },
+            ..App::default()
+        };
+        let for_devices = |app: &App| {
+            repackage(
+                zip::read(SHELL_IPA).unwrap(),
+                "Payload/OmniBuildShell.app/",
+                app,
+                Some(&identity()),
+                &[PROFILE.to_vec(), example_app_clip_profile()],
+            )
+        };
+        let unknown = with_bundles(&[("ShellShare", None)]);
+
+        // The App Clip's profile allows no keychain group.
+        let clip = for_devices(&with_bundles(&[(
+            "Clip",
+            Some(keychain_group("$(AppIdentifierPrefix)dev.example.shared")),
+        )]))
+        .unwrap_err();
+        let device = for_devices(&unknown).unwrap_err();
+        let simulator = repackage(
+            zip::read(SHELL_APP).unwrap(),
+            "OmniBuildShell.app/",
+            &unknown,
+            None,
+            &[],
+        )
+        .unwrap_err();
+        // A bundle that claims nothing is signed as it would be without it.
+        let nothing = for_devices(&with_bundles(&[("watchkitapp.ShellWatchWidgets", None)]));
+
+        assert_eq!(
+            format!("{clip:#}"),
+            "the provisioning profile for dev.example.app.Clip doesn't allow keychain-access-groups, which it claims in ios.bundles.Clip.entitlements: turn the capability on for its App ID, and make the profile again"
+        );
+        let names = "ios.bundles names ShellShare, which the shell has no bundle for: its app extensions, App Clips and watch apps, by the part of their ID after the app's, are [";
+        assert!(format!("{device:#}").starts_with(names), "{device:#}");
+        assert!(format!("{simulator:#}").starts_with(names), "{simulator:#}");
+        assert!(nothing.is_ok());
     }
 
     #[test]

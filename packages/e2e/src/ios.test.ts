@@ -572,14 +572,19 @@ describe('verify', () => {
         : 'dev.omnibuild.e2e.app';
     };
     const clip = 'TEAM.dev.omnibuild.e2e.app.ShellClip';
-    /** The entitlements codesign prints, which name the app and its App Clip to each other. */
+    /**
+     * The entitlements codesign prints, which name the app and its App Clip
+     * to each other, and give the app extension its App Group.
+     */
     const entitlements = (bundleId: string) => {
       const named =
         bundleId === 'dev.omnibuild.e2e.app'
           ? `<key>com.apple.developer.associated-appclip-app-identifiers</key>\n\t<array>\n\t\t<string>${clip}</string>\n\t</array>`
           : bundleId.endsWith('ShellClip')
             ? '<key>com.apple.developer.parent-application-identifiers</key><array><string>TEAM.dev.omnibuild.e2e.app</string></array>'
-            : '';
+            : bundleId.endsWith('ShellNotifications')
+              ? '<key>com.apple.security.application-groups</key><array><string>group.dev.omnibuild.e2e</string></array>'
+              : '';
       return `<dict><key>application-identifier</key><string>TEAM.${bundleId}</string>${named}</dict>`;
     };
     respond = (program, args) => {
@@ -608,6 +613,7 @@ describe('verify', () => {
       extensionId: 'dev.omnibuild.e2e.app.ShellNotifications',
       extensionApplicationIdentifier:
         'TEAM.dev.omnibuild.e2e.app.ShellNotifications',
+      extensionAppGroups: 'group.dev.omnibuild.e2e',
       intentsExtensionId: 'dev.omnibuild.e2e.app.ShellIntents',
       intentsExtensionApplicationIdentifier:
         'TEAM.dev.omnibuild.e2e.app.ShellIntents',

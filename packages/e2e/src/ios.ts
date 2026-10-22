@@ -285,6 +285,11 @@ const verify: Platform['verify'] = ({ app, log }) =>
           plugIn?.entitlements ?? '',
           'application-identifier',
         ),
+        // The App Group it shares with the app, which it claims itself.
+        extensionAppGroups: claimed(
+          plugIn?.entitlements ?? '',
+          'com.apple.security.application-groups',
+        ),
         intentsExtensionId: intents?.id,
         intentsExtensionApplicationIdentifier: claimed(
           intents?.entitlements ?? '',

@@ -81,6 +81,7 @@ What only one platform has goes in `android` and `ios`:
 | `android.abis`          | The ABIs the app keeps native libraries for, from the shell's `lib/` folders, such as `arm64-v8a` and `x86_64`. The others go, which makes the APK smaller.                                                                                                                                                                                                                                                                                                            |
 | `ios.usageDescriptions` | Why the app uses what iOS asks its user to allow, by `Info.plist` key, such as `NSCameraUsageDescription`. They replace the shell's, translations included.                                                                                                                                                                                                                                                                                                            |
 | `ios.entitlements`      | The entitlements the app claims for the capabilities it uses, as an Xcode project's `.entitlements` file has them: a string, a boolean or an array of strings by key, such as `aps-environment` for push notifications, or `com.apple.developer.associated-domains` for universal links. A build for devices is signed with them, if its provisioning profile allows each: see [Signing](#signing).                                                                    |
+| `ios.bundles`           | What the bundles nested in the app have of their own, by the part of their ID after the app's: its app extensions, App Clips and watch app, and the extensions in those. For now, the `entitlements` each claims, such as the App Group a notification extension shares with the app: see [Signing](#signing).                                                                                                                                                         |
 
 Paths are relative to the config file. A field you leave out keeps the shell's value, and a field OmniBuild doesn't know is an error, so a typo doesn't pass unnoticed. On iOS, every other key in `Info.plist` stays as Xcode wrote it, the `DT*` keys among them: they record the Xcode and SDK that built the shell, which App Store validation checks.
 
@@ -108,7 +109,24 @@ An iOS app gets Apple's code signature, as `codesign` writes it: every file seal
 
 - **For devices**, it's signed with a key Apple issued a certificate for (`--signing-key`), and a provisioning profile that allows the certificate and the app's ID (`--profile`). Export the key from Keychain Access as a `.p12` and give it as it is: OmniBuild adds the certificates above it, Apple's Worldwide Developer Relations authority (G3) and Apple's root, as `codesign` does. The profile goes in the app as `embedded.mobileprovision`, and its App ID, team and `get-task-allow` or `beta-reports-active` become the app's entitlements. Each app extension and a watch app, and the extensions in those, has an ID of its own, and needs a profile of its own too, unless a wildcard App ID covers it (`TEAM.*`), so give `--profile` once for each. Each bundle takes the profile whose App ID fits it closest, as Xcode picks them: its own App ID over a wildcard, and `TEAM.dev.example.*` over `TEAM.*`. An App Clip always needs its own: the profile of an App ID registered as an App Clip's, of the app's App ID, which allows what makes it one. It's signed as one of the app's (`com.apple.developer.on-demand-install-capable` and `com.apple.developer.parent-application-identifiers`), and the app names it in turn (`com.apple.developer.associated-appclip-app-identifiers`), as Xcode signs them.
 
-The app also claims the entitlements in `ios.entitlements`, for the capabilities it uses, such as push notifications, and its profile has to allow each, as iOS checks them: turn the capability on for the App ID, and make the profile again. A profile allows a value it has, or one its wildcard covers (`TEAM.*`, or `*` for any), and an array when it allows each of its strings. `aps-environment` is the profile's, `development` or `production`, as Xcode sets it. Xcode's build settings that an `.entitlements` file names are filled in as Xcode fills them in: `$(AppIdentifierPrefix)` and `$(TeamIdentifierPrefix)` with the team's ID and a dot, so `$(AppIdentifierPrefix)com.example.shared` is a keychain group of the team's, and `$(CFBundleIdentifier)` and `$(PRODUCT_BUNDLE_IDENTIFIER)` with the app's ID. The app's extensions, watch app and App Clips claim none of them. The Simulator reads its entitlements from the shell's executable, where Xcode links them, rather than its signature, so they apply to builds for devices.
+The app also claims the entitlements in `ios.entitlements`, for the capabilities it uses, such as push notifications, and its profile has to allow each, as iOS checks them: turn the capability on for the App ID, and make the profile again. A profile allows a value it has, or one its wildcard covers (`TEAM.*`, or `*` for any), and an array when it allows each of its strings. `aps-environment` is the profile's, `development` or `production`, as Xcode sets it. Xcode's build settings that an `.entitlements` file names are filled in as Xcode fills them in: `$(AppIdentifierPrefix)` and `$(TeamIdentifierPrefix)` with the team's ID and a dot, so `$(AppIdentifierPrefix)com.example.shared` is a keychain group of the team's, and `$(CFBundleIdentifier)` and `$(PRODUCT_BUNDLE_IDENTIFIER)` with the ID of the bundle that claims it. The Simulator reads its entitlements from the shell's executable, where Xcode links them, rather than its signature, so they apply to builds for devices.
+
+The app's extensions, App Clips and watch app, and the extensions in those, claim entitlements of their own in `ios.bundles`, as each Xcode target has its own `.entitlements` file, and each one's own profile has to allow them. Each is named by the part of its ID after the app's, which is the same in the shell: `ShellNotifications` for the shell's `dev.omnibuild.shell.ShellNotifications`, which becomes `dev.example.app.ShellNotifications`. A name the shell has no bundle for is an error, and a bundle with nothing to claim is signed with the entitlements its profile gives every program. An App Group the app shares with its notification extension, say, is claimed by both:
+
+```json
+"ios": {
+  "entitlements": {
+    "com.apple.security.application-groups": ["group.com.example.tides"]
+  },
+  "bundles": {
+    "ShellNotifications": {
+      "entitlements": {
+        "com.apple.security.application-groups": ["group.com.example.tides"]
+      }
+    }
+  }
+}
+```
 
 ## What a shell needs
 

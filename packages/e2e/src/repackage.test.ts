@@ -143,6 +143,7 @@ describe('expected', () => {
       extensionId: 'dev.omnibuild.e2e.app.ShellNotifications',
       extensionApplicationIdentifier:
         'OMNIBUILD0.dev.omnibuild.e2e.app.ShellNotifications',
+      extensionAppGroups: 'group.dev.omnibuild.e2e',
       intentsExtensionId: 'dev.omnibuild.e2e.app.ShellIntents',
       intentsExtensionApplicationIdentifier:
         'OMNIBUILD0.dev.omnibuild.e2e.app.ShellIntents',
