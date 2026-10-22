@@ -94,10 +94,11 @@ struct Install {
     /// The app: an APK. Google Play makes the APKs a device installs from
     /// an app bundle (AAB).
     app: PathBuf,
-    /// The device to install on: an emulator, by its name (`emulator-5554`),
-    /// or a device on the network, by its address and port
-    /// (`192.168.1.20:5555`). Without it, the one emulator running on this
-    /// computer.
+    /// The device to install on: a phone plugged in by USB, by its serial
+    /// number, as `adb devices` shows it, an emulator, by its name
+    /// (`emulator-5554`), or a device on the network, by its address and
+    /// port (`192.168.1.20:5555`). Without it, the one phone plugged in or
+    /// emulator running on this computer.
     #[arg(long, short)]
     device: Option<String>,
 }
@@ -264,6 +265,7 @@ fn install(args: &Install, reporter: &Reporter) -> Result<()> {
     let mut device = adb::Device::connect(
         args.device.as_deref(),
         &adb::emulator_ports(),
+        &adb::Usb,
         &key,
         &|device| {
             reporter.report(&Event::Authorizing {

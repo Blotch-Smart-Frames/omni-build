@@ -2,7 +2,7 @@
 
 Build, sign, install and ship iOS and Android apps with no native toolchain: no Xcode, no JDK, no Android SDK. One standalone binary that repackages a prebuilt app shell with your app's config and assets, then signs it.
 
-**Status:** Phase 0 of [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1), with Phase 1 begun. `omni-build repackage` gives an Android APK or app bundle (AAB) shell, or an iOS shell built for the Simulator or for devices, an app's ID, name, version, build number, icon, payload and permissions, and signs it, frameworks included, with nothing else installed. `omni-build key create` makes an Android upload key, `omni-build key request` and `key import` an Apple signing key without a Mac, and `omni-build install` installs an APK on an Android emulator or a device on the network, over ADB. Build tools read what it reports as JSON lines, through the npm package's API or `--json`. Nothing is published yet.
+**Status:** Phase 0 of [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1), with Phase 1 begun. `omni-build repackage` gives an Android APK or app bundle (AAB) shell, or an iOS shell built for the Simulator or for devices, an app's ID, name, version, build number, icon, payload and permissions, and signs it, frameworks included, with nothing else installed. `omni-build key create` makes an Android upload key, `omni-build key request` and `key import` an Apple signing key without a Mac, and `omni-build install` installs an APK on an Android phone plugged in by USB, an emulator or a device on the network, over ADB. Build tools read what it reports as JSON lines, through the npm package's API or `--json`. Nothing is published yet.
 
 ## Repository
 
@@ -36,6 +36,12 @@ npm run cspell         # spelling, with the words in cspell.json and each packag
 npm run typecheck      # tsc over the TypeScript packages
 npm run format         # rustfmt and oxfmt; CI runs format:check
 npm run e2e -- --platform ios  # build, repackage and run a real app on the iOS Simulator, or android (see packages/e2e)
+```
+
+The USB tests (`packages/cli/src/adb/usb.rs`) plug made-up phones into vhci-hcd, Linux's virtual USB host controller, so they run only on Linux, and elsewhere `npm run test:coverage` finds that file short of 100%. CI runs them. Docker Desktop's Linux has vhci-hcd built in, so on a Mac or a PC they run in a privileged container:
+
+```sh
+docker run --rm --privileged -v /dev:/dev -v "$PWD":/src -w /src -e CARGO_TARGET_DIR=/tmp/target rust:1.99.0 cargo test adb::usb
 ```
 
 Pull requests must pass CI: formatting, lint (warnings are errors), spelling, type checks, 100% test coverage, tests on Linux, macOS and Windows, a release build on each of the six targets OmniBuild ships for, `npm install omni-build` from those builds on each of the six, the end-to-end tests on the iOS Simulator and an Android emulator, and a build of the docs site.

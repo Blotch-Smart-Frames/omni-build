@@ -120,6 +120,16 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
+      # The USB tests plug made-up phones into vhci-hcd, Linux's virtual USB
+      # host controller (packages/cli/src/adb/usb.rs). The runner's user
+      # attaches them, and opens them as Android's udev rules let users
+      # open Google's phones.
+      - name: Load vhci-hcd for the USB tests
+        run: |
+          sudo modprobe vhci-hcd
+          sudo chmod a+w /sys/devices/platform/vhci_hcd.0/attach
+          echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0666"' | sudo tee /etc/udev/rules.d/51-android.rules
+          sudo udevadm control --reload-rules
       - run: npm ci
       - run: npm run test:coverage
 

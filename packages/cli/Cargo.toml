@@ -32,6 +32,10 @@ image = { version = "0.25.10", default-features = false, features = [
 # only the images actool packs an icon's smaller sizes into, to paint the
 # app's icon into them.
 lzfse_rust = "0.2.1"
+# Phones plugged in by USB, through each system's own USB API: usbfs on
+# Linux, IOKit on macOS and WinUSB on Windows. Pure Rust, unlike libusb's
+# bindings, so every release target builds without a C toolchain.
+nusb = "0.2.8"
 # PKCS #12's structures and key derivation, and PKCS #8's encryption
 # (PBES2), of the same RustCrypto generation as cms and x509-cert.
 pkcs12 = { version = "0.1.0", features = ["kdf"] }
