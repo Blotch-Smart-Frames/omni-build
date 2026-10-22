@@ -1,19 +1,20 @@
 ---
 title: Installing on a device
-description: Install an APK on an Android emulator or device with omni-build install, over ADB, without the Android SDK.
+description: Install an APK on an Android phone, emulator or device on the network with omni-build install, over ADB, without the Android SDK.
 ---
 
 # Installing on a device
 
 :::warning[Phase 1]
 
-Android emulators, and Android devices listening for ADB on the network. Phones connected by USB, and Android 11's wireless debugging, which pairs with a code first, come next. On iOS, install through TestFlight for now. OmniBuild isn't published yet: build the binary from the [repository](https://github.com/Blotch-Smart-Frames/omni-build) with `cargo build --release`.
+Android phones plugged in by USB, Android emulators, and Android devices listening for ADB on the network. Android 11's wireless debugging, which pairs with a code first, comes next. On iOS, install through TestFlight for now. OmniBuild isn't published yet: build the binary from the [repository](https://github.com/Blotch-Smart-Frames/omni-build) with `cargo build --release`.
 
 :::
 
 ```sh
-omni-build install app.apk                              # on the one emulator running
-omni-build install app.apk --device emulator-5556       # on one of several
+omni-build install app.apk                              # on the one phone plugged in, or emulator running
+omni-build install app.apk --device R5CT1234      # on one of several phones, by its serial number
+omni-build install app.apk --device emulator-5556       # on one of several emulators
 omni-build install app.apk --device 192.168.1.20:5555   # on a device on the network
 ```
 
@@ -21,9 +22,18 @@ omni-build install app.apk --device 192.168.1.20:5555   # on a device on the net
 
 ## Finding the device
 
-Without `--device`, OmniBuild looks for emulators running on this computer where `adb` does, on the ports emulators listen on (5555, 5557, and so on to 5585), and installs on the one it finds. When several are running, it lists them, and `--device` names one as `adb` does: `emulator-5554` is the emulator whose console is on port 5554, the number in its window's title, and which listens for ADB on the next port, 5555.
+Without `--device`, OmniBuild looks for phones plugged into this computer with USB debugging on, and for emulators running on it where `adb` does, on the ports emulators listen on (5555, 5557, and so on to 5585), and installs on the one it finds. When it finds several, it lists them, and `--device` names one as `adb` does. A phone is named by its serial number, as `adb devices` lists it, or by where it's plugged in, such as `usb:001-3`, if it has none. `emulator-5554` is the emulator whose console is on port 5554, the number in its window's title, and which listens for ADB on the next port, 5555.
 
 A device on the network is named by its address and the port it listens on, which is 5555 once `adb tcpip 5555` has told it to listen.
+
+## Phones plugged in by USB
+
+A phone takes apps over USB once USB debugging is on: tap **Build number** in **Settings › About phone** seven times to show **Developer options**, then turn on **USB debugging** there. OmniBuild talks to the phone through the system's own USB support, with nothing from the Android SDK. On macOS that's all. Elsewhere:
+
+- **Linux** lets only root open a USB device until a udev rule gives it to its user. Android's rules do, for every phone maker's devices: install them with `android-sdk-platform-tools-common` on Debian and Ubuntu, or `android-udev` on Arch.
+- **Windows** lets OmniBuild open a phone through WinUSB, so the phone's ADB interface needs a WinUSB driver, such as Google's USB driver. Windows installs WinUSB itself for a phone that asks for it. Some phone makers' own drivers aren't WinUSB, and OmniBuild says so when it can't open the phone.
+
+One program at a time can use a phone. `adb`'s server keeps every phone it finds, so if you've run `adb`, stop it with `adb kill-server` first.
 
 ## The ADB key
 

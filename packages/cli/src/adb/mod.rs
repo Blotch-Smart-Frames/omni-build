@@ -1,9 +1,11 @@
 //! Installing apps on Android devices with no Android SDK, over ADB, the
-//! protocol the SDK's adb speaks to them. Over TCP for now: to the
-//! emulators running on this computer, and to devices on the network.
+//! protocol the SDK's adb speaks to them: to phones plugged in by USB, and
+//! over TCP to the emulators running on this computer and to devices on
+//! the network.
 
 mod connection;
 mod key;
+mod usb;
 
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
@@ -11,8 +13,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-use connection::Connection;
+use connection::{Connection, Stream};
 pub use key::{AdbKey, key_path, owner};
+pub use usb::Usb;
 
 /// How long OmniBuild waits for a device: long enough for its user to
 /// allow OmniBuild's key, and for it to check and compile a large app.
@@ -37,42 +40,70 @@ pub fn emulator_ports() -> Vec<u16> {
     (5555..=5585).step_by(2).collect()
 }
 
+/// The devices plugged into this computer's USB ports with USB debugging
+/// on: `Usb`, or phones a test makes up.
+pub trait UsbDevices {
+    /// Their names, as adb's: each one's serial number, or where it's
+    /// plugged in when it has none.
+    fn names(&self) -> Vec<String>;
+    /// Opens ADB's interface on the one named `name`, waiting up to
+    /// `timeout` for each read and write.
+    fn open(&self, name: &str, timeout: Duration) -> Result<Box<dyn Stream>>;
+}
+
+/// How OmniBuild reaches a device.
+enum Route {
+    /// Over TCP, connected.
+    Tcp(TcpStream),
+    /// Plugged in by USB, not yet opened.
+    Usb,
+}
+
 /// A device OmniBuild has connected to.
 pub struct Device {
-    /// Its name, as adb's: `emulator-5554`, or its address.
+    /// Its name, as adb's: a phone's serial number, `emulator-5554`, or
+    /// its address.
     serial: String,
     connection: Connection<'static>,
 }
 
 impl Device {
-    /// Connects to `device`, an emulator's name or a device's address and
-    /// port, or without one to the only emulator listening on one of
+    /// Connects to `device`, the name of a device in `usb` or of an
+    /// emulator, or a device's address and port, or without one to the
+    /// only device there is, in `usb` or listening on one of
     /// `emulator_ports`, and proves OmniBuild's identity with `key`.
     /// Calls `authorizing` with the device's name when the device asks its
     /// user whether to allow the key, and waits for the answer.
     pub fn connect(
         device: Option<&str>,
         emulator_ports: &[u16],
+        usb: &dyn UsbDevices,
         key: &AdbKey,
         authorizing: &dyn Fn(&str),
     ) -> Result<Self> {
-        let (serial, stream) = match device {
-            Some(device) => (device.to_owned(), reach(device)?),
-            None => only_emulator(emulator_ports)?,
+        let (serial, route) = match device {
+            Some(device) => (device.to_owned(), reach(device, usb)?),
+            None => only_device(emulator_ports, usb)?,
         };
-        // Without Nagle's algorithm, as adb: each small message would
-        // otherwise wait for the device to acknowledge the last.
+        let stream = match route {
+            // Without Nagle's algorithm, as adb: each small message would
+            // otherwise wait for the device to acknowledge the last.
+            Route::Tcp(stream) => stream
+                .set_read_timeout(Some(TIMEOUT))
+                .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)))
+                .and_then(|()| stream.set_nodelay(true))
+                .map(|()| Box::new(stream) as Box<dyn Stream>)
+                .map_err(anyhow::Error::from),
+            Route::Usb => usb.open(&serial, TIMEOUT),
+        };
         let connection = stream
-            .set_read_timeout(Some(TIMEOUT))
-            .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)))
-            .and_then(|()| stream.set_nodelay(true))
-            .map_err(anyhow::Error::from)
-            .and_then(|()| Connection::open(stream, key, &|| authorizing(&serial)))
+            .and_then(|stream| Connection::open(stream, key, &|| authorizing(&serial)))
             .with_context(|| format!("couldn't connect to {serial}"))?;
         Ok(Self { serial, connection })
     }
 
-    /// Its name, as adb's: `emulator-5554`, or its address.
+    /// Its name, as adb's: a phone's serial number, `emulator-5554`, or
+    /// its address.
     pub fn serial(&self) -> &str {
         &self.serial
     }
@@ -169,7 +200,8 @@ impl Device {
 
 impl fmt::Display for Device {
     /// Its model, as its user knows it, then its name: "Pixel 8
-    /// (emulator-5554)".
+    /// (emulator-5554)", or "Pixel 8 (R5CT1234)" for a phone plugged
+    /// in.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.model() {
             Some(model) => write!(f, "{model} ({})", self.serial),
@@ -178,30 +210,61 @@ impl fmt::Display for Device {
     }
 }
 
-/// Connects to a device by its name: an emulator's, `emulator-<console
-/// port>`, which listens for ADB on the next port, or a device's address
-/// and port.
-fn reach(device: &str) -> Result<TcpStream> {
+/// Reaches a device by its name: an emulator's, `emulator-<console
+/// port>`, which listens for ADB on the next port, a device's address and
+/// port, or a phone's serial number, the name adb gives it.
+fn reach(device: &str, usb: &dyn UsbDevices) -> Result<Route> {
     let emulator = device
         .strip_prefix("emulator-")
         .and_then(|port| port.parse::<u16>().ok())
         .and_then(|port| port.checked_add(1));
     let stream = match emulator {
         Some(port) => TcpStream::connect((Ipv4Addr::LOCALHOST, port)),
+        // Before addresses: a phone without a serial number is named by
+        // where it's plugged in, such as `usb:001-3`.
+        None if usb.names().iter().any(|name| name == device) => return Ok(Route::Usb),
         None if device.contains(':') => TcpStream::connect(device),
         None => bail!(
-            "\"{device}\" isn't a device OmniBuild can reach: name an emulator, such as emulator-5554, or a device on the network by its address and port, such as 192.168.1.20:5555. OmniBuild doesn't install over USB yet"
+            "found no device named \"{device}\": name a phone plugged in by USB, with USB debugging on, by its serial number, as adb devices shows it; an emulator, such as emulator-5554; or a device on the network by its address and port, such as 192.168.1.20:5555"
         ),
     };
-    stream.with_context(|| format!("couldn't reach {device}"))
+    stream
+        .map(Route::Tcp)
+        .with_context(|| format!("couldn't reach {device}"))
 }
 
-/// The only emulator listening on one of `ports` on this computer, with
-/// the name adb gives it.
-fn only_emulator(ports: &[u16]) -> Result<(String, TcpStream)> {
+/// The only device there is: a phone in `usb`, or an emulator listening on
+/// one of `ports` on this computer, with the name adb gives it.
+fn only_device(ports: &[u16], usb: &dyn UsbDevices) -> Result<(String, Route)> {
+    let phones = usb.names().into_iter().map(|name| (name, Route::Usb));
+    let mut devices: Vec<_> = phones
+        .chain(
+            running_emulators(ports)
+                .into_iter()
+                .map(|(name, stream)| (name, Route::Tcp(stream))),
+        )
+        .collect();
+    match devices.len() {
+        0 => bail!(
+            "found no Android device: plug in a phone with USB debugging on, start an emulator, or name a device on the network with --device <address>:<port>"
+        ),
+        1 => Ok(devices.remove(0)),
+        count => {
+            let names: Vec<_> = devices.iter().map(|(name, _)| name.as_str()).collect();
+            bail!(
+                "found {count} devices ({}): name the one to install on with --device",
+                names.join(", ")
+            )
+        }
+    }
+}
+
+/// The emulators listening on one of `ports` on this computer, with the
+/// names adb gives them.
+fn running_emulators(ports: &[u16]) -> Vec<(String, TcpStream)> {
     // All at once: Windows takes a second or two to refuse a connection
     // to a port nothing listens on, where other systems refuse at once.
-    let mut emulators: Vec<_> = std::thread::scope(|scope| {
+    std::thread::scope(|scope| {
         let attempts: Vec<_> = ports
             .iter()
             .map(|&port| {
@@ -216,33 +279,24 @@ fn only_emulator(ports: &[u16]) -> Result<(String, TcpStream)> {
             .into_iter()
             .filter_map(|attempt| attempt.join().expect("connecting doesn't panic"))
             .collect()
-    });
-    match emulators.len() {
-        0 => bail!(
-            "found no Android device: start an emulator, or name a device on the network with --device <address>:<port>. OmniBuild doesn't install over USB yet"
-        ),
-        1 => Ok(emulators.remove(0)),
-        count => {
-            let names: Vec<_> = emulators.iter().map(|(name, _)| name.as_str()).collect();
-            bail!(
-                "{count} emulators are running ({}): name the one to install on with --device",
-                names.join(", ")
-            )
-        }
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::path::Path;
     use std::sync::{Arc, LazyLock, Mutex};
+    use std::time::Duration;
 
+    use anyhow::Context;
+
+    use super::connection::Stream;
     use super::connection::tests::{
         Answer, BANNER, Respond, asking, exec_device, serve, service_device,
     };
-    use super::{AdbKey, Device, emulator_ports};
+    use super::{AdbKey, Device, TIMEOUT, UsbDevices, emulator_ports};
 
     const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/adb/adbkey");
     static KEY: LazyLock<AdbKey> =
@@ -254,10 +308,38 @@ mod tests {
         static ASKED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     }
 
-    /// Connects as `install` does, with the fixture key, noting each device
-    /// that asks its user to allow the key in `ASKED`.
+    /// Phones plugged in by USB, made up: each a name, and the port of a
+    /// device on this computer that stands in for it, or none for a phone
+    /// the system won't open.
+    struct Phones(Vec<(&'static str, Option<u16>)>);
+
+    impl UsbDevices for Phones {
+        fn names(&self) -> Vec<String> {
+            self.0.iter().map(|(name, _)| (*name).to_owned()).collect()
+        }
+
+        fn open(&self, name: &str, timeout: Duration) -> anyhow::Result<Box<dyn Stream>> {
+            assert_eq!(timeout, TIMEOUT);
+            let (_, port) = self.0.iter().find(|(phone, _)| *phone == name).unwrap();
+            let port = port.context("another program is using it")?;
+            Ok(Box::new(TcpStream::connect(("127.0.0.1", port)).unwrap()))
+        }
+    }
+
+    /// Connects as `install` does, with no phone plugged in.
     fn connect(device: Option<&str>, emulator_ports: &[u16]) -> anyhow::Result<Device> {
-        Device::connect(device, emulator_ports, &KEY, &|name| {
+        connect_with(device, emulator_ports, &Phones(Vec::new()))
+    }
+
+    /// Connects as `install` does, with the fixture key and `phones`
+    /// plugged in, noting each device that asks its user to allow the key
+    /// in `ASKED`.
+    fn connect_with(
+        device: Option<&str>,
+        emulator_ports: &[u16],
+        phones: &Phones,
+    ) -> anyhow::Result<Device> {
+        Device::connect(device, emulator_ports, phones, &KEY, &|name| {
             ASKED.with_borrow_mut(|asked| asked.push(name.to_owned()));
         })
     }
@@ -339,18 +421,70 @@ mod tests {
     }
 
     #[test]
-    fn asks_which_emulator_when_several_are_running() {
+    fn asks_which_device_when_there_are_several() {
         let ((_first, one), (_second, two)) = (listening(), listening());
+        let phone = Phones(vec![("R5CT1234", None)]);
 
-        let error = connect(None, &[one, two]).err().unwrap();
+        let emulators = connect(None, &[one, two]).err().unwrap();
+        let phone_and_emulator = connect_with(None, &[one], &phone).err().unwrap();
 
         assert_eq!(
-            error.to_string(),
+            emulators.to_string(),
             format!(
-                "2 emulators are running (emulator-{}, emulator-{}): name the one to install on with --device",
+                "found 2 devices (emulator-{}, emulator-{}): name the one to install on with --device",
                 one - 1,
                 two - 1
             )
+        );
+        assert_eq!(
+            phone_and_emulator.to_string(),
+            format!(
+                "found 2 devices (R5CT1234, emulator-{}): name the one to install on with --device",
+                one - 1
+            )
+        );
+    }
+
+    #[test]
+    fn installs_on_the_only_phone_plugged_in() {
+        let (listener, port) = listening();
+        let device = serve(listener, exec_device(4096, BANNER, Some(b"Success\n")));
+        let phones = Phones(vec![("R5CT1234", Some(port))]);
+
+        let mut connected = connect_with(None, &[closed()], &phones).unwrap();
+        connected.install(&[7; 100]).unwrap();
+
+        assert_eq!(connected.to_string(), "Pixel 8 (R5CT1234)");
+        drop(connected);
+        assert_eq!(device.join().unwrap(), ["CNXN", "OPEN", "WRTE", "OKAY"]);
+    }
+
+    #[test]
+    fn finds_a_phone_by_its_name() {
+        let (first, one) = listening();
+        let (second, two) = listening();
+        serve(first, exec_device(4096, BANNER, Some(b"Success\n")));
+        serve(second, exec_device(4096, BANNER, Some(b"Success\n")));
+        // A phone without a serial number, which is named by where it's
+        // plugged in, and looks like an address.
+        let phones = Phones(vec![("R5CT1234", Some(one)), ("usb:1-3", Some(two))]);
+
+        let serial = connect_with(Some("R5CT1234"), &[], &phones).unwrap();
+        let port = connect_with(Some("usb:1-3"), &[], &phones).unwrap();
+
+        assert_eq!(serial.serial(), "R5CT1234");
+        assert_eq!(port.serial(), "usb:1-3");
+    }
+
+    #[test]
+    fn says_why_it_couldnt_open_a_phone() {
+        let phones = Phones(vec![("R5CT1234", None)]);
+
+        let error = connect_with(Some("R5CT1234"), &[], &phones).err().unwrap();
+
+        assert_eq!(
+            format!("{error:#}"),
+            "couldn't connect to R5CT1234: another program is using it"
         );
     }
 
@@ -376,8 +510,8 @@ mod tests {
 
         let message = |result: anyhow::Result<Device>| format!("{:#}", result.err().unwrap());
         assert!(message(refused).starts_with(&format!("couldn't reach emulator-{}: ", port - 1)));
-        assert!(message(unknown).starts_with("\"R5CT1234\" isn't a device OmniBuild can reach"));
-        assert!(message(out_of_range).starts_with("\"emulator-65535\" isn't a device"));
+        assert!(message(unknown).starts_with("found no device named \"R5CT1234\": name a phone"));
+        assert!(message(out_of_range).starts_with("found no device named \"emulator-65535\""));
         assert_eq!(
             message(hung_up),
             format!("couldn't connect to 127.0.0.1:{open}: the device closed the connection")

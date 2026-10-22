@@ -42,7 +42,8 @@ pub(super) struct Message {
     data: Vec<u8>,
 }
 
-/// What a connection runs over, such as a TCP socket.
+/// What a connection runs over: a TCP socket, or a phone's ADB interface
+/// over USB.
 pub trait Stream: Read + Write {}
 impl<T: Read + Write> Stream for T {}
 
@@ -212,20 +213,25 @@ impl<'a> Connection<'a> {
 }
 
 /// Sends a message: its header, with the payload's length and checksum,
-/// then the payload.
+/// then the payload. Each ends with a flush: over USB, adbd reads the
+/// header and the payload as transfers of their own, which a flush ends.
+/// Over TCP, flushing does nothing.
 fn send(stream: &mut dyn Write, command: u32, arg0: u32, arg1: u32, data: &[u8]) -> Result<()> {
     let len = u32::try_from(data.len()).expect("payloads are at most 1 MiB");
     let checksum = data
         .iter()
         .fold(0u32, |sum, &byte| sum.wrapping_add(u32::from(byte)));
-    let mut message = Vec::with_capacity(24 + data.len());
-    for word in [command, arg0, arg1, len, checksum, !command] {
-        message.extend(word.to_le_bytes());
-    }
-    message.extend(data);
-    stream
-        .write_all(&message)
-        .and_then(|()| stream.flush())
+    let header: Vec<u8> = [command, arg0, arg1, len, checksum, !command]
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect();
+    // No payload, no transfer: over USB, an empty one would reach adbd as
+    // a zero-length packet where it expects the next header.
+    let parts = [&header[..], data];
+    parts
+        .iter()
+        .filter(|part| !part.is_empty())
+        .try_for_each(|part| stream.write_all(part).and_then(|()| stream.flush()))
         .context("couldn't send to the device")
 }
 
@@ -432,7 +438,8 @@ pub mod tests {
         })
     }
 
-    fn write(stream: &mut impl Write, message: &Message) -> anyhow::Result<()> {
+    /// Sends `message` as a device does, as OmniBuild sends its own.
+    pub fn write(stream: &mut impl Write, message: &Message) -> anyhow::Result<()> {
         send(
             stream,
             message.command,
@@ -442,15 +449,25 @@ pub mod tests {
         )
     }
 
-    /// A device in memory: each message OmniBuild writes, which it writes
-    /// whole, is answered with what `respond` returns for it, and logged.
+    /// Takes the first message from what OmniBuild has written, once it's
+    /// whole: its header, and then its payload if it has one.
+    pub fn take_message(incoming: &mut Vec<u8>) -> Option<Message> {
+        let message = receive(&mut Cursor::new(&incoming)).ok()?;
+        incoming.drain(..24 + message.data.len());
+        Some(message)
+    }
+
+    /// A device in memory: each message OmniBuild writes is answered with
+    /// what `respond` returns for it, and logged.
     struct Device<F> {
         respond: F,
         log: Vec<Message>,
+        /// What OmniBuild has written of a message it hasn't finished.
+        incoming: Vec<u8>,
         outgoing: VecDeque<u8>,
         /// What a read gives when the device has nothing more to say.
         silence: ErrorKind,
-        /// How many more writes succeed.
+        /// How many more messages it takes before writing fails.
         writes_left: usize,
     }
 
@@ -459,6 +476,7 @@ pub mod tests {
             Self {
                 respond,
                 log: Vec::new(),
+                incoming: Vec::new(),
                 outgoing: VecDeque::new(),
                 silence: ErrorKind::UnexpectedEof,
                 writes_left: usize::MAX,
@@ -491,13 +509,15 @@ pub mod tests {
             if self.writes_left == 0 {
                 return Err(ErrorKind::BrokenPipe.into());
             }
-            self.writes_left -= 1;
-            let sent = receive(&mut Cursor::new(buf)).unwrap();
-            // Hanging up leaves nothing more to read.
-            for response in (self.respond)(&sent).into_iter().flatten() {
-                write(&mut self.outgoing, &response).unwrap();
+            self.incoming.extend(buf);
+            if let Some(sent) = take_message(&mut self.incoming) {
+                self.writes_left -= 1;
+                // Hanging up leaves nothing more to read.
+                for response in (self.respond)(&sent).into_iter().flatten() {
+                    write(&mut self.outgoing, &response).unwrap();
+                }
+                self.log.push(sent);
             }
-            self.log.push(sent);
             Ok(buf.len())
         }
 
@@ -508,7 +528,7 @@ pub mod tests {
 
     /// For a device that never asks its user to allow the key, or whose
     /// asking doesn't matter.
-    fn unasked() {}
+    pub fn unasked() {}
 
     /// A device that answers every message with `messages`.
     fn always(messages: fn() -> Vec<Message>) -> impl Respond {

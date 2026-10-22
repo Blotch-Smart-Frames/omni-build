@@ -707,7 +707,7 @@ fn install_reports_what_went_wrong() {
         ),
         (
             vec!["install", SHELL, "--device", "R5CT1234"],
-            "error: \"R5CT1234\" isn't a device OmniBuild can reach: ".to_owned(),
+            "error: found no device named \"R5CT1234\": ".to_owned(),
         ),
     ];
 
