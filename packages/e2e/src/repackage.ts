@@ -25,6 +25,7 @@ const APP: {
   /** The app's payload folder, relative to app.json. */
   payload: string;
   urlSchemes: string[];
+  webLinks: string[];
   orientation: string;
   android: { permissions: string[]; abis: string[] };
   ios: { usageDescriptions: { NSCameraUsageDescription: string } };
@@ -219,6 +220,9 @@ export const expected = (
         .join(', '),
       abis: [...APP.android.abis].sort().join(', '),
       openedWith: OPEN_URL,
+      // The hosts of the launcher activity's App Links, as aapt2 reads
+      // them, whose website Android verifies.
+      webLinks: APP.webLinks.join(', '),
       // `landscape`, either side up.
       orientation: 'userLandscape',
       // An app bundle is signed with the upload key omni-build created for
@@ -244,10 +248,14 @@ export const expected = (
       signer: SIGNER,
       applicationIdentifier: `${TEAM}.${APP.id}`,
       // What app.json claims, which the profile allows: the push
-      // environment is the profile's, and the keychain group has the
-      // team's prefix in place of $(AppIdentifierPrefix).
+      // environment is the profile's, the associated domains are its shared
+      // web credentials' and then its web links', and the keychain group
+      // has the team's prefix in place of $(AppIdentifierPrefix).
       pushEnvironment: 'development',
-      associatedDomains: 'applinks:e2e.omnibuild.example',
+      associatedDomains: [
+        'webcredentials:e2e.omnibuild.example',
+        ...APP.webLinks.map((host) => `applinks:${host}`),
+      ].join(', '),
       appGroups: 'group.dev.omnibuild.e2e',
       keychainGroups: `${TEAM}.dev.omnibuild.e2e.shared`,
       urlSchemes: APP.urlSchemes.join(', '),

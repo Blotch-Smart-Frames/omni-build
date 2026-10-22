@@ -154,8 +154,9 @@ const playSigningKey = async (log: string) => {
  * Checks an app bundle as Google Play would take an upload: its JAR
  * signature (jarsigner, from the JDK) and its contents (bundletool's
  * validate). Then turns it into the universal APK bundletool makes for
- * any device, which the test installs. Returns that APK and the name on the
- * bundle's signing certificate.
+ * any device, which the test installs. Returns that APK, the name on the
+ * bundle's signing certificate, and the hosts of the APK's App Links,
+ * which bundletool compiled from the bundle's manifest.
  */
 const verifyBundle = async ({
   app,
@@ -196,18 +197,70 @@ const verifyBundle = async ({
   await run('unzip', ['-o', apks, 'universal.apk', '-d', artifactsDir], {
     log,
   });
+  const installable = path.join(artifactsDir, 'universal.apk');
   return {
-    installable: path.join(artifactsDir, 'universal.apk'),
+    installable,
     signer: signed.stdout.match(/- Signed by "(.*)"/)?.[1],
+    webLinks: await webLinks(installable, log),
   };
+};
+
+/**
+ * The hosts of an APK's App Links, as aapt2 reads its manifest: those of
+ * each intent filter that asks Android to verify them with the website
+ * (autoVerify). The same on every device, which Android 12 and later only
+ * list, and Android before 6.0 ignore.
+ */
+const webLinks = async (apk: string, log: string) => {
+  const tree = await run(
+    path.join(buildTools(), 'aapt2'),
+    ['dump', 'xmltree', '--file', 'AndroidManifest.xml', apk],
+    { log },
+  );
+  return appLinkHosts(tree.stdout);
+};
+
+/**
+ * The hosts in aapt2's dump of a manifest, `tree`, of the intent filters
+ * with `android:autoVerify` true. The dump indents what's in an element,
+ * its attributes and children, under it.
+ */
+export const appLinkHosts = (tree: string) => {
+  const lines = tree.split('\n');
+  const indent = (line: string) => line.length - line.trimStart().length;
+  const hosts: string[] = [];
+  lines.forEach((line, index) => {
+    if (!line.trimStart().startsWith('E: intent-filter')) {
+      return;
+    }
+    const inside: string[] = [];
+    for (const next of lines.slice(index + 1)) {
+      if (indent(next) <= indent(line)) {
+        break;
+      }
+      inside.push(next);
+    }
+    if (
+      inside.some((next) =>
+        next.trimEnd().endsWith(':autoVerify(0x010104ee)=true'),
+      )
+    ) {
+      hosts.push(
+        ...inside.flatMap(
+          (next) => next.match(/:host\(0x01010028\)="([^"]*)"/)?.[1] ?? [],
+        ),
+      );
+    }
+  });
+  return hosts.join(', ') || undefined;
 };
 
 /**
  * Checks an APK with the Android SDK's own tools, which OmniBuild's users
  * never need, as Google Play would: every stored entry aligned for the
  * device to map it (zipalign), and every signature valid (apksigner, which
- * needs Java). Returns the name on the signing certificate. An app bundle
- * goes to verifyBundle.
+ * needs Java). Returns the name on the signing certificate, and the hosts
+ * of its App Links. An app bundle goes to verifyBundle.
  */
 const verify: Platform['verify'] = async ({ app, artifactsDir, log }) => {
   if (app.endsWith('.aab')) {
@@ -239,6 +292,7 @@ const verify: Platform['verify'] = async ({ app, artifactsDir, log }) => {
   // tools 36, "V3.0 Signer: certificate DN: ..." from 37.
   return {
     signer: verified.stdout.match(/^.*Signer\b.*certificate DN: (.*)$/m)?.[1],
+    webLinks: await webLinks(app, log),
   };
 };
 

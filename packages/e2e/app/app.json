@@ -6,6 +6,7 @@
   "icon": "icon.png",
   "payload": "payload",
   "urlSchemes": ["omnibuild-e2e"],
+  "webLinks": ["e2e.omnibuild.example"],
   "orientation": "landscape",
   "android": {
     "permissions": ["INTERNET", "VIBRATE"],
@@ -18,7 +19,7 @@
     "entitlements": {
       "aps-environment": "development",
       "com.apple.developer.associated-domains": [
-        "applinks:e2e.omnibuild.example"
+        "webcredentials:e2e.omnibuild.example"
       ],
       "com.apple.security.application-groups": ["group.dev.omnibuild.e2e"],
       "keychain-access-groups": [

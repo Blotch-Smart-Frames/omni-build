@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { android } from './android.ts';
+import { android, appLinkHosts } from './android.ts';
 import { type RunResult, run } from './process.ts';
 import { omniBuild } from './repackage.ts';
 
@@ -186,6 +186,45 @@ describe('the Android SDK', () => {
   });
 });
 
+/**
+ * aapt2's dump of a manifest with an App Links filter for two hosts, and
+ * a filter for a URL scheme, which isn't one.
+ */
+const APP_LINKS = [
+  'N: android=http://schemas.android.com/apk/res/android (line=1)',
+  '  E: manifest (line=1)',
+  '      E: application (line=2)',
+  '          E: activity (line=3)',
+  '              E: intent-filter (line=3)',
+  '                A: http://schemas.android.com/apk/res/android:autoVerify(0x010104ee)=true',
+  '                  E: action (line=3)',
+  '                    A: http://schemas.android.com/apk/res/android:name(0x01010003)="android.intent.action.VIEW" (Raw: "android.intent.action.VIEW")',
+  '                  E: data (line=3)',
+  '                    A: http://schemas.android.com/apk/res/android:scheme(0x01010027)="https" (Raw: "https")',
+  '                  E: data (line=3)',
+  '                    A: http://schemas.android.com/apk/res/android:host(0x01010028)="tides.example.com" (Raw: "tides.example.com")',
+  '                  E: data (line=3)',
+  '                    A: http://schemas.android.com/apk/res/android:host(0x01010028)="*.example.com" (Raw: "*.example.com")',
+  '              E: intent-filter (line=3)',
+  '                  E: data (line=3)',
+  '                    A: http://schemas.android.com/apk/res/android:scheme(0x01010027)="tides" (Raw: "tides")',
+  '                  E: data (line=3)',
+  '                    A: http://schemas.android.com/apk/res/android:host(0x01010028)="forecast" (Raw: "forecast")',
+  '          E: provider (line=9)',
+].join('\n');
+
+describe('appLinkHosts', () => {
+  it("reads the hosts of the intent filters Android verifies, from aapt2's dump", () => {
+    expect(appLinkHosts(APP_LINKS)).toBe('tides.example.com, *.example.com');
+  });
+
+  it('has none without an App Links filter', () => {
+    expect(appLinkHosts(APP_LINKS.replace('autoVerify', 'other'))).toBe(
+      undefined,
+    );
+  });
+});
+
 describe('verify', () => {
   describe('an APK', () => {
     const buildTools = path.join('/sdk', 'build-tools');
@@ -226,10 +265,12 @@ describe('verify', () => {
         expect(vi.mocked(run).mock.calls.map(([command]) => command)).toEqual([
           path.join(buildTools, '36.0.0', 'zipalign'),
           path.join(buildTools, '36.0.0', 'apksigner'),
+          path.join(buildTools, '36.0.0', 'aapt2'),
         ]);
         expect(commands()).toEqual([
           'zipalign -c -P 16 4 app.apk',
           'apksigner verify --verbose --print-certs app.apk',
+          'aapt2 dump xmltree --file AndroidManifest.xml app.apk',
         ]);
       },
     );
@@ -274,22 +315,35 @@ describe('verify', () => {
     };
 
     beforeEach(() => {
-      existing.add(BUNDLETOOL_JAR).add(KEYSTORE);
+      existing
+        .add(BUNDLETOOL_JAR)
+        .add(KEYSTORE)
+        .add(path.join('/sdk', 'build-tools'));
+      vi.mocked(readdirSync).mockReturnValue(['36.0.0'] as never);
       respond = (program) => (program === 'jarsigner' ? verified : undefined);
     });
 
     it('checks it as Google Play would, and makes the APK to install from it', async () => {
+      respond = (program) =>
+        program === 'jarsigner'
+          ? verified
+          : program === 'aapt2'
+            ? { stdout: APP_LINKS }
+            : undefined;
+
       const result = await android.verify({ ...artifacts, app: 'app.aab' });
 
       expect(result).toEqual({
         installable: path.join('artifacts', 'universal.apk'),
         signer: 'CN=Me, O=Us',
+        webLinks: 'tides.example.com, *.example.com',
       });
       expect(commands()).toEqual([
         'jarsigner -verify -verbose -certs app.aab',
         `java -jar ${BUNDLETOOL_JAR} validate --bundle=app.aab`,
         `java -jar ${BUNDLETOOL_JAR} build-apks --bundle=app.aab --output=${path.join('artifacts', 'universal.apks')} --mode=universal --overwrite --ks=${KEYSTORE} --ks-pass=pass:android --ks-key-alias=play`,
         `unzip -o ${path.join('artifacts', 'universal.apks')} universal.apk -d artifacts`,
+        `aapt2 dump xmltree --file AndroidManifest.xml ${path.join('artifacts', 'universal.apk')}`,
       ]);
     });
 

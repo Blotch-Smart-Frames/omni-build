@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::{App, Orientation, check_url_scheme};
+use crate::config::{App, Orientation, check_url_scheme, check_web_link};
 
 // The android: attributes OmniBuild reads or rewrites, by resource ID, as
 // Android itself identifies them (android.R.attr).
@@ -24,6 +24,8 @@ const BACKUP_AGENT: u32 = 0x0101_027f;
 const PARENT_ACTIVITY_NAME: u32 = 0x0101_03a7;
 const ROUND_ICON: u32 = 0x0101_052c;
 const SCHEME: u32 = 0x0101_0027;
+const HOST: u32 = 0x0101_0028;
+const AUTO_VERIFY: u32 = 0x0101_04ee;
 const SCREEN_ORIENTATION: u32 = 0x0101_001e;
 
 /// The elements that start an app's components. The intent filters
@@ -58,6 +60,7 @@ pub enum Value {
     Int(u32),
     /// A resource's ID, like `@string/app_name`'s.
     Reference(u32),
+    Boolean(bool),
     Other,
 }
 
@@ -81,17 +84,25 @@ pub struct Attribute {
 pub struct Element<'a> {
     pub name: &'a str,
     /// Each attribute's name and resource ID, such as `android:name`'s, and
-    /// its value, a string.
-    pub attributes: Vec<(&'a str, u32, &'a str)>,
+    /// its value.
+    pub attributes: Vec<(&'a str, u32, Literal<'a>)>,
     pub children: Vec<Element<'a>>,
 }
 
+/// The value of an attribute to add, as it would be written in the source
+/// XML: text, or a boolean, which aapt2 compiles to one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Literal<'a> {
+    Text(&'a str),
+    Boolean(bool),
+}
+
 impl<'a> Element<'a> {
-    /// An element with one android: attribute, and nothing in it.
+    /// An element with one android: attribute, text, and nothing in it.
     pub fn with(name: &'a str, attribute: (&'a str, u32), value: &'a str) -> Self {
         Self {
             name,
-            attributes: vec![(attribute.0, attribute.1, value)],
+            attributes: vec![(attribute.0, attribute.1, Literal::Text(value))],
             children: Vec::new(),
         }
     }
@@ -158,6 +169,9 @@ pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
     }
     if let Some(schemes) = &app.url_schemes {
         add_url_schemes(manifest, schemes)?;
+    }
+    if let Some(hosts) = &app.web_links {
+        add_web_links(manifest, hosts)?;
     }
     if let Some(orientation) = app.orientation {
         set_orientation(manifest, orientation)?;
@@ -287,29 +301,79 @@ fn add_url_schemes(manifest: &mut dyn Document, schemes: &[String]) -> Result<()
     for scheme in schemes {
         check_url_scheme(scheme)?;
     }
-    let has = |scheme: &str| {
-        manifest.attributes().iter().any(|attribute| {
-            attribute.element == "data"
-                && attribute.resource_id == Some(SCHEME)
-                && attribute.value == Value::String(scheme.to_owned())
-        })
-    };
-    let mut data: Vec<Element> = Vec::new();
-    for scheme in schemes {
-        if !has(scheme) && !data.iter().any(|element| element.attributes[0].2 == scheme) {
-            data.push(Element::with("data", ("scheme", SCHEME), scheme));
-        }
-    }
-    if data.is_empty() {
+    let schemes = missing(manifest, SCHEME, schemes);
+    if schemes.is_empty() {
         return Ok(());
     }
+    let data = schemes
+        .iter()
+        .map(|scheme| Element::with("data", ("scheme", SCHEME), scheme))
+        .collect();
+    add_link_filter(manifest, Vec::new(), data)
+}
+
+/// Has the launcher activity open the links to the app's website on these
+/// hosts, as App Links: an intent filter for those the manifest doesn't
+/// have already, which asks Android 6.0 and later to check with the
+/// website that it vouches for the app (`autoVerify`, against its
+/// `/.well-known/assetlinks.json`). Google requires such a filter to have
+/// both http and https, and no other scheme.
+fn add_web_links(manifest: &mut dyn Document, hosts: &[String]) -> Result<()> {
+    for host in hosts {
+        check_web_link(host)?;
+    }
+    let hosts = missing(manifest, HOST, hosts);
+    if hosts.is_empty() {
+        return Ok(());
+    }
+    let data = ["http", "https"]
+        .into_iter()
+        .map(|scheme| Element::with("data", ("scheme", SCHEME), scheme))
+        .chain(
+            hosts
+                .iter()
+                .map(|host| Element::with("data", ("host", HOST), host)),
+        )
+        .collect();
+    add_link_filter(
+        manifest,
+        vec![("autoVerify", AUTO_VERIFY, Literal::Boolean(true))],
+        data,
+    )
+}
+
+/// Those of `values` that no `<data>` element in the manifest has as its
+/// attribute `id` already, each once.
+fn missing<'a>(manifest: &dyn Document, id: u32, values: &'a [String]) -> Vec<&'a str> {
+    let mut missing: Vec<&str> = Vec::new();
+    for value in values {
+        let has = manifest.attributes().iter().any(|attribute| {
+            attribute.element == "data"
+                && attribute.resource_id == Some(id)
+                && attribute.value == Value::String(value.clone())
+        });
+        if !has && !missing.contains(&value.as_str()) {
+            missing.push(value);
+        }
+    }
+    missing
+}
+
+/// Adds an intent filter to the launcher activity for the app's links,
+/// from a browser too (`BROWSABLE`), with `attributes`, and `data`, the
+/// elements that say which links.
+fn add_link_filter<'a>(
+    manifest: &mut dyn Document,
+    attributes: Vec<(&'a str, u32, Literal<'a>)>,
+    data: Vec<Element<'a>>,
+) -> Result<()> {
     let launcher = launchers(manifest)
         .first()
         .map(|launcher| launcher.node)
         .context("it has no launcher activity to open the app's URLs")?;
     let filter = Element {
         name: "intent-filter",
-        attributes: Vec::new(),
+        attributes,
         children: [
             Element::with("action", ("name", NAME), VIEW),
             Element::with("category", ("name", NAME), DEFAULT),
@@ -544,8 +608,8 @@ mod tests {
     use anyhow::Result;
 
     use super::{
-        AUTHORITIES, BACKUP_AGENT, Changes, Document, Element, NAME, PERMISSION, SCHEME,
-        SCREEN_ORIENTATION, TARGET_ACTIVITY, VERSION_CODE, Value as Typed, rewrite,
+        AUTHORITIES, AUTO_VERIFY, BACKUP_AGENT, Changes, Document, Element, HOST, NAME, PERMISSION,
+        SCHEME, SCREEN_ORIENTATION, TARGET_ACTIVITY, VERSION_CODE, Value as Typed, rewrite,
     };
     use crate::android::binary_xml::BinaryXml;
     use crate::android::binary_xml::tests::{
@@ -977,6 +1041,78 @@ mod tests {
         assert_eq!(none, shell);
     }
 
+    fn with_web_links(hosts: &[&str]) -> App {
+        App {
+            web_links: Some(hosts.iter().map(|&host| host.to_owned()).collect()),
+            ..App::default()
+        }
+    }
+
+    #[test]
+    fn opens_the_apps_website_links_in_the_launcher_activity() {
+        let shell = shell_manifest();
+
+        let manifest = rewritten(
+            &shell,
+            &with_web_links(&["tides.example.com", "*.example.com", "tides.example.com"]),
+        )
+        .unwrap()
+        .0;
+        let again = rewritten(&manifest, &with_web_links(&["*.example.com"]))
+            .unwrap()
+            .0;
+        let none = rewritten(&shell, &with_web_links(&[])).unwrap().0;
+
+        let xml = BinaryXml::parse(&manifest).unwrap();
+        let activity = xml
+            .attributes()
+            .iter()
+            .position(|attribute| attribute.element == "activity")
+            .unwrap();
+        let filter: Vec<(&str, &str, &Typed)> = xml.attributes()[activity..]
+            .iter()
+            .filter(|attribute| {
+                matches!(
+                    attribute.resource_id,
+                    Some(AUTO_VERIFY | NAME | SCHEME | HOST)
+                )
+            })
+            .take(9)
+            .map(|attribute| {
+                (
+                    attribute.element.as_str(),
+                    attribute.name.as_str(),
+                    &attribute.value,
+                )
+            })
+            .collect();
+        let text = |value: &str| Typed::String(value.to_owned());
+        assert_eq!(
+            filter,
+            [
+                (
+                    "activity",
+                    "name",
+                    &text("dev.omnibuild.shell.MainActivity")
+                ),
+                ("intent-filter", "autoVerify", &Typed::Boolean(true)),
+                ("action", "name", &text("android.intent.action.VIEW")),
+                ("category", "name", &text("android.intent.category.DEFAULT")),
+                (
+                    "category",
+                    "name",
+                    &text("android.intent.category.BROWSABLE")
+                ),
+                ("data", "scheme", &text("http")),
+                ("data", "scheme", &text("https")),
+                ("data", "host", &text("tides.example.com")),
+                ("data", "host", &text("*.example.com")),
+            ]
+        );
+        assert_eq!(again, manifest);
+        assert_eq!(none, shell);
+    }
+
     #[test]
     fn says_why_it_cant_open_the_apps_urls() {
         let no_launcher = binary_xml(&[(
@@ -990,8 +1126,18 @@ mod tests {
                 "\"My App\" isn't a URL scheme",
             ),
             (
-                no_launcher,
+                no_launcher.clone(),
                 with_schemes(&["myapp"]),
+                "it has no launcher activity to open the app's URLs",
+            ),
+            (
+                shell_manifest(),
+                with_web_links(&["https://tides.example.com"]),
+                "\"https://tides.example.com\" isn't a website's host",
+            ),
+            (
+                no_launcher,
+                with_web_links(&["tides.example.com"]),
                 "it has no launcher activity to open the app's URLs",
             ),
         ];

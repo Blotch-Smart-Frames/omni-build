@@ -36,6 +36,12 @@ pub struct App {
     /// added to any the shell has.
     #[serde(rename = "urlSchemes")]
     pub url_schemes: Option<Vec<String>>,
+    /// The hosts of the app's website whose links open the app, such as
+    /// `tides.example.com`, once the website vouches for the app: App Links
+    /// on Android, an intent filter on the launcher activity, and universal
+    /// links on iOS, an associated domain the app claims.
+    #[serde(rename = "webLinks")]
+    pub web_links: Option<Vec<String>>,
     /// Which way up the app's screen is on phones: the launcher activity's
     /// on Android, and the iPhone's orientations in `Info.plist` on iOS.
     pub orientation: Option<Orientation>,
@@ -167,11 +173,11 @@ pub enum Entitlement {
 /// RFC 3986's letters, in lowercase, which Android matches as they are
 /// while the RFC and iOS ignore their case. The web's are refused: a web
 /// link opens an app only once the app and its website vouch for each
-/// other (App Links, universal links).
+/// other (App Links, universal links), which `webLinks` sets up.
 pub fn check_url_scheme(scheme: &str) -> Result<()> {
     if matches!(scheme, "http" | "https") {
         bail!(
-            "\"{scheme}\" is the web's: web links open an app as universal links, for which an iOS app claims its website's domain in ios.entitlements, and App Links, which OmniBuild doesn't set up yet"
+            "\"{scheme}\" is the web's: give the website's host in webLinks instead, whose links open the app once the website vouches for it"
         );
     }
     let mut characters = scheme.chars();
@@ -186,6 +192,31 @@ pub fn check_url_scheme(scheme: &str) -> Result<()> {
     if !valid {
         bail!(
             "\"{scheme}\" isn't a URL scheme: it needs a lowercase letter first, then lowercase letters, digits, +, - or ., such as myapp"
+        );
+    }
+    Ok(())
+}
+
+/// Checks a host of the app's website the app config gives, as both
+/// platforms take one: a domain name in lowercase, which Android matches
+/// as it is, such as `tides.example.com`, or `*.example.com` for its
+/// subdomains. No scheme, port or path: the website's own files say which
+/// of its paths open the app.
+pub fn check_web_link(host: &str) -> Result<()> {
+    let name = host.strip_prefix("*.").unwrap_or(host);
+    let labels: Vec<&str> = name.split('.').collect();
+    let valid = labels.len() > 1
+        && labels.iter().all(|label| {
+            (1..=63).contains(&label.len())
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.chars().all(|character| {
+                    character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+                })
+        });
+    if !valid {
+        bail!(
+            "\"{host}\" isn't a website's host: give its domain name in lowercase, such as tides.example.com, or *.example.com for its subdomains, with no scheme or path"
         );
     }
     Ok(())
@@ -226,7 +257,7 @@ mod tests {
 
     use super::{
         AdaptiveIcon, Android, App, Background, Bundle, Entitlement, Ios, Orientation,
-        check_url_scheme,
+        check_url_scheme, check_web_link,
     };
 
     #[test]
@@ -237,6 +268,7 @@ mod tests {
             &path,
             r#"{ "id": "dev.example.app", "name": "Example", "version": "2.5.0", "build": 42,
                 "icon": "icon.png", "payload": "bundle", "urlSchemes": ["example"],
+                "webLinks": ["example.com"],
                 "orientation": "landscape",
                 "android": {
                     "adaptiveIcon": { "foreground": "front.png", "background": "back.png", "monochrome": "mono.png" },
@@ -270,6 +302,7 @@ mod tests {
                 icon: Some(dir.path().join("icon.png")),
                 payload: Some(dir.path().join("bundle")),
                 url_schemes: Some(vec!["example".to_owned()]),
+                web_links: Some(vec!["example.com".to_owned()]),
                 orientation: Some(Orientation::Landscape),
                 android: Android {
                     adaptive_icon: Some(AdaptiveIcon {
@@ -363,6 +396,34 @@ mod tests {
 
             assert!(
                 error.starts_with(&format!("\"{scheme}\" {message}")),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn takes_a_websites_hosts_as_both_platforms_do() {
+        for host in ["tides.example.com", "*.example.com", "a-1.example", "x.y"] {
+            check_web_link(host).unwrap();
+        }
+        let long = format!("{}.example.com", "a".repeat(64));
+        for host in [
+            "Tides.example.com",
+            "https://tides.example.com",
+            "tides.example.com/forecast",
+            "tides.example.com:8443",
+            "localhost",
+            "-tides.example.com",
+            "tides-.example.com",
+            "tides..example.com",
+            "*.",
+            "",
+            &long,
+        ] {
+            let error = check_web_link(host).unwrap_err().to_string();
+
+            assert!(
+                error.starts_with(&format!("\"{host}\" isn't a website's host")),
                 "{error}"
             );
         }

@@ -39,14 +39,17 @@ export interface Platform<Started = unknown, Device = unknown> {
     options: Artifacts & { buildDir: string; outDir: string },
   ): Promise<string[]>;
   /**
-   * Checks an app with the platform's own tools, and returns what signed it
-   * and, when it isn't the app itself, the file to install. For an app the
-   * device can't run, it returns what the app's files say (`report`),
-   * which is checked in place of what the app would report.
+   * Checks an app with the platform's own tools, and returns what signed it,
+   * what else they read in it that the app can't report the same way on
+   * every device (an Android app's `webLinks`), and, when it isn't the app
+   * itself, the file to install. For an app the device can't run, it
+   * returns what the app's files say (`report`), which is checked in place
+   * of what the app would report.
    */
   verify(options: DeviceOptions & { app: string }): Promise<{
     installable?: string;
     signer?: string;
+    webLinks?: string;
     report?: Record<string, unknown>;
   }>;
   /** Starts the device booting, without waiting for it. */
