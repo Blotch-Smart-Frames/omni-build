@@ -292,6 +292,127 @@ fn creates_an_upload_key_and_signs_with_it() {
     assert!(apk.windows(10).any(|window| window == b"Upload key"));
 }
 
+/// A certificate for the key in the request at `path`, as Apple issues
+/// one, as DER: from an authority of the test's own, in a name of its own.
+fn issue(path: &Path) -> Vec<u8> {
+    use rsa::pkcs1v15::{Signature, SigningKey};
+    use rsa::rand_core::OsRng;
+    use rsa::sha2::Sha256;
+    use x509_cert::builder::{Builder, CertificateBuilder, Profile};
+    use x509_cert::der::{DecodePem, Encode};
+    use x509_cert::request::CertReq;
+    use x509_cert::serial_number::SerialNumber;
+    use x509_cert::time::Validity;
+
+    let request = CertReq::from_pem(fs::read(path).unwrap()).unwrap();
+    let authority = SigningKey::<Sha256>::new(rsa::RsaPrivateKey::new(&mut OsRng, 2048).unwrap());
+    CertificateBuilder::new(
+        Profile::Leaf {
+            issuer: "CN=Test Developer Relations,O=Apple Inc.".parse().unwrap(),
+            enable_key_agreement: false,
+            enable_key_encipherment: false,
+        },
+        SerialNumber::from(1u32),
+        Validity::from_now(std::time::Duration::from_secs(3600)).unwrap(),
+        "CN=Apple Distribution: Jane Doe (ABCDE12345),OU=ABCDE12345"
+            .parse()
+            .unwrap(),
+        request.info.public_key,
+        &authority,
+    )
+    .and_then(Builder::build::<Signature>)
+    .unwrap()
+    .to_der()
+    .unwrap()
+}
+
+#[test]
+fn requests_an_apple_certificate_and_signs_with_it_once_issued() {
+    let home = tempfile::tempdir().unwrap();
+    let keystore = home.path().join("keys/apple.p12");
+    let keystore = keystore.to_str().unwrap();
+    let request = home.path().join("keys/apple.certSigningRequest");
+    let certificate = home.path().join("distribution.cer");
+    let apk = home.path().join("app.apk");
+    let run = |args: &[&str]| omni_build_with_password(home.path(), Some("a password"), args);
+    let repackage = [
+        "repackage",
+        SHELL,
+        "--signing-key",
+        keystore,
+        "--out",
+        apk.to_str().unwrap(),
+    ];
+
+    let requested = run(&["key", "request", keystore, "--subject", "CN=Jane Doe key"]);
+    let unissued = run(&repackage);
+    fs::write(&certificate, issue(&request)).unwrap();
+    let imported = run(&[
+        "key",
+        "import",
+        keystore,
+        certificate.to_str().unwrap(),
+        "--json",
+    ]);
+    let signed = run(&repackage);
+
+    assert!(requested.status.success(), "{}", stderr(&requested));
+    assert!(
+        String::from_utf8_lossy(&requested.stdout).starts_with(&format!(
+            "Created a key for an Apple signing certificate in {keystore}, and its certificate signing request in {}.",
+            request.display()
+        ))
+    );
+    assert_eq!(unissued.status.code(), Some(1));
+    assert!(stderr(&unissued).ends_with(
+        "apple.p12 has a key but no certificate yet: add the one Apple issues for its request with `omni-build key import`\n"
+    ));
+    assert!(imported.status.success(), "{}", stderr(&imported));
+    // Parsed, since JSON escapes the backslashes of a path on Windows.
+    let event: serde_json::Value = serde_json::from_slice(&imported.stdout).unwrap();
+    assert_eq!(event["event"], "certificate-imported");
+    assert_eq!(event["path"], keystore);
+    assert_eq!(
+        event["certificate"],
+        "Apple Distribution: Jane Doe (ABCDE12345)"
+    );
+    assert!(signed.status.success(), "{}", stderr(&signed));
+    let apk = fs::read(apk).unwrap();
+    assert!(
+        apk.windows(18)
+            .any(|window| window == b"Apple Distribution")
+    );
+}
+
+#[test]
+fn reports_an_apple_key_it_cant_request_or_import() {
+    let home = tempfile::tempdir().unwrap();
+    let cases = [
+        (
+            Some("a password"),
+            vec!["key", "request", "apple.p12", "--subject", "not a name"],
+            "error: \"not a name\" isn't a distinguished name, such as \"CN=Jane Doe key, emailAddress=jane@example.com\"\n",
+        ),
+        (
+            None,
+            vec!["key", "request", "apple.p12"],
+            "error: the keystore's password (OMNI_BUILD_KEY_PASSWORD) has to have at least 6 characters",
+        ),
+        (
+            Some("a password"),
+            vec!["key", "import", "missing.p12", "distribution.cer"],
+            "error: couldn't read the keystore missing.p12: ",
+        ),
+    ];
+
+    for (password, args, message) in cases {
+        let output = omni_build_with_password(home.path(), password, &args);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(stderr(&output).starts_with(message), "{}", stderr(&output));
+    }
+}
+
 #[test]
 fn reports_an_upload_key_it_cant_create_or_read() {
     let home = tempfile::tempdir().unwrap();

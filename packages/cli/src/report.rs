@@ -17,6 +17,17 @@ pub enum Event {
     /// A key OmniBuild created: one it needed and the user had none of, or
     /// the upload key `key create` makes.
     KeyCreated { key: KeyKind, path: String },
+    /// `key request` created a key for an Apple signing certificate, and
+    /// the request Apple issues the certificate for.
+    KeyRequested { path: String, request: String },
+    /// `key import` added a certificate to the keystore with its key.
+    CertificateImported {
+        path: String,
+        /// The certificate's name, as Keychain Access shows it.
+        certificate: String,
+        /// When it expires, as a date (`2027-10-22`).
+        expires: String,
+    },
     /// The device asks its user whether to allow this computer, and
     /// OmniBuild waits for the answer.
     Authorizing { device: String },
@@ -93,6 +104,16 @@ impl Event {
             } => format!(
                 "Created an upload key in {path}, with the alias \"{ALIAS}\". Keep it, and its password, safe: Google Play only takes updates signed with it, unless you ask Google to reset it."
             ),
+            Self::KeyRequested { path, request } => format!(
+                "Created a key for an Apple signing certificate in {path}, and its certificate signing request in {request}. Upload the request at developer.apple.com, under Certificates, then add the certificate Apple issues: omni-build key import {path} <certificate>"
+            ),
+            Self::CertificateImported {
+                path,
+                certificate,
+                expires,
+            } => format!(
+                "Added \"{certificate}\", which expires on {expires}, to {path}. Sign iOS apps with it with --signing-key, and a provisioning profile that allows it."
+            ),
             Self::Authorizing { device } => format!(
                 "{device} asks whether to allow debugging from this computer. Allow it on the device."
             ),
@@ -119,7 +140,9 @@ impl Event {
             Self::KeyCreated {
                 key: KeyKind::Upload,
                 ..
-            } | Self::Repackaged { .. }
+            } | Self::KeyRequested { .. }
+                | Self::CertificateImported { .. }
+                | Self::Repackaged { .. }
                 | Self::Installed { .. }
         )
     }
@@ -218,6 +241,27 @@ mod tests {
             Line::Stdout(line) if line.starts_with("Created an upload key in key.p12, with the alias \"upload\".")
         ));
         assert_eq!(
+            people.line(&Event::KeyRequested {
+                path: "apple.p12".to_owned(),
+                request: "apple.certSigningRequest".to_owned(),
+            }),
+            Line::Stdout(
+                "Created a key for an Apple signing certificate in apple.p12, and its certificate signing request in apple.certSigningRequest. Upload the request at developer.apple.com, under Certificates, then add the certificate Apple issues: omni-build key import apple.p12 <certificate>"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            people.line(&Event::CertificateImported {
+                path: "apple.p12".to_owned(),
+                certificate: "Apple Distribution: Jane Doe (ABCDE12345)".to_owned(),
+                expires: "2027-10-22".to_owned(),
+            }),
+            Line::Stdout(
+                "Added \"Apple Distribution: Jane Doe (ABCDE12345)\", which expires on 2027-10-22, to apple.p12. Sign iOS apps with it with --signing-key, and a provisioning profile that allows it."
+                    .to_owned()
+            )
+        );
+        assert_eq!(
             people.line(&key(KeyKind::Debug)),
             Line::Stderr("Created a debug key for signing Android apps: key.p12".to_owned())
         );
@@ -255,6 +299,16 @@ mod tests {
                     .to_owned()
             )
         );
+        assert!(matches!(
+            tools.line(&Event::CertificateImported {
+                path: "apple.p12".to_owned(),
+                certificate: "Apple Distribution: Jane Doe (ABCDE12345)".to_owned(),
+                expires: "2027-10-22".to_owned(),
+            }),
+            Line::Stdout(line) if line.starts_with(
+                r#"{"event":"certificate-imported","path":"apple.p12","certificate":"Apple Distribution: Jane Doe (ABCDE12345)","expires":"2027-10-22","message":"Added "#
+            )
+        ));
         // A model the device doesn't say is left out.
         assert_eq!(
             tools.line(&Event::Installed {
