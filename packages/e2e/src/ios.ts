@@ -236,26 +236,36 @@ const verify: Platform['verify'] = ({ app, log }) =>
       watchApp &&
       (await bundleIn(path.join(watchApp.folder, 'PlugIns'), '.appex'));
     const own = await entitlements(bundle);
-    // What iOS shows in English: the strings the app has in English, over
-    // Info.plist's.
-    const strings = path.join(bundle, 'en.lproj', 'InfoPlist.strings');
-    const shown = existsSync(strings)
-      ? {
-          ...info,
-          ...JSON.parse(
+    // A translation of the app's Info.plist, in its language's folder, if
+    // the app has one.
+    const translation = async (
+      language: string,
+    ): Promise<Record<string, string | undefined>> => {
+      const strings = path.join(
+        bundle,
+        `${language}.lproj`,
+        'InfoPlist.strings',
+      );
+      return existsSync(strings)
+        ? JSON.parse(
             (
               await run('plutil', ['-convert', 'json', '-o', '-', strings], {
                 log,
               })
             ).stdout,
-          ),
-        }
-      : info;
+          )
+        : {};
+    };
+    // What iOS shows in English: the strings the app has in English, over
+    // Info.plist's.
+    const shown = { ...info, ...(await translation('en')) };
     return {
       signer,
       report: {
         id: info.CFBundleIdentifier,
         name: shown.CFBundleDisplayName ?? shown.CFBundleName,
+        // The name on an iPhone set to French.
+        frenchName: (await translation('fr')).CFBundleDisplayName,
         cameraUsage: shown.NSCameraUsageDescription,
         version: info.CFBundleShortVersionString,
         build: info.CFBundleVersion,

@@ -194,7 +194,9 @@ pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
     // The application's label is the name under the icon, unless the
     // launcher activity, or its intent filter, has a label of its own.
     let mut name_resources = Vec::new();
-    if let Some(name) = &app.name {
+    app.check_translations()?;
+    let translated = !app.translated_names().is_empty();
+    if app.name.is_some() || translated {
         let index =
             find(manifest, "application", LABEL).context("it has no android:label to change")?;
         let launcher_labels = launchers(manifest)
@@ -204,7 +206,12 @@ pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
             match manifest.attributes()[index].value {
                 Value::Reference(id) if name_resources.contains(&id) => {}
                 Value::Reference(id) => name_resources.push(id),
-                _ => manifest.set_string(index, name),
+                // Text has no translations, which only a resource has.
+                _ if translated => bail!(
+                    "its android:label is text, and the app's name in other languages needs a string resource there, such as @string/app_name, which has a value in each language"
+                ),
+                // Without translations, there's a name.
+                _ => manifest.set_string(index, app.name.as_deref().unwrap_or_default()),
             }
         }
     }
@@ -605,6 +612,8 @@ fn absolute(class: &str, package: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use anyhow::Result;
 
     use super::{
@@ -616,7 +625,7 @@ mod tests {
         Value::{Int, Ref, Str},
         binary_xml, names, shell_manifest, texts,
     };
-    use crate::config::{AdaptiveIcon, Android, App, Background, Orientation};
+    use crate::config::{AdaptiveIcon, Android, App, Background, Orientation, Translation};
 
     /// The manifest rewritten, and the changes elsewhere.
     fn rewritten(data: &[u8], app: &App) -> Result<(Vec<u8>, Changes)> {
@@ -920,6 +929,35 @@ mod tests {
         assert_eq!(in_resources.0, shell);
         assert_eq!(in_manifest.1.name_resources, Vec::<u32>::new());
         assert_eq!(value(&in_manifest.0, "application", "label"), "Repackaged");
+        // Translations of the name alone: in the label's resources, which
+        // text isn't.
+        let translated = App {
+            translations: Some(BTreeMap::from([(
+                "fr".to_owned(),
+                Translation {
+                    name: Some("Reconditionnée".to_owned()),
+                },
+            )])),
+            ..App::default()
+        };
+        assert_eq!(
+            rewritten(&shell, &translated).unwrap().1.name_resources,
+            [0x7f03_0000, 0x7f03_0001]
+        );
+        assert!(
+            rewritten(&literal, &translated)
+                .unwrap_err()
+                .to_string()
+                .starts_with("its android:label is text, and the app's name in other languages needs a string resource there")
+        );
+        let mut wrong_tag = translated;
+        wrong_tag.translations = Some(BTreeMap::from([("FR".to_owned(), Translation::default())]));
+        assert!(
+            rewritten(&shell, &wrong_tag)
+                .unwrap_err()
+                .to_string()
+                .starts_with("\"FR\" isn't a language tag")
+        );
     }
 
     #[test]

@@ -38,6 +38,22 @@ pub struct InfoPlist {
 }
 
 impl InfoPlist {
+    /// A translation of an app's Info.plist with only its name, as Xcode
+    /// writes `InfoPlist.strings` into an app: a binary property list.
+    pub fn translated_name(name: &str) -> Self {
+        let mut strings = Self {
+            dictionary: Dictionary::new(),
+            binary: true,
+        };
+        strings.set_display_name(name);
+        strings
+    }
+
+    /// Gives the app the name under its icon.
+    pub fn set_display_name(&mut self, name: &str) {
+        self.set("CFBundleDisplayName", name);
+    }
+
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let value = Value::from_reader(Cursor::new(bytes)).context("it isn't a property list")?;
         let dictionary = value
@@ -128,7 +144,7 @@ impl InfoPlist {
         // is what iOS shows only when there's no display name, so it can
         // stay the shell's.
         if let Some(name) = &app.name {
-            self.set("CFBundleDisplayName", name);
+            self.set_display_name(name);
         }
         if let Some(version) = &app.version {
             if !is_version(version) {

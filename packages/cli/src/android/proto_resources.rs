@@ -2,10 +2,13 @@
 //! `ResourceTable` message (`Resources.proto`), which bundletool compiles
 //! into each APK's `resources.arsc`, as Google Play does.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Result, bail};
 
 use super::protobuf::{self, Field, Wire};
 use super::resources::{Resources, Value};
+use crate::config::closest;
 
 // Field numbers in Resources.proto, along the path from the table to a
 // value: a package, its types, their entries, each entry's value in each
@@ -14,7 +17,11 @@ const TABLE_PACKAGE: u32 = 2;
 const PACKAGE_TYPE: u32 = 3;
 const TYPE_ENTRY: u32 = 3;
 const ENTRY_CONFIG_VALUE: u32 = 6;
+const CONFIG_VALUE_CONFIG: u32 = 1;
 const CONFIG_VALUE_VALUE: u32 = 2;
+/// A `Configuration`'s language, as a BCP 47 tag, such as `pt-BR`
+/// (Configuration.proto).
+const CONFIGURATION_LOCALE: u32 = 3;
 const VALUE_ITEM: u32 = 4;
 const VALUE_COMPOUND: u32 = 5;
 const ITEM_STRING: u32 = 2;
@@ -123,6 +130,21 @@ impl ProtoResources {
     }
 }
 
+/// An `Item` that's a string.
+fn string_item(value: &str) -> Vec<u8> {
+    let string = protobuf::encode(&[Field::bytes(STRING_VALUE, value)]);
+    protobuf::encode(&[Field::bytes(ITEM_STRING, string)])
+}
+
+/// A `Value` that's this string.
+fn string_value(mut value: Vec<Field>, string: &str) -> Result<Vec<u8>> {
+    if protobuf::bytes(&value, VALUE_COMPOUND).is_some() {
+        bail!("the resource holds several values, not one");
+    }
+    protobuf::set(&mut value, Field::bytes(VALUE_ITEM, string_item(string)));
+    Ok(protobuf::encode(&value))
+}
+
 impl Resources for ProtoResources {
     fn values(&self, id: u32) -> Result<Vec<Value>> {
         let mut values = Vec::new();
@@ -170,8 +192,7 @@ impl Resources for ProtoResources {
     }
 
     fn set_string(&mut self, id: u32, value: &str) -> Result<()> {
-        let string = protobuf::encode(&[Field::bytes(STRING_VALUE, value)]);
-        self.set_item(id, &protobuf::encode(&[Field::bytes(ITEM_STRING, string)]))
+        self.set_item(id, &string_item(value))
     }
 
     fn set_file(&mut self, id: u32, path: &str) -> Result<()> {
@@ -188,6 +209,66 @@ impl Resources for ProtoResources {
         )
     }
 
+    /// Each configuration is a `ConfigValue` in the resource's `Entry`, so
+    /// a language gets one of its own there.
+    fn translate(&mut self, id: u32, names: &BTreeMap<&str, &str>) -> Result<()> {
+        let ids = [id >> 24, (id >> 16) & 0xff, id & 0xffff];
+        let mut found = false;
+        let data = edit(
+            &self.data,
+            &[TABLE_PACKAGE, PACKAGE_TYPE, TYPE_ENTRY],
+            &ids,
+            &mut |entry| {
+                found = true;
+                // The languages with a configuration of their own already.
+                let mut plain = Vec::new();
+                for config_value in entry.iter_mut().filter_map(|field| match &mut field.value {
+                    Wire::Bytes(bytes) if field.number == ENTRY_CONFIG_VALUE => Some(bytes),
+                    _ => None,
+                }) {
+                    let mut fields = protobuf::decode(config_value)?;
+                    let config = protobuf::message(&fields, CONFIG_VALUE_CONFIG);
+                    let tag = protobuf::string(&config, CONFIGURATION_LOCALE).unwrap_or_default();
+                    if tag.is_empty() {
+                        continue;
+                    }
+                    if let Some(name) = closest(names, &tag) {
+                        let value = protobuf::message(&fields, CONFIG_VALUE_VALUE);
+                        let value = string_value(value, name)?;
+                        protobuf::set(&mut fields, Field::bytes(CONFIG_VALUE_VALUE, value));
+                        *config_value = protobuf::encode(&fields);
+                    }
+                    // A language and nothing else.
+                    if config.len() == 1 {
+                        plain.push(tag);
+                    }
+                }
+                for (&tag, &name) in names {
+                    if !plain.iter().any(|plain| plain == tag) {
+                        let config = [Field::bytes(CONFIGURATION_LOCALE, tag)];
+                        let config_value = [
+                            Field::bytes(CONFIG_VALUE_CONFIG, protobuf::encode(&config)),
+                            Field::bytes(
+                                CONFIG_VALUE_VALUE,
+                                protobuf::encode(&[Field::bytes(VALUE_ITEM, string_item(name))]),
+                            ),
+                        ];
+                        entry.push(Field::bytes(
+                            ENTRY_CONFIG_VALUE,
+                            protobuf::encode(&config_value),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        if !found {
+            bail!("it has no resource {id:#010x}");
+        }
+        self.data = data;
+        Ok(())
+    }
+
     fn to_bytes(&self) -> Vec<u8> {
         self.data.clone()
     }
@@ -195,9 +276,11 @@ impl Resources for ProtoResources {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::ProtoResources;
     use crate::android::proto_xml::tests::SHELL_AAB;
-    use crate::android::protobuf::{Field, encode};
+    use crate::android::protobuf::{self, Field, encode};
     use crate::android::resources::tests::strings;
     use crate::android::resources::{Resources, Value};
     use crate::zip;
@@ -315,6 +398,151 @@ mod tests {
             colored.values(0x7f02_0001).unwrap(),
             vec![Value::Color(0xff00_ff00); 3]
         );
+    }
+
+    /// A `ConfigValue` for a language, perhaps with another qualifier too,
+    /// and a value.
+    fn config_value(tag: &str, landscape: bool, value: Vec<u8>) -> Vec<u8> {
+        let mut config = vec![Field::bytes(3, tag)];
+        if landscape {
+            config.push(Field::varint(15, 2));
+        }
+        encode(&[Field::bytes(1, encode(&config)), Field::bytes(2, value)])
+    }
+
+    /// A `Value` that's a string.
+    fn string_value(text: &str) -> Vec<u8> {
+        encode(&[Field::bytes(
+            4,
+            encode(&[Field::bytes(2, encode(&[Field::bytes(1, text)]))]),
+        )])
+    }
+
+    /// A table with package 0x7f, type 2, and entry 1 holding these
+    /// `ConfigValue`s.
+    fn table_of(config_values: &[Vec<u8>]) -> Vec<u8> {
+        let id = |id: u64| encode(&[Field::varint(1, id)]);
+        let mut entry = vec![Field::bytes(1, id(1))];
+        entry.extend(
+            config_values
+                .iter()
+                .map(|config_value| Field::bytes(6, config_value.clone())),
+        );
+        let kind = encode(&[Field::bytes(1, id(2)), Field::bytes(3, encode(&entry))]);
+        let package = encode(&[Field::bytes(1, id(0x7f)), Field::bytes(3, kind)]);
+        encode(&[Field::bytes(2, package)])
+    }
+
+    /// Each of the resource's values' language, if it has one, and its
+    /// string.
+    fn translations(table: &ProtoResources, id: u32) -> Vec<(Option<String>, String)> {
+        let mut found = Vec::new();
+        super::edit(
+            &table.data,
+            &[2, 3, 3, 6],
+            &[id >> 24, (id >> 16) & 0xff, id & 0xffff],
+            &mut |config_value| {
+                let config = protobuf::message(config_value, 1);
+                let item = protobuf::message(&protobuf::message(config_value, 2), 4);
+                let string = protobuf::string(&protobuf::message(&item, 2), 1);
+                found.push((protobuf::string(&config, 3), string.unwrap()));
+                Ok(())
+            },
+        )
+        .unwrap();
+        found
+    }
+
+    #[test]
+    fn translates_the_shells_name_into_languages_it_hasnt() {
+        let mut table = ProtoResources::parse(&shell_table()).unwrap();
+
+        table
+            .translate(
+                APP_NAME,
+                &BTreeMap::from([("fr", "Marées"), ("zh-Hans", "潮汐")]),
+            )
+            .unwrap();
+
+        let table = ProtoResources::parse(&table.to_bytes()).unwrap();
+        // Each in a configuration with the language and nothing else, as
+        // aapt2 writes one for values-fr.
+        assert_eq!(
+            translations(&table, APP_NAME),
+            [
+                (None, "OmniBuild Shell".to_owned()),
+                (Some("fr".to_owned()), "Marées".to_owned()),
+                (Some("zh-Hans".to_owned()), "潮汐".to_owned()),
+            ]
+        );
+        assert!(
+            table
+                .to_bytes()
+                .windows(6)
+                .any(|window| window == b"\x0a\x04\x1a\x02fr")
+        );
+        assert_eq!(strings(&table, 0x7f03_0001).unwrap(), ["OmniBuild Shell"]);
+    }
+
+    #[test]
+    fn translates_into_the_languages_the_table_has() {
+        // The default value, French, French in Canada in landscape, and
+        // German.
+        let mut table = ProtoResources::parse(&table_of(&[
+            encode(&[Field::bytes(2, string_value("Shell"))]),
+            config_value("fr", false, string_value("Shell")),
+            config_value("fr-CA", true, string_value("Shell")),
+            config_value("de", false, string_value("Shell")),
+        ]))
+        .unwrap();
+
+        table
+            .translate(
+                0x7f02_0001,
+                &BTreeMap::from([("fr", "Nom"), ("es", "Nombre")]),
+            )
+            .unwrap();
+
+        // French's own, and Canada's, the closest to it; German has no
+        // translation, and Spanish one of its own, the only one added.
+        let found = |tag: Option<&str>, text: &str| (tag.map(str::to_owned), text.to_owned());
+        assert_eq!(
+            translations(&table, 0x7f02_0001),
+            [
+                found(None, "Shell"),
+                found(Some("fr"), "Nom"),
+                found(Some("fr-CA"), "Nom"),
+                found(Some("de"), "Shell"),
+                found(Some("es"), "Nombre"),
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_a_translation_it_cant_make() {
+        let compound = encode(&[Field::bytes(5, [])]);
+        let names = BTreeMap::from([("fr", "Nom")]);
+
+        for (data, id, message) in [
+            (
+                table_of(&[config_value("fr", false, compound)]),
+                0x7f02_0001,
+                "the resource holds several values, not one",
+            ),
+            (
+                table_of(&[vec![0xff]]),
+                0x7f02_0001,
+                "it's corrupt or cut short",
+            ),
+            (table_of(&[]), 0x7f02_0002, "it has no resource 0x7f020002"),
+        ] {
+            let mut table = ProtoResources::parse(&data).unwrap();
+
+            assert_eq!(
+                table.translate(id, &names).unwrap_err().to_string(),
+                message
+            );
+        }
     }
 
     #[test]

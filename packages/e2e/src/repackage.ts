@@ -27,6 +27,7 @@ const APP: {
   urlSchemes: string[];
   webLinks: string[];
   orientation: string;
+  translations: { fr: { name: string } };
   android: { permissions: string[]; abis: string[] };
   ios: {
     usageDescriptions: { NSCameraUsageDescription: string };
@@ -200,6 +201,8 @@ export const expected = (
   const values = {
     id: APP.id,
     name: APP.name,
+    // In French, which the shell has no name in.
+    frenchName: APP.translations.fr.name,
     version: APP.version,
     build: String(APP.build),
     payload: readFileSync(
@@ -247,6 +250,7 @@ export const expected = (
     return {
       id: values.id,
       name: values.name,
+      frenchName: values.frenchName,
       version: values.version,
       build: values.build,
       payload: values.payload,

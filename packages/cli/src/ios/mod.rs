@@ -23,7 +23,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use image::RgbaImage;
 
-use crate::config::{App, Entitlement, check_web_link};
+use crate::config::{App, Entitlement, check_web_link, closest};
 use crate::key::SigningKey;
 use crate::zip::{self, Entry, Method};
 use crate::{icon, payload};
@@ -135,7 +135,9 @@ pub fn repackage(
     for host in app.web_links.iter().flatten() {
         check_web_link(host)?;
     }
+    app.check_translations()?;
     drop_translations(&mut entries, bundle, &InfoPlist::translated(app))?;
+    translate_name(&mut entries, bundle, &app.translated_names())?;
     if let Some(path) = &app.icon {
         set_icon(&mut entries, bundle, &shell, &icon::load(path)?)?;
     }
@@ -251,27 +253,74 @@ fn drop_translations(entries: &mut [Entry], bundle: &str, keys: &[&str]) -> Resu
     if keys.is_empty() {
         return Ok(());
     }
-    for entry in entries.iter_mut().filter(|entry| {
-        entry
-            .name
-            .strip_prefix(bundle)
-            .and_then(|file| file.strip_suffix(".lproj/InfoPlist.strings"))
-            .is_some_and(|language| !language.contains('/'))
-    }) {
-        let mut strings = entry
-            .contents()
-            .and_then(|contents| InfoPlist::parse(&contents))
-            .with_context(|| {
-                format!(
-                    "couldn't read the shell's {}: OmniBuild reads the property lists Xcode makes of .strings files, not the text it makes them from",
-                    entry.name
-                )
-            })?;
+    for entry in entries
+        .iter_mut()
+        .filter(|entry| translation_language(&entry.name, bundle).is_some())
+    {
+        let mut strings = read_translation(entry)?;
         if strings.remove(keys) {
             *entry = entry.with_contents(&strings.to_bytes());
         }
     }
     Ok(())
+}
+
+/// Gives the app its name in other languages, by language tag, in the
+/// translations of its Info.plist: in each the shell has, the name that
+/// fits its language best, if any, and in a translation of its own, the
+/// name of each language the shell has none in. iOS shows the name in the
+/// language it runs in, of those the app has a folder for.
+fn translate_name(
+    entries: &mut Vec<Entry>,
+    bundle: &str,
+    names: &BTreeMap<&str, &str>,
+) -> Result<()> {
+    let mut translated = Vec::new();
+    for entry in entries.iter_mut() {
+        let Some(language) = translation_language(&entry.name, bundle) else {
+            continue;
+        };
+        // A folder named as Xcode once named them, such as zh_CN, is a
+        // language tag all the same.
+        let tag = language.replace('_', "-");
+        if let Some(name) = closest(names, &tag) {
+            let mut strings = read_translation(entry)?;
+            strings.set_display_name(name);
+            *entry = entry.with_contents(&strings.to_bytes());
+        }
+        translated.push(tag);
+    }
+    for (&tag, &name) in names {
+        if !translated.iter().any(|language| language == tag) {
+            let strings = InfoPlist::translated_name(name).to_bytes();
+            let file = format!("{bundle}{tag}.lproj/InfoPlist.strings");
+            entries.push(Entry::new(&file, Method::Deflated, &strings));
+        }
+    }
+    Ok(())
+}
+
+/// The language of a translation of the app's Info.plist, if `file` is
+/// one: `InfoPlist.strings` in the language's folder, such as `fr.lproj`,
+/// in the app's bundle, rather than a folder in it.
+fn translation_language<'a>(file: &'a str, bundle: &str) -> Option<&'a str> {
+    file.strip_prefix(bundle)
+        .and_then(|file| file.strip_suffix(".lproj/InfoPlist.strings"))
+        .filter(|language| !language.contains('/'))
+}
+
+/// A translation of the shell's Info.plist, which Xcode writes as a
+/// property list, as it does Info.plist.
+fn read_translation(entry: &Entry) -> Result<InfoPlist> {
+    entry
+        .contents()
+        .and_then(|contents| InfoPlist::parse(&contents))
+        .with_context(|| {
+            format!(
+                "couldn't read the shell's {}: OmniBuild reads the property lists Xcode makes of .strings files, not the text it makes them from",
+                entry.name
+            )
+        })
 }
 
 /// Gives the app its icon: in the asset catalog, where the home screen and
@@ -346,7 +395,7 @@ pub mod tests {
     use super::profile::tests::{PROFILE, app_clip_profile};
     use super::{InfoPlist, bundle, claims, repackage};
     use crate::bytes::Reader;
-    use crate::config::{App, Bundle, Entitlement, Ios};
+    use crate::config::{App, Bundle, Entitlement, Ios, Translation};
     use crate::icon::tests::solid_png;
     use crate::zip::{self, Entry, Method, tests::SHELL, tests::entry};
 
@@ -686,6 +735,126 @@ pub mod tests {
         );
     }
 
+    /// The app's name in these languages.
+    fn translated(name: Option<&str>, names: &[(&str, &str)]) -> App {
+        App {
+            name: name.map(str::to_owned),
+            translations: Some(
+                names
+                    .iter()
+                    .map(|&(tag, name)| {
+                        (
+                            tag.to_owned(),
+                            Translation {
+                                name: Some(name.to_owned()),
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+            ..App::default()
+        }
+    }
+
+    /// The name in a translation of the app's Info.plist.
+    fn translated_name(entries: &[Entry], language: &str) -> Option<String> {
+        let file = file(
+            entries,
+            &format!("OmniBuildShell.app/{language}.lproj/InfoPlist.strings"),
+        );
+        let strings = Value::from_reader(Cursor::new(file.contents().unwrap())).unwrap();
+        strings
+            .as_dictionary()
+            .unwrap()
+            .get("CFBundleDisplayName")
+            .and_then(Value::as_string)
+            .map(str::to_owned)
+    }
+
+    #[test]
+    fn gives_the_app_its_name_in_other_languages() {
+        let app = translated(
+            Some("Tides"),
+            &[
+                ("en", "Tides in English"),
+                ("fr", "Marées"),
+                ("zh-Hans", "潮汐"),
+            ],
+        );
+
+        let entries = zip::read(
+            &repackage(
+                zip::read(SHELL_APP).unwrap(),
+                "OmniBuildShell.app/",
+                &app,
+                None,
+                &[],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        // In the shell's English, and in a translation of their own for the
+        // languages the shell hasn't, as Xcode writes them.
+        assert_eq!(
+            translated_name(&entries, "en").as_deref(),
+            Some("Tides in English")
+        );
+        assert_eq!(translated_name(&entries, "fr").as_deref(), Some("Marées"));
+        assert_eq!(
+            translated_name(&entries, "zh-Hans").as_deref(),
+            Some("潮汐")
+        );
+        let french = file(&entries, "OmniBuildShell.app/fr.lproj/InfoPlist.strings");
+        assert!(french.contents().unwrap().starts_with(b"bplist00"));
+        // Sealed with the rest.
+        let seal = file(&entries, "OmniBuildShell.app/_CodeSignature/CodeResources")
+            .contents()
+            .unwrap();
+        assert!(
+            seal.windows(26)
+                .any(|window| window == b"fr.lproj/InfoPlist.strings")
+        );
+
+        // A shell's language with no translation of the name of its own, or
+        // one close enough, shows the app's.
+        let british = translated(Some("Tides"), &[("en-GB", "Tides, innit")]);
+        let entries = zip::read(
+            &repackage(
+                zip::read(SHELL_APP).unwrap(),
+                "OmniBuildShell.app/",
+                &british,
+                None,
+                &[],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(translated_name(&entries, "en"), None);
+        assert_eq!(
+            translated_name(&entries, "en-GB").as_deref(),
+            Some("Tides, innit")
+        );
+        // Its own, in a language close to one the shell has, in a folder
+        // named as Xcode once named them.
+        let mut shell = zip::read(SHELL_APP).unwrap();
+        for entry in &mut shell {
+            entry.name = entry.name.replace("/en.lproj/", "/en_GB.lproj/");
+        }
+        let entries =
+            zip::read(&repackage(shell, "OmniBuildShell.app/", &british, None, &[]).unwrap())
+                .unwrap();
+        assert_eq!(
+            translated_name(&entries, "en_GB").as_deref(),
+            Some("Tides, innit")
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.name.contains("/en-GB.lproj/"))
+        );
+    }
+
     #[test]
     fn reports_translations_and_purpose_strings_it_cant_use() {
         // As Xcode writes a .strings file when told to keep it as text.
@@ -708,7 +877,24 @@ pub mod tests {
             ..App::default()
         };
 
-        let unread = repackage(text, "OmniBuildShell.app/", &named, None, &[]).unwrap_err();
+        let unread = repackage(text.clone(), "OmniBuildShell.app/", &named, None, &[]).unwrap_err();
+        // A translation it can't read in a language the app has a name in.
+        let untranslated = repackage(
+            text,
+            "OmniBuildShell.app/",
+            &translated(None, &[("en", "Tides")]),
+            None,
+            &[],
+        )
+        .unwrap_err();
+        let wrong_tag = repackage(
+            zip::read(SHELL_APP).unwrap(),
+            "OmniBuildShell.app/",
+            &translated(None, &[("en_GB", "Tides")]),
+            None,
+            &[],
+        )
+        .unwrap_err();
         let unset = repackage(
             zip::read(SHELL_APP).unwrap(),
             "OmniBuildShell.app/",
@@ -718,9 +904,16 @@ pub mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(
-            unread.to_string(),
-            "couldn't read the shell's OmniBuildShell.app/en.lproj/InfoPlist.strings: OmniBuild reads the property lists Xcode makes of .strings files, not the text it makes them from"
+        for error in [unread, untranslated] {
+            assert_eq!(
+                error.to_string(),
+                "couldn't read the shell's OmniBuildShell.app/en.lproj/InfoPlist.strings: OmniBuild reads the property lists Xcode makes of .strings files, not the text it makes them from"
+            );
+        }
+        assert!(
+            wrong_tag
+                .to_string()
+                .starts_with("\"en_GB\" isn't a language tag OmniBuild takes")
         );
         assert_eq!(
             format!("{unset:#}"),
