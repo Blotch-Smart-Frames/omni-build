@@ -23,7 +23,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use image::RgbaImage;
 
-use crate::config::App;
+use crate::config::{App, Entitlement, check_web_link};
 use crate::key::SigningKey;
 use crate::zip::{self, Entry, Method};
 use crate::{icon, payload};
@@ -51,6 +51,9 @@ const APP_CLIPS: &str = "AppClips/";
 /// (`dev.example.app.watchkitapp`, as Xcode names one), it names the app it
 /// pairs with, and it has a signature of its own.
 const WATCH: &str = "Watch/";
+/// The domains whose links open the app, and what else it shares with
+/// them, as `applinks:tides.example.com`.
+const ASSOCIATED_DOMAINS: &str = "com.apple.developer.associated-domains";
 
 /// The folder in the shell's entries that holds the app, if it's an iOS
 /// app: `Name.app/`, in a zipped `.app`, or `Payload/Name.app/`, in an
@@ -129,6 +132,9 @@ pub fn repackage(
             nested.join(", ")
         );
     }
+    for host in app.web_links.iter().flatten() {
+        check_web_link(host)?;
+    }
     drop_translations(&mut entries, bundle, &InfoPlist::translated(app))?;
     if let Some(path) = &app.icon {
         set_icon(&mut entries, bundle, &shell, &icon::load(path)?)?;
@@ -146,36 +152,56 @@ pub fn repackage(
 }
 
 /// What the app and the bundles nested in it claim, by their IDs: the
-/// app, described by `info`, what `ios.entitlements` gives, and each
-/// bundle, what `ios.bundles` gives it.
-fn claims<'a>(info: &InfoPlist, app: &'a App) -> BTreeMap<String, Claims<'a>> {
+/// app, described by `info`, what `ios.entitlements` gives, and the
+/// domains of `webLinks`, and each bundle, what `ios.bundles` gives it.
+fn claims(info: &InfoPlist, app: &App) -> BTreeMap<String, Claims> {
     let id = info.id().unwrap_or_default();
-    let own = app.ios.entitlements.as_ref().map(|entitlements| {
-        (
+    let mut claims = BTreeMap::new();
+    let mut own = app.ios.entitlements.clone();
+    let mut sources: Vec<&str> = own.iter().map(|_| "ios.entitlements").collect();
+    if let Some(hosts) = &app.web_links {
+        // Universal links, among any other associated domains the app
+        // claims, such as its shared web credentials'.
+        let claimed = own
+            .get_or_insert_default()
+            .entry(ASSOCIATED_DOMAINS.to_owned())
+            .or_insert_with(|| Entitlement::Strings(Vec::new()));
+        if let Entitlement::String(domain) = claimed {
+            let domain = std::mem::take(domain);
+            *claimed = Entitlement::Strings(vec![domain]);
+        }
+        // Not if it's a boolean, which the profile refuses.
+        if let Entitlement::Strings(domains) = claimed {
+            for host in hosts {
+                let domain = format!("applinks:{host}");
+                if !domains.contains(&domain) {
+                    domains.push(domain);
+                }
+            }
+        }
+        sources.push("webLinks");
+    }
+    if let Some(entitlements) = own {
+        claims.insert(
             id.to_owned(),
             Claims {
-                source: "ios.entitlements".to_owned(),
+                source: sources.join(" and "),
                 entitlements,
             },
-        )
-    });
-    let nested = app
-        .ios
-        .bundles
-        .iter()
-        .flatten()
-        .filter_map(|(suffix, bundle)| {
-            bundle.entitlements.as_ref().map(|entitlements| {
-                (
-                    format!("{id}.{suffix}"),
-                    Claims {
-                        source: format!("ios.bundles.{suffix}.entitlements"),
-                        entitlements,
-                    },
-                )
-            })
-        });
-    own.into_iter().chain(nested).collect()
+        );
+    }
+    for (suffix, bundle) in app.ios.bundles.iter().flatten() {
+        if let Some(entitlements) = &bundle.entitlements {
+            claims.insert(
+                format!("{id}.{suffix}"),
+                Claims {
+                    source: format!("ios.bundles.{suffix}.entitlements"),
+                    entitlements: entitlements.clone(),
+                },
+            );
+        }
+    }
+    claims
 }
 
 /// Gives each app extension, App Clip and watch app in the shell, and each
@@ -318,7 +344,7 @@ pub mod tests {
     use super::asset_catalog::tests::icon_bitmap;
     use super::code_signature::tests::{blobs, identity};
     use super::profile::tests::{PROFILE, app_clip_profile};
-    use super::{InfoPlist, bundle, repackage};
+    use super::{InfoPlist, bundle, claims, repackage};
     use crate::bytes::Reader;
     use crate::config::{App, Bundle, Entitlement, Ios};
     use crate::icon::tests::solid_png;
@@ -1068,6 +1094,133 @@ pub mod tests {
         assert!(format!("{device:#}").starts_with(names), "{device:#}");
         assert!(format!("{simulator:#}").starts_with(names), "{simulator:#}");
         assert!(nothing.is_ok());
+    }
+
+    #[test]
+    fn claims_the_domains_of_its_website_links_among_its_others() {
+        let info = InfoPlist::parse(&shell_info_plist()).unwrap();
+        let claimed = |domains: Option<Entitlement>, hosts: Option<&[&str]>| {
+            let app = App {
+                web_links: hosts.map(|hosts| hosts.iter().map(|&host| host.to_owned()).collect()),
+                ios: Ios {
+                    entitlements: domains.map(|domains| {
+                        [("com.apple.developer.associated-domains".to_owned(), domains)].into()
+                    }),
+                    ..Ios::default()
+                },
+                ..App::default()
+            };
+            claims(&info, &app)
+                .into_iter()
+                .map(|(id, claims)| {
+                    (
+                        id,
+                        claims.source,
+                        claims
+                            .entitlements
+                            .get("com.apple.developer.associated-domains")
+                            .cloned(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let strings = |strings: &[&str]| {
+            Some(Entitlement::Strings(
+                strings.iter().map(|&string| string.to_owned()).collect(),
+            ))
+        };
+        let tides = ["tides.example.com", "tides.example.com"];
+        let app = "dev.omnibuild.shell".to_owned();
+
+        assert_eq!(
+            claimed(None, Some(&tides)),
+            [(
+                app.clone(),
+                "webLinks".to_owned(),
+                strings(&["applinks:tides.example.com"])
+            )]
+        );
+        // After those the app claims itself, once each.
+        assert_eq!(
+            claimed(
+                strings(&[
+                    "webcredentials:tides.example.com",
+                    "applinks:tides.example.com"
+                ]),
+                Some(&["tides.example.com", "*.example.com"])
+            ),
+            [(
+                app.clone(),
+                "ios.entitlements and webLinks".to_owned(),
+                strings(&[
+                    "webcredentials:tides.example.com",
+                    "applinks:tides.example.com",
+                    "applinks:*.example.com"
+                ])
+            )]
+        );
+        assert_eq!(
+            claimed(
+                Some(Entitlement::String(
+                    "webcredentials:tides.example.com".to_owned()
+                )),
+                Some(&tides)
+            ),
+            [(
+                app.clone(),
+                "ios.entitlements and webLinks".to_owned(),
+                strings(&[
+                    "webcredentials:tides.example.com",
+                    "applinks:tides.example.com"
+                ])
+            )]
+        );
+        // Not domains, which the profile refuses.
+        assert_eq!(
+            claimed(Some(Entitlement::Boolean(true)), Some(&tides)),
+            [(
+                app.clone(),
+                "ios.entitlements and webLinks".to_owned(),
+                Some(Entitlement::Boolean(true))
+            )]
+        );
+        assert_eq!(claimed(None, None), []);
+    }
+
+    #[test]
+    fn checks_its_website_links_hosts_and_domains() {
+        let app = |host: &str| App {
+            web_links: Some(vec![host.to_owned()]),
+            ..App::default()
+        };
+
+        // The test profile allows no associated domains.
+        let device = repackage(
+            zip::read(SHELL_IPA).unwrap(),
+            "Payload/OmniBuildShell.app/",
+            &app("tides.example.com"),
+            Some(&identity()),
+            &[PROFILE.to_vec()],
+        )
+        .unwrap_err();
+        let simulator = repackage(
+            zip::read(SHELL_APP).unwrap(),
+            "OmniBuildShell.app/",
+            &app("https://tides.example.com"),
+            None,
+            &[],
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            format!("{device:#}"),
+            "the provisioning profile for dev.omnibuild.shell doesn't allow com.apple.developer.associated-domains, which it claims in webLinks: turn the capability on for its App ID, and make the profile again"
+        );
+        assert!(
+            format!("{simulator:#}")
+                .starts_with("\"https://tides.example.com\" isn't a website's host"),
+            "{simulator:#}"
+        );
     }
 
     #[test]

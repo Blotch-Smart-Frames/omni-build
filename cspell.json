@@ -43,6 +43,7 @@
     "applinks",
     "ARGB",
     "arsc",
+    "assetlinks",
     "assetutil",
     "avdmanager",
     "bundletool",
@@ -94,6 +95,7 @@
     "worktrees",
     "Xcodes",
     "xcrun",
+    "xmltree",
     "zipalign"
   ]
 }

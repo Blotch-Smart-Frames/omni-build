@@ -99,6 +99,7 @@ describe('expected', () => {
         'android.permission.INTERNET, android.permission.VIBRATE, dev.omnibuild.e2e.app.permission.SHELL',
       abis: 'arm64-v8a, x86_64',
       openedWith: 'omnibuild-e2e://report',
+      webLinks: 'e2e.omnibuild.example',
       orientation: 'userLandscape',
       signer: 'CN=OmniBuild Debug, O=OmniBuild',
     });
@@ -134,7 +135,8 @@ describe('expected', () => {
       signer: 'OmniBuild E2E',
       applicationIdentifier: 'OMNIBUILD0.dev.omnibuild.e2e.app',
       pushEnvironment: 'development',
-      associatedDomains: 'applinks:e2e.omnibuild.example',
+      associatedDomains:
+        'webcredentials:e2e.omnibuild.example, applinks:e2e.omnibuild.example',
       appGroups: 'group.dev.omnibuild.e2e',
       keychainGroups: 'OMNIBUILD0.dev.omnibuild.e2e.shared',
       urlSchemes: 'omnibuild-e2e',

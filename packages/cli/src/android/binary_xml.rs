@@ -18,7 +18,7 @@
 use anyhow::{Context, Result, bail};
 
 use super::chunk::{Chunk, chunks};
-use super::manifest::{Attribute, Document, Element, Value};
+use super::manifest::{Attribute, Document, Element, Literal, Value};
 use super::string_pool::StringPool;
 use crate::bytes::Reader;
 
@@ -44,6 +44,7 @@ const TYPE_REFERENCE: u8 = 0x01;
 const TYPE_STRING: u8 = 0x03;
 const TYPE_INT_DEC: u8 = 0x10;
 const TYPE_INT_HEX: u8 = 0x11;
+const TYPE_INT_BOOLEAN: u8 = 0x12;
 
 pub struct BinaryXml {
     pool: StringPool,
@@ -107,6 +108,7 @@ impl BinaryXml {
                             }
                             (TYPE_INT_DEC | TYPE_INT_HEX, value) => Value::Int(value),
                             (TYPE_REFERENCE, id) => Value::Reference(id),
+                            (TYPE_INT_BOOLEAN, value) => Value::Boolean(value != 0),
                             _ => Value::Other,
                         };
                         attributes.push(Attribute {
@@ -207,12 +209,24 @@ impl BinaryXml {
         out.extend([0; 6]);
         for (attribute, id, value) in attributes {
             let attribute_name = self.attribute_name(attribute, id);
-            let string = self.pool.add(value);
-            for field in [namespace, attribute_name, string] {
+            // As aapt2 compiles each: a string kept as its raw value too, and
+            // true as every bit set, with no raw value.
+            let (raw, data_type, data) = match value {
+                Literal::Text(text) => {
+                    let string = self.pool.add(text);
+                    (string, TYPE_STRING, string)
+                }
+                Literal::Boolean(boolean) => (
+                    NO_STRING,
+                    TYPE_INT_BOOLEAN,
+                    if boolean { u32::MAX } else { 0 },
+                ),
+            };
+            for field in [namespace, attribute_name, raw] {
                 out.extend(field.to_le_bytes());
             }
-            out.extend([8, 0, 0, TYPE_STRING]);
-            out.extend(string.to_le_bytes());
+            out.extend([8, 0, 0, data_type]);
+            out.extend(data.to_le_bytes());
         }
         let size = u32_of(out.len() - start);
         out[start + 4..start + 8].copy_from_slice(&size.to_le_bytes());
@@ -501,7 +515,9 @@ pub mod tests {
         BinaryXml, CDATA, NO_STRING, START_ELEMENT, TYPE_INT_DEC, TYPE_INT_HEX, TYPE_REFERENCE,
         TYPE_STRING, chunks, node,
     };
-    use crate::android::manifest::{Attribute, Document, Element as Added, Value as Typed};
+    use crate::android::manifest::{
+        Attribute, Document, Element as Added, Literal, Value as Typed,
+    };
     use crate::android::string_pool::tests::empty;
     use crate::bytes::Reader;
     use crate::zip::{self, tests::SHELL};
@@ -624,7 +640,10 @@ pub mod tests {
             Typed::Reference(0x7f03_0000)
         );
         // android:exported is a boolean.
-        assert_eq!(attribute("activity", "exported").value, Typed::Other);
+        assert_eq!(
+            attribute("activity", "exported").value,
+            Typed::Boolean(true)
+        );
         assert_eq!(xml.to_bytes(), manifest);
     }
 
@@ -734,11 +753,12 @@ pub mod tests {
     }
 
     /// The launcher activity's intent filter for URLs with the scheme
-    /// `scheme`, with attributes the shell's manifest doesn't name.
+    /// `scheme`, with attributes the shell's manifest doesn't name: a
+    /// boolean, false where an App Links filter's is true, and text.
     pub fn url_filter(scheme: &str) -> Added<'_> {
         Added {
             name: "intent-filter",
-            attributes: Vec::new(),
+            attributes: vec![("autoVerify", 0x0101_04ee, Literal::Boolean(false))],
             children: vec![
                 Added::with(
                     "action",
@@ -749,8 +769,8 @@ pub mod tests {
                     name: "data",
                     // Two the manifest doesn't name, out of order.
                     attributes: vec![
-                        ("host", 0x0101_0028, "report"),
-                        ("scheme", 0x0101_0027, scheme),
+                        ("host", 0x0101_0028, Literal::Text("report")),
+                        ("scheme", 0x0101_0027, Literal::Text(scheme)),
                     ],
                     children: Vec::new(),
                 },
@@ -792,6 +812,12 @@ pub mod tests {
             added,
             [
                 (
+                    "intent-filter".to_owned(),
+                    "autoVerify".to_owned(),
+                    Some(0x0101_04ee),
+                    Typed::Boolean(false)
+                ),
+                (
                     "action".to_owned(),
                     "name".to_owned(),
                     Some(0x0101_0003),
@@ -821,9 +847,12 @@ pub mod tests {
         assert_eq!(others, before);
         // The new names follow the resource map's, which gives their IDs.
         let names = xml.resource_map.len();
-        assert_eq!(xml.resource_map[names - 2..], [0x0101_0027, 0x0101_0028]);
         assert_eq!(
-            xml.pool.get(u32::try_from(names - 2).unwrap()).as_deref(),
+            xml.resource_map[names - 3..],
+            [0x0101_0027, 0x0101_0028, 0x0101_04ee]
+        );
+        assert_eq!(
+            xml.pool.get(u32::try_from(names - 3).unwrap()).as_deref(),
             Some("scheme")
         );
     }
@@ -1000,18 +1029,23 @@ pub mod tests {
     }
 
     #[test]
-    fn reads_an_integer_in_hex() {
-        let mut data = binary_xml(&[(
-            "uses-sdk",
-            vec![("minSdkVersion", Some(0x0101_020c), Value::Int(24))],
-        )]);
-        // The record's data type, 5 bytes before the end.
-        let at = data.len() - 5;
-        data[at] = TYPE_INT_HEX;
+    fn reads_an_integer_in_hex_and_values_of_other_types() {
+        let typed = |data_type: u8| {
+            let mut data = binary_xml(&[(
+                "uses-sdk",
+                vec![("minSdkVersion", Some(0x0101_020c), Value::Int(24))],
+            )]);
+            // The record's data type, 5 bytes before the end.
+            let at = data.len() - 5;
+            data[at] = data_type;
+            BinaryXml::parse(&data).unwrap().attributes()[0]
+                .value
+                .clone()
+        };
 
-        let xml = BinaryXml::parse(&data).unwrap();
-
-        assert_eq!(xml.attributes()[0].value, Typed::Int(24));
+        assert_eq!(typed(TYPE_INT_HEX), Typed::Int(24));
+        // A dimension, which OmniBuild has no use for.
+        assert_eq!(typed(0x05), Typed::Other);
     }
 
     #[test]

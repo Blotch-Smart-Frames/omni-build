@@ -9,7 +9,7 @@
 
 use anyhow::{Result, bail};
 
-use super::manifest::{Attribute, Document, Element, Value};
+use super::manifest::{Attribute, Document, Element, Literal, Value};
 use super::protobuf::{self, Field, Wire};
 
 // Field numbers in Resources.proto.
@@ -27,6 +27,7 @@ const ITEM_PRIMITIVE: u32 = 7;
 const REFERENCE_ID: u32 = 2;
 const PRIMITIVE_INT_DECIMAL: u32 = 6;
 const PRIMITIVE_INT_HEX: u32 = 7;
+const PRIMITIVE_BOOLEAN: u32 = 8;
 const ANDROID: &str = "http://schemas.android.com/apk/res/android";
 
 enum Edit {
@@ -75,10 +76,12 @@ fn read(element: &str, node: usize, attribute: &[Field]) -> Attribute {
         )
     } else if let Some(int) = int {
         Value::Int(int)
+    } else if let Some(boolean) = protobuf::uint(&primitive, PRIMITIVE_BOOLEAN) {
+        Value::Boolean(boolean != 0)
     } else if primitive.is_empty() {
         Value::String(protobuf::string(attribute, ATTRIBUTE_VALUE).unwrap_or_default())
     } else {
-        // A boolean, a colour, a dimension...
+        // A colour, a dimension...
         Value::Other
     };
     Attribute {
@@ -187,20 +190,35 @@ fn int_item(value: i32) -> Vec<u8> {
 }
 
 /// `element` and the elements in it as an `XmlNode`, its attributes in
-/// order of their resource IDs, as aapt2 writes them: plain strings, with
-/// no compiled item.
+/// order of their resource IDs, as aapt2 writes them: plain strings with no
+/// compiled item, and booleans as text with one.
 fn encode_element(element: &Element) -> Vec<u8> {
     let mut attributes = element.attributes.clone();
     attributes.sort_by_key(|&(_, id, _)| id);
     let mut fields = vec![Field::bytes(ELEMENT_NAME, element.name)];
     for (name, id, value) in attributes {
-        let attribute = protobuf::encode(&[
+        let text = match value {
+            Literal::Text(text) => text.to_owned(),
+            Literal::Boolean(boolean) => boolean.to_string(),
+        };
+        let mut attribute = vec![
             Field::bytes(ATTRIBUTE_NAMESPACE, ANDROID),
             Field::bytes(ATTRIBUTE_NAME, name),
-            Field::bytes(ATTRIBUTE_VALUE, value),
+            Field::bytes(ATTRIBUTE_VALUE, text),
             Field::varint(ATTRIBUTE_RESOURCE_ID, u64::from(id)),
-        ]);
-        fields.push(Field::bytes(ELEMENT_ATTRIBUTE, attribute));
+        ];
+        if let Literal::Boolean(boolean) = value {
+            let primitive =
+                protobuf::encode(&[Field::varint(PRIMITIVE_BOOLEAN, u64::from(boolean))]);
+            attribute.push(Field::bytes(
+                ATTRIBUTE_COMPILED_ITEM,
+                protobuf::encode(&[Field::bytes(ITEM_PRIMITIVE, primitive)]),
+            ));
+        }
+        fields.push(Field::bytes(
+            ELEMENT_ATTRIBUTE,
+            protobuf::encode(&attribute),
+        ));
     }
     for child in &element.children {
         fields.push(Field::bytes(ELEMENT_CHILD, encode_element(child)));
@@ -423,6 +441,14 @@ pub mod tests {
                 ),
             ]
         );
+        // The filter's boolean, compiled as aapt2 compiles one.
+        let booleans: Vec<&Value> = xml
+            .attributes()
+            .iter()
+            .filter(|attribute| attribute.name == "autoVerify")
+            .map(|attribute| &attribute.value)
+            .collect();
+        assert_eq!(booleans, [&Value::Boolean(false)]);
         // The activity's last child: after its own intent filter's action
         // and category, and before the provider.
         let node = |element: &str, value: &str| {
@@ -466,7 +492,10 @@ pub mod tests {
             attribute(&xml, "application", "label"),
             &Value::Reference(0x7f03_0000)
         );
-        assert_eq!(attribute(&xml, "activity", "exported"), &Value::Other);
+        assert_eq!(
+            attribute(&xml, "activity", "exported"),
+            &Value::Boolean(true)
+        );
         let label = xml
             .attributes()
             .iter()
@@ -554,16 +583,19 @@ pub mod tests {
     }
 
     #[test]
-    fn reads_integers_in_hex_and_references_without_an_id() {
+    fn reads_integers_in_hex_references_without_an_id_and_other_values() {
         let attribute = |name: &str, item: Vec<u8>| {
             Field::bytes(4, encode(&[Field::bytes(2, name), Field::bytes(6, item)]))
         };
         let hex = encode(&[Field::bytes(7, encode(&[Field::varint(7, 24)]))]);
         let reference = encode(&[Field::bytes(1, [])]);
+        // A colour, which OmniBuild has no use for.
+        let colour = encode(&[Field::bytes(7, encode(&[Field::varint(9, 0xff2f_6feb)]))]);
         let element = encode(&[
             Field::bytes(3, "uses-sdk"),
             attribute("minSdkVersion", hex),
             attribute("theme", reference),
+            attribute("textColor", colour),
         ]);
 
         let xml = ProtoXml::parse(&encode(&[Field::bytes(1, element)])).unwrap();
@@ -573,7 +605,10 @@ pub mod tests {
             .iter()
             .map(|attribute| &attribute.value)
             .collect();
-        assert_eq!(values, [&Value::Int(24), &Value::Reference(0)]);
+        assert_eq!(
+            values,
+            [&Value::Int(24), &Value::Reference(0), &Value::Other]
+        );
     }
 
     #[test]

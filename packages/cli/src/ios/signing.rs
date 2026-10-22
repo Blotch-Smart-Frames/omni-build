@@ -51,14 +51,14 @@ pub struct Identity<'a> {
     /// capabilities they use, by their IDs, which each one's profile has to
     /// allow. A bundle that claims nothing is signed with the entitlements
     /// every program has.
-    pub claims: BTreeMap<String, Claims<'a>>,
+    pub claims: BTreeMap<String, Claims>,
 }
 
 /// The entitlements a bundle claims, and where the app config gives them.
-pub struct Claims<'a> {
+pub struct Claims {
     /// Such as `ios.entitlements`, the app's.
     pub source: String,
-    pub entitlements: &'a BTreeMap<String, Entitlement>,
+    pub entitlements: BTreeMap<String, Entitlement>,
 }
 
 impl Identity<'_> {
@@ -88,7 +88,7 @@ impl Identity<'_> {
     /// anything, as `profile` allows.
     fn claim(&self, profile: &Profile, entitlements: &mut Entitlements, id: &str) -> Result<()> {
         self.claims.get(id).map_or(Ok(()), |claims| {
-            profile.claim(entitlements, id, claims.entitlements, &claims.source)
+            profile.claim(entitlements, id, &claims.entitlements, &claims.source)
         })
     }
 
