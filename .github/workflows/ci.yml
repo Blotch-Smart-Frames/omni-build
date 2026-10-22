@@ -123,10 +123,15 @@ jobs:
       # The USB tests plug made-up phones into vhci-hcd, Linux's virtual USB
       # host controller (packages/cli/src/adb/usb.rs). The runner's user
       # attaches them, and opens them as Android's udev rules let users
-      # open Google's phones.
+      # open Google's phones. Runners boot more than one Azure kernel, and
+      # some ship vhci-hcd only in the kernel's extra modules.
       - name: Load vhci-hcd for the USB tests
         run: |
-          sudo modprobe vhci-hcd
+          if ! sudo modprobe vhci-hcd; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
+            sudo modprobe vhci-hcd
+          fi
           sudo chmod a+w /sys/devices/platform/vhci_hcd.0/attach
           echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0666"' | sudo tee /etc/udev/rules.d/51-android.rules
           sudo udevadm control --reload-rules
