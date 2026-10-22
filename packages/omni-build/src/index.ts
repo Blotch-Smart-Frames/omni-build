@@ -24,6 +24,29 @@ export interface KeyCreatedEvent {
 }
 
 /**
+ * `key request` created a key for an Apple signing certificate, in the
+ * keystore at `path`, and the certificate signing request to upload at
+ * developer.apple.com, at `request`.
+ */
+export interface KeyRequestedEvent {
+  event: 'key-requested';
+  path: string;
+  request: string;
+  message: string;
+}
+
+/** `key import` added a certificate to the keystore with its key. */
+export interface CertificateImportedEvent {
+  event: 'certificate-imported';
+  path: string;
+  /** The certificate's name, as Keychain Access shows it. */
+  certificate: string;
+  /** When it expires, as a date (`2027-10-22`). */
+  expires: string;
+  message: string;
+}
+
+/**
  * The device asks its user whether to allow this computer, and OmniBuild
  * waits for the answer: a tool should show the message.
  */
@@ -63,6 +86,8 @@ export interface ErrorEvent {
 
 export type OmniBuildEvent =
   | KeyCreatedEvent
+  | KeyRequestedEvent
+  | CertificateImportedEvent
   | AuthorizingEvent
   | RepackagedEvent
   | InstalledEvent

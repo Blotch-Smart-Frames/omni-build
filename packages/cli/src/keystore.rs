@@ -15,11 +15,15 @@
 //!   certificates, with keys derived by PKCS #12's own function, and an
 //!   HMAC-SHA1 MAC.
 //!
-//! OmniBuild reads both, and writes the modern one.
+//! OmniBuild reads both. It writes the modern one for Android upload keys,
+//! and for Apple signing keys a third, PKCS #12's own 3DES for keys and
+//! certificates alike, with an HMAC-SHA1 MAC: the only one macOS's Keychain
+//! imports, Keychain Access and `security import` alike, which refuse the
+//! modern one's MAC and RC2.
 
 use anyhow::{Context, Result, bail};
 use cbc::cipher::block_padding::Pkcs7;
-use cbc::cipher::{BlockDecryptMut, InnerIvInit, KeyIvInit};
+use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, InnerIvInit, KeyIvInit};
 use cms::content_info::{CmsVersion, ContentInfo};
 use cms::encrypted_data::EncryptedData;
 use cms::enveloped_data::EncryptedContentInfo;
@@ -28,7 +32,6 @@ use const_oid::db::rfc5911::{ID_DATA, ID_ENCRYPTED_DATA};
 use const_oid::db::rfc5912::{ID_SHA_1, ID_SHA_256};
 use des::TdesEde3;
 use hmac::{Hmac, Mac};
-use pkcs8::PrivateKeyInfo;
 use pkcs8::pkcs5::{EncryptionScheme, pbes2};
 use pkcs12::cert_type::CertBag;
 use pkcs12::digest_info::DigestInfo;
@@ -240,98 +243,113 @@ fn derive(parameters: &Pkcs12PbeParams, password: &BmpString, size: usize) -> (V
     )
 }
 
-/// A keystore with `key` (PKCS #8, DER) and its certificate, under `alias`,
-/// as keytool writes one: the certificate and the key each encrypted with
-/// PBES2, and an HMAC-SHA256 MAC. Java, Android Studio and OpenSSL read it.
+/// How a keystore OmniBuild writes is encrypted.
+#[derive(Clone, Copy)]
+pub enum Encryption {
+    /// PBES2 (PBKDF2 with HMAC-SHA256, then AES-256-CBC) and an HMAC-SHA256
+    /// MAC, as keytool and OpenSSL 3 write a keystore.
+    Modern,
+    /// PKCS #12's own 3DES and an HMAC-SHA1 MAC, as `openssl pkcs12 -export
+    /// -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1` writes a
+    /// keystore: what macOS's Keychain imports. OpenSSL 3 reads it without
+    /// its legacy provider, which Keychain Access's RC2 would need.
+    Keychain,
+}
+
+/// A keystore with `key` (PKCS #8, DER) and its certificate, if it has one
+/// yet, under `alias`: the certificate and the key each encrypted, and a MAC
+/// over both. Java, Android Studio and OpenSSL read it, and with
+/// `Encryption::Keychain`, macOS's Keychain.
 pub fn write(
     key: &[u8],
-    certificate: &Certificate,
+    certificate: Option<&Certificate>,
     alias: &str,
     password: &str,
+    encryption: Encryption,
 ) -> Result<Vec<u8>> {
     let bmp = BmpString::from_utf8(password)
         .ok()
         .context("the password has characters PKCS #12 can't hold")?;
-    let key = PrivateKeyInfo::from_der(key).expect("OmniBuild's own key is PKCS #8");
-    let certificate = der(certificate);
-    // Both bags carry the alias, and the same ID, which keytool pairs the
-    // key and its certificate by.
-    let local_key_id = Sha1::digest(&certificate).to_vec();
-    let attributes = SetOfVec::try_from(vec![
-        attribute(
-            FRIENDLY_NAME,
-            &BmpString::from_utf8(alias).expect("the alias is ASCII"),
-        ),
-        attribute(
+    let mut attributes = Vec::new();
+    // A name PKCS #12 can't hold, such as one with an emoji, is left out:
+    // nothing needs it.
+    if let Ok(alias) = BmpString::from_utf8(alias) {
+        attributes.push(attribute(FRIENDLY_NAME, &alias));
+    }
+    // Both bags carry the same ID, which keytool pairs the key and its
+    // certificate by.
+    let certificate = certificate.map(der);
+    if let Some(certificate) = &certificate {
+        let local_key_id = Sha1::digest(certificate).to_vec();
+        attributes.push(attribute(
             LOCAL_KEY_ID,
             &OctetString::new(local_key_id).expect("a digest fits"),
-        ),
-    ])
-    .expect("the attributes are distinct");
+        ));
+    }
+    let attributes = SetOfVec::try_from(attributes).expect("the attributes are distinct");
 
-    let certificates = der(&vec![SafeBag {
-        bag_id: PKCS_12_CERT_BAG_OID,
-        bag_value: der(&CertBag {
-            cert_id: PKCS_12_X509_CERT_OID,
-            cert_value: OctetString::new(certificate).expect("a certificate fits"),
-        }),
-        bag_attributes: Some(attributes.clone()),
-    }]);
-    let (salt, iv) = (random::<SALT_SIZE>(), random::<16>());
-    let scheme = EncryptionScheme::Pbes2(
-        pbes2::Parameters::pbkdf2_sha256_aes256cbc(ITERATIONS, &salt, &iv)
-            .expect("the parameters are valid"),
-    );
-    let encrypted_certificates = EncryptedData {
-        version: CmsVersion::V0,
-        enc_content_info: EncryptedContentInfo {
-            content_type: ID_DATA,
-            content_enc_alg: AlgorithmIdentifierOwned::from_der(&der(&scheme))
-                .expect("PBES2's parameters are an algorithm identifier"),
-            encrypted_content: Some(
-                OctetString::new(
-                    scheme
-                        .encrypt(password, &certificates)
-                        .expect("encrypting into memory can't fail"),
-                )
-                .expect("the certificates fit"),
-            ),
-        },
-        unprotected_attrs: None,
-    };
-    let (salt, iv) = (random::<SALT_SIZE>(), random::<16>());
-    let encrypted_key = key
-        .encrypt_with_params(
-            pbes2::Parameters::pbkdf2_sha256_aes256cbc(ITERATIONS, &salt, &iv)
-                .expect("the parameters are valid"),
-            password,
-        )
-        .expect("encrypting into memory can't fail");
-    let keys = der(&vec![SafeBag {
-        bag_id: PKCS_12_PKCS8_KEY_BAG_OID,
-        bag_value: encrypted_key.as_bytes().to_vec(),
-        bag_attributes: Some(attributes),
-    }]);
-
-    let contents = der(&vec![
-        ContentInfo {
+    let mut contents = Vec::new();
+    if let Some(certificate) = certificate {
+        let certificates = der(&vec![SafeBag {
+            bag_id: PKCS_12_CERT_BAG_OID,
+            bag_value: der(&CertBag {
+                cert_id: PKCS_12_X509_CERT_OID,
+                cert_value: OctetString::new(certificate).expect("a certificate fits"),
+            }),
+            bag_attributes: Some(attributes.clone()),
+        }]);
+        let (algorithm, encrypted) = encrypt(encryption, &certificates, password, &bmp);
+        let encrypted_certificates = EncryptedData {
+            version: CmsVersion::V0,
+            enc_content_info: EncryptedContentInfo {
+                content_type: ID_DATA,
+                content_enc_alg: algorithm,
+                encrypted_content: Some(OctetString::new(encrypted).expect("the certificates fit")),
+            },
+            unprotected_attrs: None,
+        };
+        contents.push(ContentInfo {
             content_type: ID_ENCRYPTED_DATA,
             content: Any::encode_from(&encrypted_certificates).expect("it encodes"),
-        },
-        ContentInfo {
-            content_type: ID_DATA,
-            content: Any::encode_from(&OctetString::new(keys).expect("the key fits"))
-                .expect("it encodes"),
-        },
-    ]);
+        });
+    }
+    let (algorithm, encrypted) = encrypt(encryption, key, password, &bmp);
+    let encrypted_key = EncryptedPrivateKeyInfo {
+        encryption_algorithm: algorithm,
+        encrypted_data: OctetString::new(encrypted).expect("the key fits"),
+    };
+    let keys = der(&vec![SafeBag {
+        bag_id: PKCS_12_PKCS8_KEY_BAG_OID,
+        bag_value: der(&encrypted_key),
+        bag_attributes: Some(attributes),
+    }]);
+    contents.push(ContentInfo {
+        content_type: ID_DATA,
+        content: Any::encode_from(&OctetString::new(keys).expect("the key fits"))
+            .expect("it encodes"),
+    });
+
+    let contents = der(&contents);
     let salt = random::<SALT_SIZE>();
     let iterations = i32::try_from(ITERATIONS).expect("the iterations fit");
-    let mac_key = derive_key_bmp::<Sha256>(bmp, &salt, Pkcs12KeyType::Mac, iterations, 32);
-    let mac = Hmac::<Sha256>::new_from_slice(&mac_key)
-        .expect("HMAC takes a key of any size")
-        .chain_update(&contents)
-        .finalize()
-        .into_bytes();
+    let (oid, mac) = match encryption {
+        Encryption::Modern => {
+            let mac_key = derive_key_bmp::<Sha256>(bmp, &salt, Pkcs12KeyType::Mac, iterations, 32);
+            let mac = Hmac::<Sha256>::new_from_slice(&mac_key)
+                .expect("HMAC takes a key of any size")
+                .chain_update(&contents)
+                .finalize();
+            (ID_SHA_256, mac.into_bytes().to_vec())
+        }
+        Encryption::Keychain => {
+            let mac_key = derive_key_bmp::<Sha1>(bmp, &salt, Pkcs12KeyType::Mac, iterations, 20);
+            let mac = Hmac::<Sha1>::new_from_slice(&mac_key)
+                .expect("HMAC takes a key of any size")
+                .chain_update(&contents)
+                .finalize();
+            (ID_SHA_1, mac.into_bytes().to_vec())
+        }
+    };
     Ok(der(&Pfx {
         version: Version::V3,
         auth_safe: ContentInfo {
@@ -342,15 +360,57 @@ pub fn write(
         mac_data: Some(MacData {
             mac: DigestInfo {
                 algorithm: AlgorithmIdentifierOwned {
-                    oid: ID_SHA_256,
+                    oid,
                     parameters: Some(Any::null()),
                 },
-                digest: OctetString::new(mac.to_vec()).expect("a MAC fits"),
+                digest: OctetString::new(mac).expect("a MAC fits"),
             },
             mac_salt: OctetString::new(salt.to_vec()).expect("a salt fits"),
             iterations,
         }),
     }))
+}
+
+/// `data` encrypted with a new salt, and the algorithm that decrypts it.
+fn encrypt(
+    encryption: Encryption,
+    data: &[u8],
+    password: &str,
+    bmp: &BmpString,
+) -> (AlgorithmIdentifierOwned, Vec<u8>) {
+    let salt = random::<SALT_SIZE>();
+    match encryption {
+        Encryption::Modern => {
+            let iv = random::<16>();
+            let scheme = EncryptionScheme::Pbes2(
+                pbes2::Parameters::pbkdf2_sha256_aes256cbc(ITERATIONS, &salt, &iv)
+                    .expect("the parameters are valid"),
+            );
+            (
+                AlgorithmIdentifierOwned::from_der(&der(&scheme))
+                    .expect("PBES2's parameters are an algorithm identifier"),
+                scheme
+                    .encrypt(password, data)
+                    .expect("encrypting into memory can't fail"),
+            )
+        }
+        Encryption::Keychain => {
+            let parameters = Pkcs12PbeParams {
+                salt: OctetString::new(salt.to_vec()).expect("a salt fits"),
+                iterations: i32::try_from(ITERATIONS).expect("the iterations fit"),
+            };
+            let (key, iv) = derive(&parameters, bmp, 24);
+            (
+                AlgorithmIdentifierOwned {
+                    oid: PKCS_12_PBE_WITH_SHAAND3_KEY_TRIPLE_DES_CBC,
+                    parameters: Some(Any::encode_from(&parameters).expect("it encodes")),
+                },
+                cbc::Encryptor::<TdesEde3>::new_from_slices(&key, &iv)
+                    .expect("the key and IV are 3DES's sizes")
+                    .encrypt_padded_vec_mut::<Pkcs7>(data),
+            )
+        }
+    }
 }
 
 fn attribute<T: Tagged + EncodeValue>(oid: ObjectIdentifier, value: &T) -> Attribute {
@@ -383,11 +443,16 @@ mod tests {
     use rsa::pkcs8::{DecodePrivateKey, EncodePublicKey};
     use x509_cert::Certificate;
     use x509_cert::der::asn1::OctetString;
-    use x509_cert::der::{Any, Decode, Encode};
+    use x509_cert::der::{Any, AnyRef, Decode, Encode};
     use x509_cert::spki::AlgorithmIdentifierOwned;
 
-    use super::{read, write};
+    use super::{Encryption, read, write};
     use cms::content_info::ContentInfo;
+    use cms::encrypted_data::EncryptedData;
+    use const_oid::db::rfc5912::{ID_SHA_1, ID_SHA_256};
+    use pkcs8::pkcs5::pbes2;
+    use pkcs12::PKCS_12_PBE_WITH_SHAAND3_KEY_TRIPLE_DES_CBC;
+    use pkcs12::safe_bag::SafeContents;
 
     /// Keystores made by OpenSSL, Keychain Access and keytool, as
     /// tests/fixtures/README.md says, with the password "omnibuild".
@@ -468,21 +533,92 @@ mod tests {
     fn writes_a_keystore_it_reads_back() {
         let (key, certificates) = read(keystore!("openssl.p12"), PASSWORD).unwrap();
 
-        let keystore = write(&key, &certificates[0], "upload", "a password").unwrap();
+        for encryption in [Encryption::Modern, Encryption::Keychain] {
+            let keystore = write(
+                &key,
+                Some(&certificates[0]),
+                "upload",
+                "a password",
+                encryption,
+            )
+            .unwrap();
 
-        let (read_key, read_certificates) = read(&keystore, "a password").unwrap();
-        assert_eq!(read_key, key);
-        assert_eq!(read_certificates, certificates);
-        // Not with another password.
+            let (read_key, read_certificates) = read(&keystore, "a password").unwrap();
+            assert_eq!(read_key, key);
+            assert_eq!(read_certificates, certificates);
+            // Not with another password.
+            assert_eq!(
+                read(&keystore, PASSWORD).unwrap_err().to_string(),
+                "the password isn't its password (OMNI_BUILD_KEY_PASSWORD)"
+            );
+            assert_eq!(
+                write(&key, Some(&certificates[0]), "upload", "😀", encryption)
+                    .unwrap_err()
+                    .to_string(),
+                "the password has characters PKCS #12 can't hold"
+            );
+        }
+    }
+
+    #[test]
+    fn writes_a_key_with_no_certificate_yet_and_names_it_if_it_can() {
+        let (key, _) = read(keystore!("openssl.p12"), PASSWORD).unwrap();
+
+        for alias in ["Jane Doe key", "😀"] {
+            let keystore = write(&key, None, alias, "a password", Encryption::Keychain).unwrap();
+
+            assert_eq!(
+                read(&keystore, "a password").unwrap(),
+                (key.clone(), vec![])
+            );
+        }
+    }
+
+    /// The algorithms a keystore's MAC, certificates and key are made with.
+    fn algorithms(keystore: &[u8]) -> Vec<ObjectIdentifier> {
+        let pfx = Pfx::from_der(keystore).unwrap();
+        let mut algorithms = vec![pfx.mac_data.unwrap().mac.algorithm.oid];
+        let contents = pfx.auth_safe.content.decode_as::<OctetString>().unwrap();
+        for content in Vec::<ContentInfo>::from_der(contents.as_bytes()).unwrap() {
+            if content.content_type == ID_ENCRYPTED_DATA {
+                let data = content.content.decode_as::<EncryptedData>().unwrap();
+                algorithms.push(data.enc_content_info.content_enc_alg.oid);
+            } else {
+                let bags = content.content.decode_as::<OctetString>().unwrap();
+                for bag in SafeContents::from_der(bags.as_bytes()).unwrap() {
+                    // With the explicit tag around it, as read() takes it.
+                    let value = AnyRef::from_der(&bag.bag_value).unwrap();
+                    let key = EncryptedPrivateKeyInfo::from_der(value.value()).unwrap();
+                    algorithms.push(key.encryption_algorithm.oid);
+                }
+            }
+        }
+        algorithms
+    }
+
+    #[test]
+    fn writes_what_keytool_writes_or_what_macos_keychain_imports() {
+        let (key, certificates) = read(keystore!("openssl.p12"), PASSWORD).unwrap();
+        let keystore = |encryption| {
+            write(
+                &key,
+                Some(&certificates[0]),
+                "key",
+                "a password",
+                encryption,
+            )
+        };
+
+        // An HMAC-SHA256 MAC, and PBES2 for the certificate and the key.
         assert_eq!(
-            read(&keystore, PASSWORD).unwrap_err().to_string(),
-            "the password isn't its password (OMNI_BUILD_KEY_PASSWORD)"
+            algorithms(&keystore(Encryption::Modern).unwrap()),
+            [ID_SHA_256, pbes2::PBES2_OID, pbes2::PBES2_OID]
         );
+        // Keychain takes an HMAC-SHA1 MAC, and 3DES for both, alone.
+        let triple_des = PKCS_12_PBE_WITH_SHAAND3_KEY_TRIPLE_DES_CBC;
         assert_eq!(
-            write(&key, &certificates[0], "upload", "😀")
-                .unwrap_err()
-                .to_string(),
-            "the password has characters PKCS #12 can't hold"
+            algorithms(&keystore(Encryption::Keychain).unwrap()),
+            [ID_SHA_1, triple_des, triple_des]
         );
     }
 

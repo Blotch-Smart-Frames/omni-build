@@ -21,7 +21,7 @@ use clap::{Args, Parser, Subcommand};
 
 use adb::AdbKey;
 use config::App;
-use key::{SigningKey, debug_key_path};
+use key::{SigningKey, debug_key_path, display_name};
 use report::{Event, Format, KeyKind, Platform, Reporter};
 use x509_cert::name::Name;
 
@@ -112,6 +112,8 @@ struct Key {
 #[derive(Debug, Subcommand)]
 enum KeyCommand {
     Create(CreateKey),
+    Request(RequestKey),
+    Import(ImportCertificate),
 }
 
 /// Create an upload key for Google Play: an RSA key with a certificate of
@@ -125,6 +127,35 @@ struct CreateKey {
     /// The certificate's subject, as a distinguished name.
     #[arg(long, default_value = "CN=Upload key")]
     subject: String,
+}
+
+/// Create a key for an Apple signing certificate, as Keychain Access's
+/// Certificate Assistant does: an RSA key in a PKCS #12 keystore, and a
+/// certificate signing request for it beside the keystore
+/// (`.certSigningRequest`), which developer.apple.com takes to issue the
+/// certificate. Then add the certificate to the keystore with `key import`.
+/// Its password comes from `OMNI_BUILD_KEY_PASSWORD`.
+#[derive(Debug, Args)]
+struct RequestKey {
+    /// Where to write the keystore, which mustn't exist yet.
+    keystore: PathBuf,
+    /// The request's subject, as a distinguished name. Its common name names
+    /// the key, as Keychain Access names it, and Apple issues the
+    /// certificate in the team's name whatever it is.
+    #[arg(long, default_value = "CN=App signing key")]
+    subject: String,
+}
+
+/// Add a certificate to the keystore with its key: the one Apple issues for
+/// the request `key request` made, which the keystore then signs iOS apps
+/// with. Its password comes from `OMNI_BUILD_KEY_PASSWORD`.
+#[derive(Debug, Args)]
+struct ImportCertificate {
+    /// The keystore with the key.
+    keystore: PathBuf,
+    /// The certificate: the `.cer` file developer.apple.com issued, or one
+    /// in PEM.
+    certificate: PathBuf,
 }
 
 fn main() -> ExitCode {
@@ -145,9 +176,11 @@ fn run(command: Command, reporter: &Reporter) -> Result<()> {
     match command {
         Command::Repackage(args) => repackage(&args, reporter),
         Command::Install(args) => install(&args, reporter),
-        Command::Key(Key {
-            command: KeyCommand::Create(args),
-        }) => create_key(&args, reporter),
+        Command::Key(Key { command }) => match command {
+            KeyCommand::Create(args) => create_key(&args, reporter),
+            KeyCommand::Request(args) => request_key(&args, reporter),
+            KeyCommand::Import(args) => import_certificate(&args, reporter),
+        },
     }
 }
 
@@ -262,18 +295,45 @@ fn adb_key(reporter: &Reporter) -> Result<AdbKey> {
 }
 
 fn create_key(args: &CreateKey, reporter: &Reporter) -> Result<()> {
-    let subject = distinguished_name(&args.subject).with_context(|| {
-        format!(
-            "\"{}\" isn't a distinguished name, such as \"CN=Upload key, O=Example\"",
-            args.subject
-        )
-    })?;
+    let subject = subject(&args.subject, "CN=Upload key, O=Example")?;
     SigningKey::create(&args.keystore, &subject, &key_password())?;
     reporter.report(&Event::KeyCreated {
         key: KeyKind::Upload,
         path: args.keystore.display().to_string(),
     });
     Ok(())
+}
+
+fn request_key(args: &RequestKey, reporter: &Reporter) -> Result<()> {
+    let subject = subject(
+        &args.subject,
+        "CN=Jane Doe key, emailAddress=jane@example.com",
+    )?;
+    // Beside the keystore, with the extension Keychain Access gives a
+    // request, which developer.apple.com asks for.
+    let request = args.keystore.with_extension("certSigningRequest");
+    key::request(&args.keystore, &request, &subject, &key_password())?;
+    reporter.report(&Event::KeyRequested {
+        path: args.keystore.display().to_string(),
+        request: request.display().to_string(),
+    });
+    Ok(())
+}
+
+fn import_certificate(args: &ImportCertificate, reporter: &Reporter) -> Result<()> {
+    let key = SigningKey::import(&args.keystore, &args.certificate, &key_password())?;
+    reporter.report(&Event::CertificateImported {
+        path: args.keystore.display().to_string(),
+        certificate: display_name(&key.x509().tbs_certificate.subject),
+        expires: key.expires(),
+    });
+    Ok(())
+}
+
+/// A certificate's subject, or a request's, from `--subject`.
+fn subject(text: &str, example: &str) -> Result<Name> {
+    distinguished_name(text)
+        .with_context(|| format!("\"{text}\" isn't a distinguished name, such as \"{example}\""))
 }
 
 /// A distinguished name as keytool takes one, with spaces after its

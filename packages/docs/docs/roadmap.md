@@ -29,7 +29,7 @@ The repository already gates every pull request on what OmniBuild will need:
 
 - **`Assets.car` is undocumented.** Readers exist; writers are rare. Rather than write a catalog of its own, OmniBuild replaces the icon's pixels in the one actool compiled into the shell, keeping every key and value actool chose. The iOS Simulator reads the result, as the end-to-end tests check, but App Store validation hasn't seen one yet: the TestFlight upload is the test.
 - **Apple changes validation or policy.** Repackaged apps aren't a path Apple documents. The shell really was built with Xcode and re-signing is routine, but nothing guarantees it stays accepted, so a TestFlight upload runs in CI to catch a rejection before users do.
-- **Signing identities.** Without Xcode, certificates and provisioning profiles have to be created through the App Store Connect API, with the user's own key.
+- **Signing identities.** Without Xcode, certificates and provisioning profiles come from developer.apple.com, where OmniBuild's `key request` and `key import` get the certificate by hand, or from the App Store Connect API, with the user's own key.
 - **Going unmaintained**, as xbuild did. Apple and Google change SDK minimums, privacy manifests, signing rules or device protocols every year. The scope stays at packaging, signing, installing and uploading, and CI runs against the newest platform images.
 - **Bugs in the signer** would produce binaries that install but fail store checks. Every output is checked with the vendors' own tools in CI (`apksigner verify`, `bundletool validate`, `codesign --verify`), never on users' machines.
 

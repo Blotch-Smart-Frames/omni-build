@@ -39,12 +39,11 @@ use x509_cert::Certificate;
 use x509_cert::attr::Attribute;
 use x509_cert::der::asn1::{OctetString, SetOfVec, UtcTime};
 use x509_cert::der::{Any, Decode, Encode, Tag};
-use x509_cert::name::Name;
 use x509_cert::spki::AlgorithmIdentifierOwned;
 
 use super::entitlements::{Entitlement, Entitlements};
 use super::macho::Code;
-use crate::key::SigningKey;
+use crate::key::{SigningKey, attribute};
 
 const EMBEDDED_SIGNATURE: u32 = 0xfade_0cc0;
 const CODE_DIRECTORY: u32 = 0xfade_0c02;
@@ -439,15 +438,6 @@ fn team(certificate: &Certificate) -> Option<String> {
     issued_by_apple(certificate)
         .then(|| attribute(&certificate.tbs_certificate.subject, OU))
         .flatten()
-}
-
-/// The value of a name's attribute, such as its common name.
-fn attribute(name: &Name, oid: ObjectIdentifier) -> Option<String> {
-    name.0
-        .iter()
-        .flat_map(|names| names.0.iter())
-        .find(|attribute| attribute.oid == oid)
-        .and_then(|attribute| String::from_utf8(attribute.value.value().to_vec()).ok())
 }
 
 /// A signed attribute with `values`, which DER puts in order.

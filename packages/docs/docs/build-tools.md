@@ -35,13 +35,15 @@ $ omni-build repackage shell.apk --out app.apk --json
 
 Every event has an `event`, its name, and a `message`, the sentence OmniBuild shows people without `--json`. A tool that meets an event or a field it doesn't know, which newer versions of OmniBuild may add, ignores it, or shows the message.
 
-| Event         | When                                                                                         | Fields                                                                                                                           |
-| ------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `key-created` | OmniBuild created a key: one it needed, or the upload key `key create` makes                 | `key`: `debug` (signs Android apps when given no key), `adb` (for [installing](./installing.md#the-adb-key)) or `upload`; `path` |
-| `authorizing` | A device asks its user whether to allow this computer, and OmniBuild waits. Show the message | `device`, as `--device` names it                                                                                                 |
-| `repackaged`  | `repackage` wrote the app                                                                    | `shell`, `out`, `platform` (`android` or `ios`), `format` (`apk`, `aab`, `ipa`, or `app` for a zipped `.app`)                    |
-| `installed`   | `install` installed the app                                                                  | `app`, `device`, and `model`, the device's model, when it says                                                                   |
-| `error`       | The command failed: the last event                                                           | Its message is the reason                                                                                                        |
+| Event                  | When                                                                                         | Fields                                                                                                                           |
+| ---------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `key-created`          | OmniBuild created a key: one it needed, or the upload key `key create` makes                 | `key`: `debug` (signs Android apps when given no key), `adb` (for [installing](./installing.md#the-adb-key)) or `upload`; `path` |
+| `key-requested`        | `key request` created a key for an Apple signing certificate, and its request                | `path`, the keystore, and `request`, the certificate signing request to upload                                                   |
+| `certificate-imported` | `key import` added a certificate to the keystore with its key                                | `path`, `certificate`, its name, and `expires`, a date                                                                           |
+| `authorizing`          | A device asks its user whether to allow this computer, and OmniBuild waits. Show the message | `device`, as `--device` names it                                                                                                 |
+| `repackaged`           | `repackage` wrote the app                                                                    | `shell`, `out`, `platform` (`android` or `ios`), `format` (`apk`, `aab`, `ipa`, or `app` for a zipped `.app`)                    |
+| `installed`            | `install` installed the app                                                                  | `app`, `device`, and `model`, the device's model, when it says                                                                   |
+| `error`                | The command failed: the last event                                                           | Its message is the reason                                                                                                        |
 
 Paths are as the arguments gave them, and a key OmniBuild creates in the home folder has its full path.
 
