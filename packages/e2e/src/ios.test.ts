@@ -447,6 +447,7 @@ describe('verify', () => {
         { CFBundleURLName: 'no schemes' },
       ],
       UISupportedInterfaceOrientations: ['UIInterfaceOrientationPortrait'],
+      ITSAppUsesNonExemptEncryption: false,
     };
     let display: Record<string, unknown> = {
       CFBundleDisplayName: 'OmniBuild E2E',
@@ -516,6 +517,7 @@ describe('verify', () => {
         // An iPhone's own, over those for every device.
         orientations:
           'UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight',
+        nonExemptEncryption: 'false',
       },
     });
     expect(commands().slice(0, 5)).toEqual([

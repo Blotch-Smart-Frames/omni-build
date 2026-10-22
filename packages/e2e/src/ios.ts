@@ -280,6 +280,10 @@ const verify: Platform['verify'] = ({ app, log }) =>
           (info['UISupportedInterfaceOrientations~iphone'] ??
             info.UISupportedInterfaceOrientations) as string[] | undefined
         )?.join(', '),
+        // Whether it uses encryption that export regulations don't exempt.
+        nonExemptEncryption: (
+          info.ITSAppUsesNonExemptEncryption as boolean | undefined
+        )?.toString(),
         extensionId: plugIn?.id,
         extensionApplicationIdentifier: claimed(
           plugIn?.entitlements ?? '',

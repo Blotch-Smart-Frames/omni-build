@@ -28,7 +28,10 @@ const APP: {
   webLinks: string[];
   orientation: string;
   android: { permissions: string[]; abis: string[] };
-  ios: { usageDescriptions: { NSCameraUsageDescription: string } };
+  ios: {
+    usageDescriptions: { NSCameraUsageDescription: string };
+    usesNonExemptEncryption: boolean;
+  };
 } = JSON.parse(readFileSync(APP_CONFIG, 'utf8'));
 /** The colour of every pixel of the app's icon, `app/icon.png`. */
 const APP_ICON = '#E8590C';
@@ -234,6 +237,9 @@ export const expected = (
     };
   }
   const cameraUsage = APP.ios.usageDescriptions.NSCameraUsageDescription;
+  // What the app tells App Store Connect about its encryption, where the
+  // shell says nothing.
+  const nonExemptEncryption = String(APP.ios.usesNonExemptEncryption);
   if (app.endsWith('.ipa')) {
     // A build for devices, which the simulator can't run: what its files
     // say, but for the icon, which only iOS reads out of Assets.car, and
@@ -260,6 +266,7 @@ export const expected = (
       keychainGroups: `${TEAM}.dev.omnibuild.e2e.shared`,
       urlSchemes: APP.urlSchemes.join(', '),
       orientations: IPHONE_ORIENTATIONS,
+      nonExemptEncryption,
       extensionId: `${APP.id}.${EXTENSION}`,
       extensionApplicationIdentifier: `${TEAM}.${APP.id}.${EXTENSION}`,
       // The App Group the extension shares with the app, as app.json's
@@ -290,6 +297,7 @@ export const expected = (
     framework: SHELL.framework,
     urlSchemes: APP.urlSchemes.join(', '),
     orientations: IPHONE_ORIENTATIONS,
+    nonExemptEncryption,
     extensionId: `${APP.id}.${EXTENSION}`,
     intentsExtensionId: `${APP.id}.${INTENTS_EXTENSION}`,
     appClipId: `${APP.id}.${APP_CLIP}`,

@@ -21,6 +21,12 @@ const WATCH_COMPANION: &str = "WKCompanionAppBundleIdentifier";
 /// key for one kind of device over the key for all. Xcode's templates
 /// write both kinds' own.
 const IPHONE_ORIENTATIONS: &str = "UISupportedInterfaceOrientations~iphone";
+/// Whether the app uses encryption that export regulations don't exempt,
+/// and the code Apple gives one that does, once it has reviewed its export
+/// compliance documents. App Store Connect asks about encryption for each
+/// build whose Info.plist doesn't say.
+const USES_NON_EXEMPT_ENCRYPTION: &str = "ITSAppUsesNonExemptEncryption";
+const EXPORT_COMPLIANCE_CODE: &str = "ITSEncryptionExportComplianceCode";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InfoPlist {
@@ -148,6 +154,32 @@ impl InfoPlist {
                 );
             }
             self.set(key, description);
+        }
+        self.set_export_compliance(
+            app.ios.uses_non_exempt_encryption,
+            app.ios.encryption_export_compliance_code.as_deref(),
+        )
+    }
+
+    /// Says whether the app uses encryption that export regulations don't
+    /// exempt, and if it does, the code Apple gave it for that, if any.
+    fn set_export_compliance(&mut self, uses: Option<bool>, code: Option<&str>) -> Result<()> {
+        if code.is_some() && uses != Some(true) {
+            bail!(
+                "ios.encryptionExportComplianceCode is for an app that uses encryption export regulations don't exempt: give ios.usesNonExemptEncryption as true with it"
+            );
+        }
+        if let Some(uses) = uses {
+            self.dictionary
+                .insert(USES_NON_EXEMPT_ENCRYPTION.to_owned(), Value::Boolean(uses));
+            match code {
+                Some(code) => self.set(EXPORT_COMPLIANCE_CODE, code),
+                // Apple gives each app its own, so the shell's is another
+                // app's.
+                None => {
+                    self.dictionary.remove(EXPORT_COMPLIANCE_CODE);
+                }
+            }
         }
         Ok(())
     }
@@ -460,6 +492,48 @@ mod tests {
                 .to_string()
                 .starts_with("\"https\" is the web's")
         );
+    }
+
+    #[test]
+    fn says_whether_the_app_uses_encryption_export_regulations_dont_exempt() {
+        let rewritten = |uses, code: Option<&str>| {
+            let mut info = InfoPlist::parse(XML.as_bytes()).unwrap();
+            // A shell that had a code of its own.
+            info.set("ITSEncryptionExportComplianceCode", "the shell's");
+            let mut app = app();
+            app.ios.uses_non_exempt_encryption = uses;
+            app.ios.encryption_export_compliance_code = code.map(str::to_owned);
+            info.rewrite(&app).map(|()| {
+                [
+                    "ITSAppUsesNonExemptEncryption",
+                    "ITSEncryptionExportComplianceCode",
+                ]
+                .map(|key| info.dictionary.get(key).cloned())
+            })
+        };
+
+        assert_eq!(
+            rewritten(Some(false), None).unwrap(),
+            [Some(Value::Boolean(false)), None]
+        );
+        assert_eq!(
+            rewritten(Some(true), Some("the app's")).unwrap(),
+            [
+                Some(Value::Boolean(true)),
+                Some(Value::String("the app's".to_owned()))
+            ]
+        );
+        // Left as the shell has them.
+        assert_eq!(
+            rewritten(None, None).unwrap(),
+            [None, Some(Value::String("the shell's".to_owned()))]
+        );
+        for uses in [None, Some(false)] {
+            assert_eq!(
+                rewritten(uses, Some("the app's")).unwrap_err().to_string(),
+                "ios.encryptionExportComplianceCode is for an app that uses encryption export regulations don't exempt: give ios.usesNonExemptEncryption as true with it"
+            );
+        }
     }
 
     #[test]
