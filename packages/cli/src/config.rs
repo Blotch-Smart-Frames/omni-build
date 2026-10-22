@@ -127,6 +127,24 @@ pub struct Ios {
     /// key, such as `NSCameraUsageDescription`. They replace the shell's,
     /// in every language it has them in.
     pub usage_descriptions: Option<BTreeMap<String, String>>,
+    /// The entitlements the app claims for the capabilities it uses, such
+    /// as `aps-environment` for push notifications, as an Xcode project's
+    /// `.entitlements` file has them. A build for devices is signed with
+    /// them, and its provisioning profile has to allow each.
+    pub entitlements: Option<BTreeMap<String, Entitlement>>,
+}
+
+/// An entitlement's value, of the kinds capabilities take.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(
+    untagged,
+    expecting = "an entitlement is a string, a boolean, or an array of strings"
+)]
+pub enum Entitlement {
+    String(String),
+    Boolean(bool),
+    /// Such as the App IDs an App Clip and its app name each other by.
+    Strings(Vec<String>),
 }
 
 /// Checks a URL scheme the app config gives, as both platforms take one:
@@ -137,7 +155,7 @@ pub struct Ios {
 pub fn check_url_scheme(scheme: &str) -> Result<()> {
     if matches!(scheme, "http" | "https") {
         bail!(
-            "\"{scheme}\" is the web's: web links open an app as App Links and universal links, which OmniBuild doesn't set up yet"
+            "\"{scheme}\" is the web's: web links open an app as universal links, for which an iOS app claims its website's domain in ios.entitlements, and App Links, which OmniBuild doesn't set up yet"
         );
     }
     let mut characters = scheme.chars();
@@ -190,7 +208,9 @@ impl App {
 mod tests {
     use std::fs;
 
-    use super::{AdaptiveIcon, Android, App, Background, Ios, Orientation, check_url_scheme};
+    use super::{
+        AdaptiveIcon, Android, App, Background, Entitlement, Ios, Orientation, check_url_scheme,
+    };
 
     #[test]
     fn reads_an_app_config() {
@@ -205,7 +225,14 @@ mod tests {
                     "adaptiveIcon": { "foreground": "front.png", "background": "back.png", "monochrome": "mono.png" },
                     "permissions": ["CAMERA"], "abis": ["arm64-v8a"]
                 },
-                "ios": { "usageDescriptions": { "NSCameraUsageDescription": "Scans codes." } } }"#,
+                "ios": {
+                    "usageDescriptions": { "NSCameraUsageDescription": "Scans codes." },
+                    "entitlements": {
+                        "aps-environment": "development",
+                        "com.apple.developer.associated-domains": ["applinks:example.com"],
+                        "com.apple.developer.kernel.increased-memory-limit": true
+                    }
+                } }"#,
         )
         .unwrap();
 
@@ -236,6 +263,23 @@ mod tests {
                             "NSCameraUsageDescription".to_owned(),
                             "Scans codes.".to_owned()
                         )]
+                        .into()
+                    ),
+                    entitlements: Some(
+                        [
+                            (
+                                "aps-environment".to_owned(),
+                                Entitlement::String("development".to_owned())
+                            ),
+                            (
+                                "com.apple.developer.associated-domains".to_owned(),
+                                Entitlement::Strings(vec!["applinks:example.com".to_owned()])
+                            ),
+                            (
+                                "com.apple.developer.kernel.increased-memory-limit".to_owned(),
+                                Entitlement::Boolean(true)
+                            ),
+                        ]
                         .into()
                     ),
                 },
@@ -287,12 +331,19 @@ mod tests {
         let path = dir.path().join("app.json");
         let colour = dir.path().join("colour.json");
         let orientation = dir.path().join("orientation.json");
+        let entitlement = dir.path().join("entitlement.json");
         fs::write(&path, r#"{ "id": "dev.example.app", "colour": "blue" }"#).unwrap();
         fs::write(&orientation, r#"{ "orientation": "upside down" }"#).unwrap();
+        fs::write(
+            &entitlement,
+            r#"{ "ios": { "entitlements": { "com.apple.developer.healthkit.access": [1] } } }"#,
+        )
+        .unwrap();
 
         let missing = App::read(&dir.path().join("missing.json")).unwrap_err();
         let unknown_field = App::read(&path).unwrap_err();
         let unknown_orientation = App::read(&orientation).unwrap_err();
+        let odd_entitlement = App::read(&entitlement).unwrap_err();
         let bad_colours: Vec<String> = ["#2F6FE", "#2F6FEG", "#2F6FEB00"]
             .iter()
             .map(|background| {
@@ -318,6 +369,11 @@ mod tests {
                 "unknown variant `upside down`, expected one of `portrait`, `landscape`, `any`"
             ),
             "{unknown_orientation:#}"
+        );
+        assert!(
+            format!("{odd_entitlement:#}")
+                .contains("an entitlement is a string, a boolean, or an array of strings"),
+            "{odd_entitlement:#}"
         );
         for (error, background) in bad_colours.iter().zip(["#2F6FE", "#2F6FEG", "#2F6FEB00"]) {
             assert!(

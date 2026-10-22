@@ -14,6 +14,16 @@
   "ios": {
     "usageDescriptions": {
       "NSCameraUsageDescription": "Scans the codes on OmniBuild's test cards."
+    },
+    "entitlements": {
+      "aps-environment": "development",
+      "com.apple.developer.associated-domains": [
+        "applinks:e2e.omnibuild.example"
+      ],
+      "com.apple.security.application-groups": ["group.dev.omnibuild.e2e"],
+      "keychain-access-groups": [
+        "$(AppIdentifierPrefix)dev.omnibuild.e2e.shared"
+      ]
     }
   }
 }

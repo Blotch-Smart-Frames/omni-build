@@ -125,6 +125,7 @@ pub fn repackage(
     let identity = key.filter(|_| !profiles.is_empty()).map(|key| Identity {
         key,
         profiles: &profiles,
+        claims: app.ios.entitlements.as_ref(),
     });
     let entries = signing::sign(entries, bundle, &info, identity.as_ref())?;
     Ok(zip::write(&entries).bytes)
@@ -258,7 +259,7 @@ pub mod tests {
     use super::profile::tests::{PROFILE, app_clip_profile};
     use super::{InfoPlist, bundle, repackage};
     use crate::bytes::Reader;
-    use crate::config::{App, Ios};
+    use crate::config::{App, Entitlement, Ios};
     use crate::icon::tests::solid_png;
     use crate::zip::{self, Entry, Method, tests::SHELL, tests::entry};
 
@@ -446,6 +447,7 @@ pub mod tests {
                     )]
                     .into(),
                 ),
+                ..Ios::default()
             },
             ..App::default()
         };
@@ -534,6 +536,7 @@ pub mod tests {
                     )]
                     .into(),
                 ),
+                ..Ios::default()
             },
             ..App::default()
         };
@@ -575,6 +578,7 @@ pub mod tests {
                     )]
                     .into(),
                 ),
+                ..Ios::default()
             },
             ..App::default()
         };
@@ -612,6 +616,7 @@ pub mod tests {
                 usage_descriptions: Some(
                     [("NSCamera".to_owned(), "Scans codes.".to_owned())].into(),
                 ),
+                ..Ios::default()
             },
             ..App::default()
         };
@@ -674,12 +679,24 @@ pub mod tests {
         )
     }
 
-    /// The device shell repackaged as `dev.example.app`, and signed with
-    /// the test key, a wildcard profile for the app and the code nested in
-    /// it, and the App Clip's own.
+    /// The device shell repackaged as `dev.example.app`, claiming a
+    /// keychain group, and signed with the test key, a wildcard profile for
+    /// the app and the code nested in it, and the App Clip's own.
     fn signed_for_devices() -> Vec<Entry> {
         let app = App {
             id: Some("dev.example.app".to_owned()),
+            ios: Ios {
+                entitlements: Some(
+                    [(
+                        "keychain-access-groups".to_owned(),
+                        Entitlement::Strings(vec![
+                            "$(AppIdentifierPrefix)dev.example.shared".to_owned(),
+                        ]),
+                    )]
+                    .into(),
+                ),
+                ..Ios::default()
+            },
             ..App::default()
         };
         let ipa = repackage(
@@ -736,15 +753,24 @@ pub mod tests {
         assert!(
             entitlements("OmniBuildShell").contains("<string>ABCDE12345.dev.example.app</string>")
         );
+        // The app claims the keychain group it asks for, which the profile
+        // allows, and its extensions don't.
+        assert!(entitlements("OmniBuildShell").contains(
+            "\t<key>keychain-access-groups</key>
+\t<array>
+\t\t<string>ABCDE12345.dev.example.shared</string>
+\t</array>
+"
+        ));
         for (extension, name) in [
             ("PlugIns/ShellNotifications.appex/", "ShellNotifications"),
             ("Extensions/ShellIntents.appex/", "ShellIntents"),
         ] {
-            assert!(
-                entitlements(&format!("{extension}{name}")).contains(&format!(
-                    "<string>ABCDE12345.dev.example.app.{name}</string>"
-                ))
-            );
+            let claimed = entitlements(&format!("{extension}{name}"));
+            assert!(claimed.contains(&format!(
+                "<string>ABCDE12345.dev.example.app.{name}</string>"
+            )));
+            assert!(!claimed.contains("keychain-access-groups"));
             assert_eq!(
                 file(
                     &entries,
@@ -849,6 +875,47 @@ pub mod tests {
 
             assert_eq!(format!("{error:#}"), message);
         }
+    }
+
+    #[test]
+    fn checks_entitlements_against_the_profile_only_for_devices() {
+        let app = App {
+            ios: Ios {
+                entitlements: Some(
+                    [(
+                        "aps-environment".to_owned(),
+                        Entitlement::String("development".to_owned()),
+                    )]
+                    .into(),
+                ),
+                ..Ios::default()
+            },
+            ..App::default()
+        };
+
+        let device = repackage(
+            zip::read(SHELL_IPA).unwrap(),
+            "Payload/OmniBuildShell.app/",
+            &app,
+            Some(&identity()),
+            &[PROFILE.to_vec()],
+        )
+        .unwrap_err();
+        // The Simulator takes the entitlements Xcode linked into the
+        // shell's executable, which OmniBuild leaves as they are.
+        let simulator = repackage(
+            zip::read(SHELL_APP).unwrap(),
+            "OmniBuildShell.app/",
+            &app,
+            None,
+            &[],
+        );
+
+        assert_eq!(
+            format!("{device:#}"),
+            "the provisioning profile for dev.omnibuild.shell doesn't allow aps-environment, which the app claims (ios.entitlements): turn the capability on for its App ID, and make the profile again"
+        );
+        assert!(simulator.is_ok());
     }
 
     #[test]

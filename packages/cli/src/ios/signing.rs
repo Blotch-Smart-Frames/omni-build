@@ -13,6 +13,8 @@
 //! are signed before it, the same way, so that signing goes from the inside
 //! out, as Apple asks.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result, bail};
 
 use super::code_resources::code_resources;
@@ -20,14 +22,12 @@ use super::code_signature::Signer;
 use super::entitlements::{Entitlement, Entitlements};
 use super::info_plist::InfoPlist;
 use super::macho::Executable;
-use super::profile::Profile;
+use super::profile::{APP_CLIP_APPLICATIONS, Profile};
 use super::{APP_CLIPS, EXTENSION_FOLDERS, WATCH};
 use crate::key::SigningKey;
 use crate::zip::{Entry, Method};
 
 const FRAMEWORKS: &str = "Frameworks/";
-/// The App IDs of an app's App Clips, as its signature names them.
-const APP_CLIP_APPLICATIONS: &str = "com.apple.developer.associated-appclip-app-identifiers";
 /// What a framework's own folders would hold of code nested in it in turn,
 /// which would have to be signed before it. iOS frameworks have none, so
 /// OmniBuild refuses it there, rather than sign it as it does in a
@@ -47,6 +47,11 @@ pub struct Identity<'a> {
     /// own, which needs a profile of its own unless a wildcard covers it,
     /// and an App Clip always does.
     pub profiles: &'a [Profile],
+    /// The entitlements the app claims for the capabilities it uses
+    /// (`ios.entitlements`), which its profile has to allow. Its
+    /// extensions, App Clips and watch app are signed with those every
+    /// program has.
+    pub claims: Option<&'a BTreeMap<String, Entitlement>>,
 }
 
 impl Identity<'_> {
@@ -56,6 +61,16 @@ impl Identity<'_> {
         let entitlements = profile
             .entitlements(id, self.key.certificate())
             .with_context(|| format!("the provisioning profile for {id} doesn't fit"))?;
+        Ok((profile, entitlements))
+    }
+
+    /// The profile for the app `id`, and the entitlements it gives it,
+    /// with those the app claims.
+    fn for_app(&self, id: &str) -> Result<(&Profile, Entitlements)> {
+        let (profile, mut entitlements) = self.for_bundle(id)?;
+        if let Some(claims) = self.claims {
+            profile.claim(&mut entitlements, id, claims)?;
+        }
         Ok((profile, entitlements))
     }
 
@@ -114,7 +129,7 @@ pub fn sign(
         .context("the shell's Info.plist has no bundle ID (CFBundleIdentifier)")?;
     let key = identity.map(|identity| identity.key);
     let mut profile = identity
-        .map(|identity| identity.for_bundle(identifier))
+        .map(|identity| identity.for_app(identifier))
         .transpose()?;
     if let Some((profile, _)) = &profile {
         put(
@@ -716,6 +731,7 @@ mod tests {
         let identity = Identity {
             key: &key,
             profiles: &profiles,
+            claims: None,
         };
         sign(
             shell.clone(),
@@ -930,6 +946,7 @@ mod tests {
             Some(&Identity {
                 key: &key,
                 profiles: &app_only,
+                claims: None,
             }),
         )
         .unwrap_err();
@@ -972,6 +989,7 @@ mod tests {
                 Some(&Identity {
                     key: &key,
                     profiles,
+                    claims: None,
                 }),
             )
             .unwrap_err();
@@ -996,6 +1014,7 @@ mod tests {
             Some(&Identity {
                 key: &key,
                 profiles: &profiles,
+                claims: None,
             }),
         )
         .unwrap();
@@ -1235,12 +1254,14 @@ mod tests {
         let stranger = Identity {
             key: &KEY,
             profiles: &profiles,
+            claims: None,
         };
         let key = identity();
         let others = [profile_for("TEAM.dev.other.*"), profile_for("TEAM.dev.app")];
         let elsewhere = Identity {
             key: &key,
             profiles: &others,
+            claims: None,
         };
         let with = |entry: Entry| -> Vec<Entry> {
             let name = entry.name.clone();

@@ -7,18 +7,12 @@ use std::collections::BTreeMap;
 
 use plist::{Dictionary, Value};
 
+pub use crate::config::Entitlement;
+
 /// The entitlements OmniBuild signs with, which are strings, booleans and
 /// arrays of strings. In order of their keys, which is the order DER needs.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Entitlements(BTreeMap<String, Entitlement>);
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum Entitlement {
-    String(String),
-    Boolean(bool),
-    /// Such as the App IDs an App Clip and its app name each other by.
-    Strings(Vec<String>),
-}
 
 impl Entitlements {
     pub fn insert(&mut self, key: &str, value: Entitlement) {

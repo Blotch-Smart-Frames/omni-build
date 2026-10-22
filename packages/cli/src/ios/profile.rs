@@ -7,6 +7,7 @@
 //! A profile is a property list in CMS signed data, signed by Apple.
 //! OmniBuild reads it without checking Apple's signature: the device does.
 
+use std::collections::BTreeMap;
 use std::io::Cursor;
 
 use anyhow::{Context, Result, bail};
@@ -23,6 +24,23 @@ use super::entitlements::{Entitlement, Entitlements};
 const ON_DEMAND_INSTALL: &str = "com.apple.developer.on-demand-install-capable";
 /// The App ID of the app an App Clip belongs to, as its signature names it.
 const PARENT_APPLICATIONS: &str = "com.apple.developer.parent-application-identifiers";
+/// The App IDs of an app's App Clips, as its signature names them.
+pub const APP_CLIP_APPLICATIONS: &str = "com.apple.developer.associated-appclip-app-identifiers";
+const TEAM_IDENTIFIER: &str = "com.apple.developer.team-identifier";
+/// The entitlements OmniBuild signs an app with as its profile and its App
+/// Clips say, which the app can't claim otherwise.
+const SIGNED_AS_THE_PROFILE_SAYS: [&str; 7] = [
+    "application-identifier",
+    TEAM_IDENTIFIER,
+    "get-task-allow",
+    "beta-reports-active",
+    ON_DEMAND_INSTALL,
+    PARENT_APPLICATIONS,
+    APP_CLIP_APPLICATIONS,
+];
+/// Which push notification service the app registers with: `development`
+/// or `production`.
+const PUSH_ENVIRONMENT: &str = "aps-environment";
 
 pub struct Profile {
     /// The profile as Apple made it, which goes in the app as it is.
@@ -103,7 +121,7 @@ impl Profile {
     /// whether it may be debugged (a development profile) or report to
     /// `TestFlight` (a distribution profile). A profile also lists every
     /// capability its App ID may use, such as push notifications, but an
-    /// app claims one only if it uses it.
+    /// app claims one only if it uses it, which `claim` adds.
     pub fn entitlements(&self, bundle_id: &str, certificate: &[u8]) -> Result<Entitlements> {
         let prefix = self.prefix();
         if !self
@@ -120,7 +138,7 @@ impl Profile {
         );
         for (key, value) in &self.entitlements {
             match (key.as_str(), value) {
-                ("com.apple.developer.team-identifier", Value::String(team)) => {
+                (TEAM_IDENTIFIER, Value::String(team)) => {
                     entitlements.insert(key, Entitlement::String(team.clone()));
                 }
                 ("get-task-allow" | "beta-reports-active", Value::Boolean(allowed)) => {
@@ -130,6 +148,88 @@ impl Profile {
             }
         }
         Ok(entitlements)
+    }
+
+    /// Adds to `entitlements`, the app `bundle_id`'s, those it claims for
+    /// the capabilities it uses (`ios.entitlements`), if the profile allows
+    /// each, as iOS checks them: a key the profile has, and a value it
+    /// allows, where `TEAM.*` allows any string starting `TEAM.`, and an
+    /// array allows each string one of its own does.
+    pub fn claim(
+        &self,
+        entitlements: &mut Entitlements,
+        bundle_id: &str,
+        claims: &BTreeMap<String, Entitlement>,
+    ) -> Result<()> {
+        for (key, claim) in claims {
+            if SIGNED_AS_THE_PROFILE_SAYS.contains(&key.as_str()) {
+                bail!(
+                    "OmniBuild signs the app with {key} as its provisioning profile and App Clips say: leave it out of ios.entitlements"
+                );
+            }
+            let Some(allowed) = self.entitlements.get(key) else {
+                bail!(
+                    "the provisioning profile for {bundle_id} doesn't allow {key}, which the app claims (ios.entitlements): turn the capability on for its App ID, and make the profile again"
+                );
+            };
+            // The push environment is the profile's, as Xcode signs it:
+            // development with a development profile, production with a
+            // distribution one.
+            if key == PUSH_ENVIRONMENT
+                && let Value::String(environment) = allowed
+            {
+                entitlements.insert(key, Entitlement::String(environment.clone()));
+                continue;
+            }
+            let expand = |value: &String| self.expand(value, bundle_id, key);
+            let claim = match claim {
+                Entitlement::String(value) => Entitlement::String(expand(value)?),
+                Entitlement::Boolean(value) => Entitlement::Boolean(*value),
+                Entitlement::Strings(values) => {
+                    Entitlement::Strings(values.iter().map(expand).collect::<Result<_>>()?)
+                }
+            };
+            let refused = match &claim {
+                Entitlement::String(value) => (!allows(allowed, value)).then(|| value.clone()),
+                Entitlement::Boolean(value) => {
+                    (allowed.as_boolean() != Some(*value)).then(|| value.to_string())
+                }
+                Entitlement::Strings(values) => {
+                    values.iter().find(|value| !allows(allowed, value)).cloned()
+                }
+            };
+            if let Some(value) = refused {
+                bail!(
+                    "the provisioning profile for {bundle_id} doesn't allow {key} to be {value}, as the app claims (ios.entitlements)"
+                );
+            }
+            entitlements.insert(key, claim);
+        }
+        Ok(())
+    }
+
+    /// `value`, claimed for `key`, with the Xcode build settings an
+    /// `.entitlements` file names most in their place, as an app config
+    /// copied from one may name them too: Xcode writes a keychain group as
+    /// `$(AppIdentifierPrefix)` and its name, and an iCloud container as
+    /// `iCloud.$(CFBundleIdentifier)`.
+    fn expand(&self, value: &str, bundle_id: &str, key: &str) -> Result<String> {
+        let team = self
+            .entitlements
+            .get(TEAM_IDENTIFIER)
+            .and_then(Value::as_string)
+            .unwrap_or(self.prefix());
+        let expanded = value
+            .replace("$(AppIdentifierPrefix)", &format!("{}.", self.prefix()))
+            .replace("$(TeamIdentifierPrefix)", &format!("{team}."))
+            .replace("$(CFBundleIdentifier)", bundle_id)
+            .replace("$(PRODUCT_BUNDLE_IDENTIFIER)", bundle_id);
+        if expanded.contains("$(") {
+            bail!(
+                "{value}, which the app claims for {key} (ios.entitlements), names a build setting OmniBuild doesn't know: give its value"
+            );
+        }
+        Ok(expanded)
     }
 
     /// The entitlements to sign the App Clip `bundle_id`, of the app
@@ -163,8 +263,26 @@ impl Profile {
     }
 }
 
+/// Whether a profile allows a string its app claims, as iOS checks them:
+/// as a string of its own, where one ending in `*` allows any that start
+/// with what's before it, or as one of an array of them.
+fn allows(allowed: &Value, claimed: &str) -> bool {
+    let matches = |pattern: &str| {
+        pattern
+            .strip_suffix('*')
+            .map_or(pattern == claimed, |start| claimed.starts_with(start))
+    };
+    match allowed {
+        Value::String(pattern) => matches(pattern),
+        Value::Array(patterns) => patterns.iter().filter_map(Value::as_string).any(matches),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
+    use std::collections::BTreeMap;
+
     use cms::content_info::{CmsVersion, ContentInfo};
     use cms::signed_data::{EncapsulatedContentInfo, SignedData, SignerInfos};
     use const_oid::db::rfc5911::{ID_DATA, ID_SIGNED_DATA};
@@ -173,8 +291,8 @@ pub mod tests {
 
     use super::Profile;
     use crate::ios::code_signature::tests::identity;
-    use crate::ios::entitlements::Entitlement;
     use crate::ios::entitlements::tests::shell_entitlements;
+    use crate::ios::entitlements::{Entitlement, Entitlements};
 
     /// The test profile: for the test identity, any bundle ID, and
     /// debugging, made as tests/fixtures/README.md says.
@@ -239,6 +357,38 @@ pub mod tests {
                 </dict>
             </dict></plist>"
         ))
+    }
+
+    /// A profile for the App ID `TEAM.dev.example.app`, of the team
+    /// `TEAM`, allowing these entitlements (a property list's dictionary
+    /// entries) too, as a profile lists the capabilities its App ID may
+    /// use.
+    fn profile_allowing(entitlements: &str) -> Profile {
+        Profile::parse(&profile_of(&format!(
+            "<plist><dict>
+                <key>Entitlements</key><dict>
+                    <key>application-identifier</key><string>TEAM.dev.example.app</string>
+                    <key>com.apple.developer.team-identifier</key><string>TEAM</string>
+                    {entitlements}
+                </dict>
+            </dict></plist>"
+        )))
+        .unwrap()
+    }
+
+    fn claims(claims: &[(&str, Entitlement)]) -> BTreeMap<String, Entitlement> {
+        claims
+            .iter()
+            .map(|(key, claim)| ((*key).to_owned(), claim.clone()))
+            .collect()
+    }
+
+    fn strings(strings: &[&str]) -> Entitlement {
+        Entitlement::Strings(strings.iter().map(|&string| string.to_owned()).collect())
+    }
+
+    fn string(string: &str) -> Entitlement {
+        Entitlement::String(string.to_owned())
     }
 
     fn data(bytes: &[u8]) -> String {
@@ -350,6 +500,167 @@ pub mod tests {
             stranger.unwrap_err().to_string(),
             "it doesn't allow the signing key's certificate (DeveloperCertificates)"
         );
+    }
+
+    #[test]
+    fn claims_what_the_profile_allows() {
+        let profile = profile_allowing(
+            "<key>aps-environment</key><string>development</string>
+            <key>com.apple.developer.associated-domains</key><string>*</string>
+            <key>com.apple.security.application-groups</key>
+            <array><string>group.dev.example</string><string>group.dev.shared</string></array>
+            <key>keychain-access-groups</key>
+            <array><string>TEAM.*</string><string>com.apple.token</string></array>
+            <key>com.apple.developer.icloud-container-identifiers</key>
+            <array><string>iCloud.dev.example.app</string></array>
+            <key>com.apple.developer.ubiquity-kvstore-identifier</key><string>TEAM.*</string>
+            <key>com.apple.developer.kernel.increased-memory-limit</key><true/>",
+        );
+        let mut entitlements = Entitlements::default();
+
+        profile
+            .claim(
+                &mut entitlements,
+                "dev.example.app",
+                &claims(&[
+                    // The profile's, whichever the config says.
+                    ("aps-environment", string("production")),
+                    // Any domain, from the profile's wildcard.
+                    (
+                        "com.apple.developer.associated-domains",
+                        strings(&["applinks:example.com", "webcredentials:example.com"]),
+                    ),
+                    (
+                        "com.apple.security.application-groups",
+                        strings(&["group.dev.shared"]),
+                    ),
+                    // With Xcode's build settings in their place.
+                    (
+                        "keychain-access-groups",
+                        strings(&[
+                            "$(AppIdentifierPrefix)dev.example.shared",
+                            "com.apple.token",
+                        ]),
+                    ),
+                    (
+                        "com.apple.developer.icloud-container-identifiers",
+                        strings(&["iCloud.$(CFBundleIdentifier)"]),
+                    ),
+                    (
+                        "com.apple.developer.ubiquity-kvstore-identifier",
+                        string("$(TeamIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)"),
+                    ),
+                    (
+                        "com.apple.developer.kernel.increased-memory-limit",
+                        Entitlement::Boolean(true),
+                    ),
+                ]),
+            )
+            .unwrap();
+
+        let mut expected = Entitlements::default();
+        for (key, claim) in [
+            ("aps-environment", string("development")),
+            (
+                "com.apple.developer.associated-domains",
+                strings(&["applinks:example.com", "webcredentials:example.com"]),
+            ),
+            (
+                "com.apple.security.application-groups",
+                strings(&["group.dev.shared"]),
+            ),
+            (
+                "keychain-access-groups",
+                strings(&["TEAM.dev.example.shared", "com.apple.token"]),
+            ),
+            (
+                "com.apple.developer.icloud-container-identifiers",
+                strings(&["iCloud.dev.example.app"]),
+            ),
+            (
+                "com.apple.developer.ubiquity-kvstore-identifier",
+                string("TEAM.dev.example.app"),
+            ),
+            (
+                "com.apple.developer.kernel.increased-memory-limit",
+                Entitlement::Boolean(true),
+            ),
+        ] {
+            expected.insert(key, claim);
+        }
+        assert_eq!(entitlements, expected);
+    }
+
+    #[test]
+    fn refuses_claims_the_profile_doesnt_allow() {
+        let profile = profile_allowing(
+            "<key>aps-environment</key><true/>
+            <key>com.apple.security.application-groups</key>
+            <array><string>group.dev.example</string></array>
+            <key>keychain-access-groups</key><array><string>TEAM.*</string></array>
+            <key>com.apple.developer.kernel.increased-memory-limit</key><true/>",
+        );
+        let cases = [
+            (
+                "get-task-allow",
+                Entitlement::Boolean(true),
+                "OmniBuild signs the app with get-task-allow as its provisioning profile and App Clips say: leave it out of ios.entitlements",
+            ),
+            (
+                "com.apple.developer.associated-appclip-app-identifiers",
+                strings(&["TEAM.dev.example.app.Clip"]),
+                "OmniBuild signs the app with com.apple.developer.associated-appclip-app-identifiers as",
+            ),
+            (
+                "com.apple.developer.healthkit",
+                Entitlement::Boolean(true),
+                "the provisioning profile for dev.example.app doesn't allow com.apple.developer.healthkit, which the app claims (ios.entitlements): turn the capability on for its App ID, and make the profile again",
+            ),
+            (
+                "com.apple.security.application-groups",
+                strings(&["group.dev.example", "group.dev.other"]),
+                "the provisioning profile for dev.example.app doesn't allow com.apple.security.application-groups to be group.dev.other, as the app claims (ios.entitlements)",
+            ),
+            (
+                "keychain-access-groups",
+                string("OTHER.dev.example.shared"),
+                "doesn't allow keychain-access-groups to be OTHER.dev.example.shared",
+            ),
+            (
+                "com.apple.developer.kernel.increased-memory-limit",
+                Entitlement::Boolean(false),
+                "doesn't allow com.apple.developer.kernel.increased-memory-limit to be false",
+            ),
+            // Not a push environment the app could have.
+            (
+                "aps-environment",
+                string("development"),
+                "doesn't allow aps-environment to be development",
+            ),
+            (
+                "keychain-access-groups",
+                string("$(TeamIdentifier)shared"),
+                "$(TeamIdentifier)shared, which the app claims for keychain-access-groups (ios.entitlements), names a build setting OmniBuild doesn't know",
+            ),
+            (
+                "keychain-access-groups",
+                strings(&["$(DEVELOPMENT_TEAM).dev.example.shared"]),
+                "$(DEVELOPMENT_TEAM).dev.example.shared, which the app claims for keychain-access-groups (ios.entitlements), names a build setting OmniBuild doesn't know: give its value",
+            ),
+        ];
+
+        for (key, claim, message) in cases {
+            let error = profile
+                .claim(
+                    &mut Entitlements::default(),
+                    "dev.example.app",
+                    &claims(&[(key, claim)]),
+                )
+                .unwrap_err()
+                .to_string();
+
+            assert!(error.contains(message), "{error}");
+        }
     }
 
     #[test]
