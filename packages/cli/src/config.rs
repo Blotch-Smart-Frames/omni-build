@@ -45,12 +45,25 @@ pub struct App {
     /// Which way up the app's screen is on phones: the launcher activity's
     /// on Android, and the iPhone's orientations in `Info.plist` on iOS.
     pub orientation: Option<Orientation>,
+    /// The app's values in other languages, by language tag, such as `fr`,
+    /// `pt-BR` or `zh-Hans`, which a device shows in the language it's set
+    /// to: a string resource's on Android, and `InfoPlist.strings` in the
+    /// language's folder on iOS.
+    pub translations: Option<BTreeMap<String, Translation>>,
     /// What only Android apps have.
     #[serde(default)]
     pub android: Android,
     /// What only iOS apps have.
     #[serde(default)]
     pub ios: Ios,
+}
+
+/// The app's values in one language.
+#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Translation {
+    /// The name under the app's icon.
+    pub name: Option<String>,
 }
 
 /// Which way up an app's screen is on phones. Tablets turn every app every
@@ -229,7 +242,74 @@ pub fn check_web_link(host: &str) -> Result<()> {
     Ok(())
 }
 
+/// Checks a language tag the app config gives, as both platforms take
+/// one: a language, then its script and region if it needs them, as BCP 47
+/// writes them (`fr`, `pt-BR`, `zh-Hans`, `es-419`). Android's resource
+/// tables have room for no more.
+pub fn check_language_tag(tag: &str) -> Result<()> {
+    let mut subtags = tag.split('-').peekable();
+    let language = subtags.next().unwrap_or_default();
+    let mut valid = (2..=3).contains(&language.len())
+        && language
+            .chars()
+            .all(|character| character.is_ascii_lowercase());
+    // A script is a capital letter, then three lowercase ones.
+    if let Some(script) = subtags.next_if(|subtag| subtag.len() == 4) {
+        let mut characters = script.chars();
+        valid &= characters
+            .next()
+            .is_some_and(|first| first.is_ascii_uppercase())
+            && characters.all(|character| character.is_ascii_lowercase());
+    }
+    // A region is two capital letters, or three digits for one larger than
+    // a country.
+    if let Some(region) = subtags.next() {
+        valid &= (region.len() == 2
+            && region
+                .chars()
+                .all(|character| character.is_ascii_uppercase()))
+            || (region.len() == 3 && region.chars().all(|character| character.is_ascii_digit()));
+    }
+    if !valid || subtags.next().is_some() {
+        bail!(
+            "\"{tag}\" isn't a language tag OmniBuild takes: give a language, then its script and region if it needs them, such as fr, pt-BR or zh-Hans"
+        );
+    }
+    Ok(())
+}
+
+/// The value among `values`, by language tag, that fits the language `tag`
+/// best: its own, or that of the tag it falls back to, dropping subtags
+/// from its end, as RFC 4647's lookup does: `zh-Hant-TW`, then `zh-Hant`,
+/// then `zh`.
+pub fn closest<'a>(values: &BTreeMap<&str, &'a str>, tag: &str) -> Option<&'a str> {
+    let mut tag = tag;
+    loop {
+        if let Some(&value) = values.get(tag) {
+            return Some(value);
+        }
+        tag = &tag[..tag.rfind('-')?];
+    }
+}
+
 impl App {
+    /// Checks the language tags of the app's translations.
+    pub fn check_translations(&self) -> Result<()> {
+        self.translations
+            .iter()
+            .flatten()
+            .try_for_each(|(tag, _)| check_language_tag(tag))
+    }
+
+    /// The app's name in other languages, by language tag.
+    pub fn translated_names(&self) -> BTreeMap<&str, &str> {
+        self.translations
+            .iter()
+            .flatten()
+            .filter_map(|(tag, translation)| Some((tag.as_str(), translation.name.as_deref()?)))
+            .collect()
+    }
+
     /// Reads an app config from a JSON file. The paths in it are relative
     /// to the file's folder.
     pub fn read(path: &Path) -> Result<Self> {
@@ -262,9 +342,11 @@ impl App {
 mod tests {
     use std::fs;
 
+    use std::collections::BTreeMap;
+
     use super::{
-        AdaptiveIcon, Android, App, Background, Bundle, Entitlement, Ios, Orientation,
-        check_url_scheme, check_web_link,
+        AdaptiveIcon, Android, App, Background, Bundle, Entitlement, Ios, Orientation, Translation,
+        check_language_tag, check_url_scheme, check_web_link, closest,
     };
 
     #[test]
@@ -275,8 +357,7 @@ mod tests {
             &path,
             r#"{ "id": "dev.example.app", "name": "Example", "version": "2.5.0", "build": 42,
                 "icon": "icon.png", "payload": "bundle", "urlSchemes": ["example"],
-                "webLinks": ["example.com"],
-                "orientation": "landscape",
+                "webLinks": ["example.com"], "orientation": "landscape",
                 "android": {
                     "adaptiveIcon": { "foreground": "front.png", "background": "back.png", "monochrome": "mono.png" },
                     "permissions": ["CAMERA"], "abis": ["arm64-v8a"]
@@ -311,6 +392,7 @@ mod tests {
                 url_schemes: Some(vec!["example".to_owned()]),
                 web_links: Some(vec!["example.com".to_owned()]),
                 orientation: Some(Orientation::Landscape),
+                translations: None,
                 android: Android {
                     adaptive_icon: Some(AdaptiveIcon {
                         foreground: dir.path().join("front.png"),
@@ -369,6 +451,90 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn reads_the_apps_name_in_other_languages() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.json");
+        fs::write(
+            &path,
+            r#"{ "name": "Tides", "translations": { "fr": { "name": "Marées" }, "de": {} } }"#,
+        )
+        .unwrap();
+
+        let app = App::read(&path).unwrap();
+
+        assert_eq!(
+            app.translations,
+            Some(BTreeMap::from([
+                ("de".to_owned(), Translation::default()),
+                (
+                    "fr".to_owned(),
+                    Translation {
+                        name: Some("Marées".to_owned())
+                    }
+                ),
+            ]))
+        );
+        // A language with no name has none to give.
+        assert_eq!(app.translated_names(), BTreeMap::from([("fr", "Marées")]));
+        assert!(app.check_translations().is_ok());
+        let mut wrong = app;
+        wrong
+            .translations
+            .as_mut()
+            .unwrap()
+            .insert("FR".to_owned(), Translation::default());
+        assert!(
+            wrong
+                .check_translations()
+                .unwrap_err()
+                .to_string()
+                .starts_with("\"FR\" isn't a language tag OmniBuild takes")
+        );
+    }
+
+    #[test]
+    fn checks_language_tags() {
+        for tag in ["fr", "fil", "pt-BR", "zh-Hans", "zh-Hant-TW", "es-419"] {
+            assert!(check_language_tag(tag).is_ok(), "{tag}");
+        }
+        for tag in [
+            "",
+            "f",
+            "germ",
+            "FR",
+            "fr_FR",
+            "fr-fr",
+            "pt-br",
+            "zh-hans",
+            "zh-HANS",
+            "es-41",
+            "es-4190",
+            "fr-FR-x",
+            "fr-",
+            "de-DE-1901",
+        ] {
+            assert_eq!(
+                check_language_tag(tag).unwrap_err().to_string(),
+                format!(
+                    "\"{tag}\" isn't a language tag OmniBuild takes: give a language, then its script and region if it needs them, such as fr, pt-BR or zh-Hans"
+                ),
+                "{tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn finds_the_value_that_fits_a_language_best() {
+        let values = BTreeMap::from([("fr", "French"), ("zh-Hant", "Traditional Chinese")]);
+
+        assert_eq!(closest(&values, "fr"), Some("French"));
+        assert_eq!(closest(&values, "fr-CA"), Some("French"));
+        assert_eq!(closest(&values, "zh-Hant-TW"), Some("Traditional Chinese"));
+        assert_eq!(closest(&values, "zh"), None);
+        assert_eq!(closest(&values, "de-DE"), None);
     }
 
     #[test]

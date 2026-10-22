@@ -85,6 +85,7 @@ describe('expected', () => {
   const values = {
     id: 'dev.omnibuild.e2e.app',
     name: 'OmniBuild E2E',
+    frenchName: 'OmniBuild E2E en français',
     version: '2.5.0',
     build: '42',
     payload: 'Payload from the OmniBuild E2E app\n',

@@ -166,10 +166,21 @@ fn set_resources(
         .contents()
         .and_then(|contents| read_resources(&contents, layout))
         .with_context(|| format!("couldn't read the shell's {}", layout.resources))?;
-    if let Some(name) = &app.name {
-        for &resource in &changes.name_resources {
+    let names = app.translated_names();
+    for &resource in &changes.name_resources {
+        if let Some(name) = &app.name {
             resources.set_string(resource, name).with_context(|| {
                 format!("couldn't give the app its name in {}", layout.resources)
+            })?;
+        }
+        // Then its translations, over the name in each language the shell
+        // has its own.
+        if !names.is_empty() {
+            resources.translate(resource, &names).with_context(|| {
+                format!(
+                    "couldn't give the app its name in other languages in {}",
+                    layout.resources
+                )
             })?;
         }
     }
@@ -266,6 +277,7 @@ fn is_jar_signature(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
 
@@ -288,7 +300,7 @@ mod tests {
     use crate::android::proto_xml::tests::SHELL_AAB;
     use crate::android::resources::Value as ResourceValue;
     use crate::android::resources::tests::strings;
-    use crate::config::{AdaptiveIcon, Android, App, Background};
+    use crate::config::{AdaptiveIcon, Android, App, Background, Translation};
     use crate::icon::tests::solid_png;
     use crate::key::tests::KEY;
     use crate::zip::{self, Entry, Method, tests::SHELL, tests::entry, tests::named};
@@ -995,6 +1007,7 @@ mod tests {
         let missing = repackage(&without_table, &named, &KEY).unwrap_err();
         let corrupt = repackage(&bad_table, &named, &KEY).unwrap_err();
         let unnamed = repackage(&broken, &named, &KEY).unwrap_err();
+        let untranslated = repackage(&broken, &translated(None), &KEY).unwrap_err();
 
         assert_eq!(missing.to_string(), "the shell has no resources.arsc");
         assert_eq!(
@@ -1005,6 +1018,53 @@ mod tests {
             format!("{unnamed:#}"),
             "couldn't give the app its name in resources.arsc: it's corrupt or cut short"
         );
+        assert_eq!(
+            format!("{untranslated:#}"),
+            "couldn't give the app its name in other languages in resources.arsc: it's corrupt or cut short"
+        );
+    }
+
+    /// An app with its name, if it has one, and its name in French.
+    fn translated(name: Option<&str>) -> App {
+        App {
+            name: name.map(str::to_owned),
+            translations: Some(BTreeMap::from([(
+                "fr".to_owned(),
+                Translation {
+                    name: Some("Reconditionnée".to_owned()),
+                },
+            )])),
+            ..App::default()
+        }
+    }
+
+    #[test]
+    fn gives_the_shell_the_apps_name_in_other_languages() {
+        for (shell, table, bundle) in [
+            (SHELL, "resources.arsc", false),
+            (SHELL_AAB, "base/resources.pb", true),
+        ] {
+            for (app, default) in [
+                (translated(Some("Repackaged")), "Repackaged"),
+                (translated(None), "OmniBuild Shell"),
+            ] {
+                let repackaged = zip::read(&repackage(shell, &app, &KEY).unwrap()).unwrap();
+
+                let contents = file(&repackaged, table);
+                let table: Box<dyn Resources> = if bundle {
+                    Box::new(ProtoResources::parse(&contents).unwrap())
+                } else {
+                    Box::new(ResourceTable::parse(&contents).unwrap())
+                };
+                // The application's label, and the launcher activity's.
+                for resource in [0x7f03_0000, 0x7f03_0001] {
+                    assert_eq!(
+                        strings(table.as_ref(), resource).unwrap(),
+                        [default, "Reconditionnée"]
+                    );
+                }
+            }
+        }
     }
 
     fn aab_with(others: Vec<Entry>) -> Vec<u8> {

@@ -12,6 +12,9 @@ struct ShellReport: Encodable {
 
     let id: String?
     let name: String?
+    /// The name under the icon on an iPhone set to French: the app's own
+    /// in its French translation of Info.plist (`fr.lproj`).
+    let frenchName: String?
     let version: String?
     let build: String?
     let payload: String?
@@ -59,6 +62,9 @@ struct ShellReport: Encodable {
         id = bundle.bundleIdentifier
         // The name under the icon on the home screen.
         name = (shown["CFBundleDisplayName"] ?? shown["CFBundleName"]) as? String
+        frenchName = bundle.path(forResource: "fr", ofType: "lproj")
+            .flatMap { Bundle(path: $0) }
+            .map { $0.localizedString(forKey: "CFBundleDisplayName", value: nil, table: "InfoPlist") }
         cameraUsage = shown["NSCameraUsageDescription"] as? String
         urlSchemes = (info["CFBundleURLTypes"] as? [[String: Any]])?
             .flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }

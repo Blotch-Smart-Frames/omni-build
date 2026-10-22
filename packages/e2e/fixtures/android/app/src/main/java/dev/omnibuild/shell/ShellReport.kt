@@ -6,6 +6,7 @@ import android.content.pm.PackageInfo
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
@@ -38,6 +39,9 @@ object ShellReport {
             // the launcher activity's label, which is the application's
             // unless the activity has one of its own.
             .put("name", launcherLabel(context))
+            // The same name on a phone set to French, from the app's French
+            // resources.
+            .put("frenchName", launcherLabelIn(context, Locale.FRENCH))
             .put("version", packageInfo.versionName ?: JSONObject.NULL)
             .put("build", versionCode(packageInfo).toString())
             .put("payload", payload ?: JSONObject.NULL)
@@ -68,6 +72,15 @@ object ShellReport {
 
     private fun launcherLabel(context: Context): String =
         launcherActivity(context).loadLabel(context.packageManager).toString()
+
+    /** The launcher activity's label in the resources for `locale`. */
+    private fun launcherLabelIn(context: Context, locale: Locale): String {
+        val activity = launcherActivity(context).activityInfo
+        val label = activity.labelRes.takeIf { it != 0 } ?: context.applicationInfo.labelRes
+        val configuration = Configuration(context.resources.configuration)
+        configuration.setLocale(locale)
+        return context.createConfigurationContext(configuration).resources.getString(label)
+    }
 
     /** Its `android:screenOrientation`, as the manifest names it. */
     private fun orientation(activity: ActivityInfo): String =

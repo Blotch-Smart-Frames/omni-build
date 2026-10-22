@@ -6,17 +6,40 @@
 //! chunk per configuration (language, density, ...) with an entry for each
 //! resource that has a value in it. OmniBuild changes values in place and
 //! adds the strings they need to the end of the pool, so every other
-//! chunk, offset and string stays as aapt2 wrote it.
+//! chunk, offset and string stays as aapt2 wrote it. A value in a language
+//! the table has no configuration for gets a type chunk of its own.
+
+use std::collections::BTreeMap;
+use std::ops::Range;
 
 use anyhow::{Result, bail};
 
 use super::chunk::{Chunk, chunks};
 use super::string_pool::StringPool;
 use crate::bytes::Reader;
+use crate::config::closest;
 
 const TABLE: u16 = 0x0002;
 const PACKAGE: u16 = 0x0200;
 const TYPE: u16 = 0x0201;
+const TYPE_SPEC: u16 = 0x0202;
+/// The bit of a type spec's flags for an entry whose value differs from one
+/// language to another (`ACONFIGURATION_LOCALE`).
+const CONFIG_LOCALE: u32 = 0x0004;
+/// Where a type chunk's configuration (`ResTable_config`) starts: after the
+/// chunk's header, its type, flags, entry count and where its entries
+/// start.
+const CONFIG: usize = 20;
+/// The size of a configuration as aapt2 writes one, which OmniBuild writes
+/// too.
+const CONFIG_SIZE: usize = 64;
+/// Where a configuration keeps its language and region, packed, its
+/// script, and whether aapt2 worked the script out from the language
+/// rather than reading it from the resource's folder.
+const LANGUAGE: usize = 8;
+const REGION: usize = 10;
+const SCRIPT: usize = 36;
+const SCRIPT_COMPUTED: usize = 52;
 /// A type chunk whose entry offsets are (entry index, offset / 4) pairs
 /// for only the entries it has.
 const SPARSE: u8 = 0x01;
@@ -66,6 +89,11 @@ pub trait Resources {
     /// Makes a resource a colour, as ARGB, in every configuration it has a
     /// value in.
     fn set_color(&mut self, id: u32, argb: u32) -> Result<()>;
+    /// Makes a string resource `names`' values, by language tag, in other
+    /// languages: in each configuration with a language, the value that
+    /// fits it best, if any, and in a configuration of its own, a language
+    /// and nothing else, each value of a language that has none.
+    fn translate(&mut self, id: u32, names: &BTreeMap<&str, &str>) -> Result<()>;
     fn to_bytes(&self) -> Vec<u8>;
 }
 
@@ -78,10 +106,14 @@ pub struct ResourceTable {
 }
 
 /// Where a resource's value is in `packages`, in one configuration: its
-/// type, and its data (a string pool index, for a string).
+/// type, and its data (a string pool index, for a string), and where its
+/// configuration is. And its entry's key, its name's index in the
+/// package's key strings.
 struct Slot {
     data_type: usize,
     data: usize,
+    config: Range<usize>,
+    key: u32,
 }
 
 /// What a type chunk has for an entry.
@@ -202,19 +234,25 @@ impl ResourceTable {
 
         let at = chunk.start + entries + entry;
         let mut header = Reader::at(data, at);
-        let (size, flags) = (usize::from(header.u16()), header.u16());
-        // A compact entry keeps its value's type in the top byte of its
-        // flags, and its data after them. Any other has a Res_value after
-        // its header: size, a zero byte, the type, and the data.
+        let (size, flags, key) = (usize::from(header.u16()), header.u16(), header.u32());
+        let config = chunk.start + CONFIG..chunk.body();
+        // A compact entry keeps its key where another keeps its size, its
+        // value's type in the top byte of its flags, and its data after
+        // them. Any other has a Res_value after its header: size, a zero
+        // byte, the type, and the data.
         let slot = if flags & COMPACT == 0 {
             Slot {
                 data_type: at + size + 3,
                 data: at + size + 4,
+                config,
+                key,
             }
         } else {
             Slot {
                 data_type: at + 3,
                 data: at + 4,
+                config,
+                key: u32::try_from(size).expect("a u16 fits"),
             }
         };
         if flags & (COMPLEX | COMPACT) == COMPLEX {
@@ -224,6 +262,87 @@ impl ResourceTable {
             bail!("it's corrupt or cut short");
         }
         Ok(Found::Value(slot))
+    }
+
+    /// Adds a type chunk for the language `tag`, with one entry, the
+    /// resource's, named by `key`, a string at `index` in the pool, after
+    /// the type's last chunk. Its type spec says the entry's value differs
+    /// from one language to another.
+    fn add_translation(&mut self, id: u32, key: u32, tag: &str, index: u32) {
+        let (package_id, type_id, entry) = (id >> 24, (id >> 16) & 0xff, offset(id & 0xffff));
+        // Read whole already, to find the resource's values.
+        let packages = chunks(&self.packages, 0, self.packages.len()).expect("they were read");
+        let package = packages
+            .iter()
+            .find(|chunk| {
+                chunk.kind == PACKAGE
+                    && Reader::at(&self.packages, chunk.start + 8).u32() == package_id
+            })
+            .expect("the resource has a value, so its package is there");
+        let types = chunks(&self.packages, package.body(), package.end()).expect("they were read");
+        let of_type = |chunk: &&Chunk| u32::from(self.packages[chunk.start + 8]) == type_id;
+        let spec = types
+            .iter()
+            .filter(|chunk| chunk.kind == TYPE_SPEC)
+            .find(of_type);
+        let last = types
+            .iter()
+            .filter(|chunk| chunk.kind == TYPE)
+            .rfind(of_type)
+            .expect("the resource has a value, so its type has a chunk");
+        // As many entries as the type has, all but this one empty.
+        let count = spec.map_or(0, |spec| {
+            offset(Reader::at(&self.packages, spec.start + 12).u32())
+        });
+        let count = count.max(entry + 1);
+        let header_size = CONFIG + CONFIG_SIZE;
+        let entries = header_size + 4 * count;
+        let mut offsets = vec![0xff; 4 * count];
+        offsets[4 * entry..4 * entry + 4].copy_from_slice(&0u32.to_le_bytes());
+        let chunk = [
+            &TYPE.to_le_bytes()[..],
+            &u16::try_from(header_size)
+                .expect("the header fits")
+                .to_le_bytes(),
+            &u32::try_from(entries + 16)
+                .expect("a type's entries fit")
+                .to_le_bytes(),
+            &[u8::try_from(type_id).expect("a type ID is a byte"), 0, 0, 0],
+            &u32::try_from(count)
+                .expect("a type's entries fit")
+                .to_le_bytes(),
+            &u32::try_from(entries)
+                .expect("a type's entries fit")
+                .to_le_bytes(),
+            &locale_config(tag),
+            &offsets,
+            // The entry, and its value: a string.
+            &8u16.to_le_bytes(),
+            &0u16.to_le_bytes(),
+            &key.to_le_bytes(),
+            &8u16.to_le_bytes(),
+            &[0, TYPE_STRING],
+            &index.to_le_bytes(),
+        ]
+        .concat();
+        let (package_start, package_size, insert) = (package.start, package.size, last.end());
+        let spec = spec.map(|spec| spec.start);
+        self.packages.splice(insert..insert, chunk.iter().copied());
+        let package_size = u32::try_from(package_size + chunk.len()).expect("a package fits");
+        self.packages[package_start + 4..package_start + 8]
+            .copy_from_slice(&package_size.to_le_bytes());
+        if let Some(spec) = spec {
+            // Its type chunks, counted since Android 14.
+            let mut header = Reader::at(&self.packages, spec + 10);
+            let (types, count) = (header.u16(), offset(header.u32()));
+            let types = types + u16::from(types != 0);
+            self.packages[spec + 10..spec + 12].copy_from_slice(&types.to_le_bytes());
+            let flags = spec + 16 + 4 * entry;
+            if entry < count {
+                let value = Reader::at(&self.packages, flags).u32() | CONFIG_LOCALE;
+                self.packages[flags..flags + 4].copy_from_slice(&value.to_le_bytes());
+            }
+        }
     }
 
     /// The file a value names, if it's one: a string in `res/`.
@@ -295,6 +414,35 @@ impl Resources for ResourceTable {
         self.set(id, TYPE_INT_COLOR_ARGB8, argb)
     }
 
+    fn translate(&mut self, id: u32, names: &BTreeMap<&str, &str>) -> Result<()> {
+        let slots = self.slots(id)?;
+        let Some(key) = slots.first().map(|slot| slot.key) else {
+            bail!("it has no resource {id:#010x}");
+        };
+        // The languages with a configuration of their own already.
+        let mut plain = Vec::new();
+        for slot in slots {
+            let Some((tag, only)) = locale(&self.packages[slot.config]) else {
+                continue;
+            };
+            if let Some(name) = closest(names, &tag) {
+                let index = self.pool.add(name);
+                self.packages[slot.data_type] = TYPE_STRING;
+                self.packages[slot.data..slot.data + 4].copy_from_slice(&index.to_le_bytes());
+            }
+            if only {
+                plain.push(tag);
+            }
+        }
+        for (&tag, &name) in names {
+            if !plain.iter().any(|plain| plain == tag) {
+                let index = self.pool.add(name);
+                self.add_translation(id, key, tag, index);
+            }
+        }
+        Ok(())
+    }
+
     fn to_bytes(&self) -> Vec<u8> {
         let pool = self.pool.to_bytes();
         let size = u32::try_from(12 + pool.len() + self.packages.len())
@@ -315,13 +463,102 @@ fn offset(value: u32) -> usize {
     usize::try_from(value).expect("OmniBuild runs on 32 and 64-bit systems")
 }
 
+/// The language tag a configuration is for, such as `pt-BR`, and whether
+/// a language is all it's for; or none, for one that's for every language.
+fn locale(config: &[u8]) -> Option<(String, bool)> {
+    let byte = |at: usize| config.get(at).copied().unwrap_or_default();
+    let mut tag = unpack(byte(LANGUAGE), byte(LANGUAGE + 1), b'a');
+    if tag.is_empty() {
+        return None;
+    }
+    // A script aapt2 worked out from the language isn't in the tag the
+    // resource's folder gave.
+    if byte(SCRIPT) != 0 && byte(SCRIPT_COMPUTED) == 0 {
+        tag.push('-');
+        tag.extend((SCRIPT..SCRIPT + 4).map(|at| char::from(byte(at))));
+    }
+    let region = unpack(byte(REGION), byte(REGION + 1), b'0');
+    if !region.is_empty() {
+        tag.push('-');
+        tag.push_str(&region);
+    }
+    // Past its size, every other qualifier is nothing: a density, a
+    // variant of the language, an Android version.
+    let only = config.iter().enumerate().skip(4).all(|(at, &value)| {
+        value == 0 || matches!(at, LANGUAGE..=11 | SCRIPT..=39 | SCRIPT_COMPUTED)
+    });
+    Some((tag, only))
+}
+
+/// A language or region as a configuration packs it into two bytes: two
+/// letters as they are, and three letters or digits five bits each, as
+/// their distance from `base`, with the top bit set.
+fn unpack(first: u8, second: u8, base: u8) -> String {
+    if first & 0x80 == 0 {
+        [first, second]
+            .into_iter()
+            .filter(|&byte| byte != 0)
+            .map(char::from)
+            .collect()
+    } else {
+        [
+            second & 0x1f,
+            ((second & 0xe0) >> 5) | ((first & 0x03) << 3),
+            (first & 0x7c) >> 2,
+        ]
+        .into_iter()
+        .map(|value| char::from(base + value))
+        .collect()
+    }
+}
+
+fn pack(subtag: &str, base: u8) -> [u8; 2] {
+    if let [first, second, third] = *subtag.as_bytes() {
+        let [first, second, third] = [first, second, third].map(|byte| byte.wrapping_sub(base));
+        [0x80 | (third << 2) | (second >> 3), (second << 5) | first]
+    } else {
+        // Two letters, as they are: the language tags OmniBuild takes have
+        // two or three.
+        let mut packed = [0; 2];
+        packed
+            .iter_mut()
+            .zip(subtag.bytes())
+            .for_each(|(to, from)| *to = from);
+        packed
+    }
+}
+
+/// A configuration for the language `tag` and nothing else, as aapt2
+/// writes one for a resource's folder, such as `values-b+zh+Hans`. A
+/// script the tag doesn't give is left for Android to work out, as it
+/// does for tables aapt2 wrote before it wrote scripts.
+fn locale_config(tag: &str) -> Vec<u8> {
+    let mut config = vec![0; CONFIG_SIZE];
+    config[..4].copy_from_slice(&u32::try_from(CONFIG_SIZE).expect("it fits").to_le_bytes());
+    let mut subtags = tag.split('-');
+    let language = pack(subtags.next().unwrap_or_default(), b'a');
+    config[LANGUAGE..LANGUAGE + 2].copy_from_slice(&language);
+    for subtag in subtags {
+        if subtag.len() == 4 {
+            config[SCRIPT..SCRIPT + 4].copy_from_slice(subtag.as_bytes());
+        } else {
+            config[REGION..REGION + 2].copy_from_slice(&pack(subtag, b'0'));
+        }
+    }
+    config
+}
+
 #[cfg(test)]
 pub mod tests {
+    use std::collections::BTreeMap;
+
     use super::{
-        COMPACT, COMPLEX, OFFSET16, ResourceTable, Resources, SPARSE, TYPE_INT_COLOR_ARGB8,
-        TYPE_STRING, Value,
+        COMPACT, COMPLEX, CONFIG_LOCALE, OFFSET16, ResourceTable, Resources, SPARSE,
+        TYPE_INT_COLOR_ARGB8, TYPE_SPEC, TYPE_STRING, Value, locale, locale_config,
     };
+    use crate::android::chunk::chunks;
     use crate::android::string_pool::tests::empty;
+    use crate::bytes::Reader;
     use crate::zip::{self, tests::SHELL};
 
     const APP_NAME: u32 = 0x7f03_0000;
@@ -375,7 +612,18 @@ pub mod tests {
     /// and entries. Its configuration is the default one, written as just
     /// its size.
     fn type_chunk(flags: u8, count: u32, offsets: &[u8], entries: &[u8]) -> Vec<u8> {
-        let header_size = 24;
+        type_chunk_for(&4u32.to_le_bytes(), flags, count, offsets, entries)
+    }
+
+    /// The same, for this configuration.
+    fn type_chunk_for(
+        config: &[u8],
+        flags: u8,
+        count: u32,
+        offsets: &[u8],
+        entries: &[u8],
+    ) -> Vec<u8> {
+        let header_size = 20 + config.len();
         let entries_start = header_size + offsets.len();
         let size = u32::try_from(entries_start + entries.len()).unwrap();
         [
@@ -385,13 +633,225 @@ pub mod tests {
             &[2, flags, 0, 0],
             &count.to_le_bytes(),
             &u32::try_from(entries_start).unwrap().to_le_bytes(),
-            &4u32.to_le_bytes(),
+            config,
             offsets,
             entries,
         ]
         .concat()
     }
 
+    /// A type spec for type 2, with these flags for its entries, and this
+    /// count of type chunks, which aapt2 has written since Android 14.
+    fn type_spec(types: u16, flags: &[u32]) -> Vec<u8> {
+        let size = u32::try_from(16 + 4 * flags.len()).unwrap();
+        [
+            &TYPE_SPEC.to_le_bytes()[..],
+            &16u16.to_le_bytes(),
+            &size.to_le_bytes(),
+            &[2, 0],
+            &types.to_le_bytes(),
+            &u32::try_from(flags.len()).unwrap().to_le_bytes(),
+            &flags
+                .iter()
+                .flat_map(|flags| flags.to_le_bytes())
+                .collect::<Vec<_>>(),
+        ]
+        .concat()
+    }
+
+    /// Each configuration's language the resource has a value in, if it
+    /// has one, and the value.
+    fn translations(table: &ResourceTable, id: u32) -> Vec<(Option<String>, Option<String>)> {
+        table
+            .slots(id)
+            .unwrap()
+            .into_iter()
+            .map(|slot| {
+                let data = Reader::at(&table.packages, slot.data).u32();
+                (
+                    locale(&table.packages[slot.config]).map(|(tag, _)| tag),
+                    table.pool.get(data),
+                )
+            })
+            .collect()
+    }
+
+    /// The type spec's flags for each entry, and its count of type chunks.
+    fn spec_of(table: &ResourceTable, package: usize) -> (Vec<u32>, u16) {
+        let packages = chunks(&table.packages, 0, table.packages.len()).unwrap();
+        let package = &packages[package];
+        let types = chunks(&table.packages, package.body(), package.end()).unwrap();
+        let spec = types.iter().find(|chunk| chunk.kind == TYPE_SPEC).unwrap();
+        let mut header = Reader::at(&table.packages, spec.start + 10);
+        let (count, entries) = (header.u16(), header.u32());
+        let flags = (0..entries).map(|_| header.u32()).collect();
+        (flags, count)
+    }
+
+    fn names<'a>(names: &[(&'a str, &'a str)]) -> BTreeMap<&'a str, &'a str> {
+        names.iter().copied().collect()
+    }
+
+    #[test]
+    fn translates_the_shells_name_into_languages_it_hasnt() {
+        let mut table = ResourceTable::parse(&shell_table()).unwrap();
+
+        table
+            .translate(
+                APP_NAME,
+                &names(&[
+                    ("fil", "Taog"),
+                    ("fr", "Marées"),
+                    ("es-419", "Mareas"),
+                    ("zh-Hans", "潮汐"),
+                ]),
+            )
+            .unwrap();
+
+        // Read back from what it writes, with a type chunk for each.
+        let table = ResourceTable::parse(&table.to_bytes()).unwrap();
+        let some = |text: &str| Some(text.to_owned());
+        assert_eq!(
+            translations(&table, APP_NAME),
+            [
+                (None, some("OmniBuild Shell")),
+                (some("es-419"), some("Mareas")),
+                (some("fil"), some("Taog")),
+                (some("fr"), some("Marées")),
+                (some("zh-Hans"), some("潮汐")),
+            ]
+        );
+        // The launcher's name, the next entry, has none; the icon's files
+        // are as they were.
+        assert_eq!(strings(&table, 0x7f03_0001).unwrap(), ["OmniBuild Shell"]);
+        assert_eq!(
+            strings(&table, 0x7f02_0000).unwrap(),
+            ["res/d2.webp", "res/sK.webp", "res/BW.xml"]
+        );
+        assert_eq!(
+            ResourceTable::parse(&table.to_bytes()).unwrap().to_bytes(),
+            table.to_bytes()
+        );
+    }
+
+    #[test]
+    fn translates_into_the_languages_the_table_has_and_says_so_in_its_spec() {
+        let offsets = [[0xff; 4], 0u32.to_le_bytes()].concat();
+        let in_config = |tag: &str, data| {
+            let mut config = locale_config(tag);
+            // French in Canada in landscape: more than a language.
+            if tag == "fr-CA" {
+                config[12] = 2;
+            }
+            type_chunk_for(&config, 0, 2, &offsets, &entry(0, TYPE_STRING, data))
+        };
+        let chunks = [
+            type_spec(4, &[0, 0x0080]),
+            type_chunk(0, 2, &offsets, &entry(0, TYPE_STRING, 0)),
+            in_config("fr", 0),
+            in_config("fr-CA", 0),
+            in_config("de", 0),
+        ];
+        let mut table = ResourceTable::parse(&table(&chunks)).unwrap();
+
+        table
+            .translate(0x7f02_0001, &names(&[("fr", "Nom"), ("es", "Nombre")]))
+            .unwrap();
+
+        let some = |text: &str| Some(text.to_owned());
+        // French's own, and Canada's, the closest to it; German has no
+        // translation, and Spanish one of its own, the only one added.
+        assert_eq!(
+            translations(&table, 0x7f02_0001),
+            [
+                (None, some("Shell")),
+                (some("fr"), some("Nom")),
+                (some("fr-CA"), some("Nom")),
+                (some("de"), some("Shell")),
+                (some("es"), some("Nombre")),
+            ]
+        );
+        // In the package with the ID: its entry varies by language, among
+        // what it did, and it has one type chunk more.
+        assert_eq!(spec_of(&table, 1), (vec![0, 0x0080 | CONFIG_LOCALE], 5));
+        assert_eq!(spec_of(&table, 0), (vec![0, 0x0080], 4));
+        assert_eq!(
+            table
+                .translate(0x7f02_0000, &names(&[("fr", "Nom")]))
+                .unwrap_err()
+                .to_string(),
+            "it has no resource 0x7f020000"
+        );
+    }
+
+    #[test]
+    fn translates_in_a_table_without_type_specs_or_their_counts() {
+        // A compact entry, which keeps its key in place of a size.
+        let compact = [
+            &7u16.to_le_bytes()[..],
+            &(COMPACT | u16::from(TYPE_STRING) << 8).to_le_bytes(),
+            &0u32.to_le_bytes(),
+        ]
+        .concat();
+        let offsets = [[0xff; 4], 0u32.to_le_bytes()].concat();
+        for chunks in [
+            vec![type_chunk(0, 2, &offsets, &compact)],
+            vec![type_spec(0, &[0, 0]), type_chunk(0, 2, &offsets, &compact)],
+            // A spec too short for the entry, which has no flags to set.
+            vec![type_spec(0, &[0]), type_chunk(0, 2, &offsets, &compact)],
+        ] {
+            let mut table = ResourceTable::parse(&table(&chunks)).unwrap();
+
+            table
+                .translate(0x7f02_0001, &names(&[("fr", "Nom")]))
+                .unwrap();
+
+            assert_eq!(
+                translations(&table, 0x7f02_0001)[1],
+                (Some("fr".to_owned()), Some("Nom".to_owned()))
+            );
+            // Under the same key.
+            let entry = table.packages.len() - 16;
+            assert_eq!(Reader::at(&table.packages, entry + 4).u32(), 7);
+        }
+        let mut table = ResourceTable::parse(&table(&[
+            type_spec(0, &[0, 0]),
+            type_chunk(0, 2, &offsets, &compact),
+        ]))
+        .unwrap();
+        table
+            .translate(0x7f02_0001, &names(&[("fr", "Nom")]))
+            .unwrap();
+        assert_eq!(spec_of(&table, 1), (vec![0, CONFIG_LOCALE], 0));
+    }
+
+    #[test]
+    fn packs_languages_and_regions_as_android_does() {
+        for tag in ["fr", "fil", "pt-BR", "zh-Hans", "zh-Hant-TW", "es-419"] {
+            assert_eq!(
+                locale(&locale_config(tag)),
+                Some((tag.to_owned(), true)),
+                "{tag}"
+            );
+        }
+        // Filipino's three letters, as aapt2 packs them.
+        assert_eq!(
+            locale_config("fil")[8..10],
+            // f, i and l are 5, 8 and 11 from a: 0x80 | 11 << 2 | 8 >> 3,
+            // then 8 << 5 | 5 in a byte.
+            [0xad, 0x05]
+        );
+        // A script worked out from the language isn't in the tag.
+        let mut computed = locale_config("sr-Latn");
+        computed[52] = 1;
+        assert_eq!(locale(&computed), Some(("sr".to_owned(), true)));
+        // A configuration for every language, and one cut short.
+        assert_eq!(locale(&4u32.to_le_bytes()), None);
+        assert_eq!(
+            locale(&locale_config("fr")[..10]),
+            Some(("fr".to_owned(), true))
+        );
+    }
     /// A table with a package 0x7f holding these chunks, and one with
     /// another ID holding them too, which lookups must pass over.
     fn table(chunks: &[Vec<u8>]) -> Vec<u8> {
