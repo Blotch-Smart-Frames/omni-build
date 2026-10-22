@@ -176,8 +176,8 @@ const verify: Platform['verify'] = ({ app, log }) =>
         )
       ).stdout,
     );
-    // The entitlements in a bundle's signature, and the first App ID in
-    // one of them, which is a string or an array of them.
+    // The entitlements in a bundle's signature, and what one of them claims
+    // for a key: a string, or an array of them, joined.
     const entitlements = async (signed: string) =>
       (
         await run(
@@ -186,12 +186,19 @@ const verify: Platform['verify'] = ({ app, log }) =>
           { log },
         )
       ).stdout;
-    const appId = (xml: string, key: string) =>
-      xml.match(
-        new RegExp(
-          `<key>${key.replaceAll('.', '\\.')}</key>\\s*(?:<array>\\s*)?<string>(.*?)</string>`,
-        ),
-      )?.[1];
+    const claimed = (xml: string, key: string) => {
+      const value =
+        xml.match(
+          new RegExp(
+            `<key>${key.replaceAll('.', '\\.')}</key>\\s*(<string>.*?</string>|<array>[^]*?</array>)`,
+          ),
+        )?.[1] ?? '';
+      return (
+        [...value.matchAll(/<string>(.*?)<\/string>/g)]
+          .map(([, string]) => string)
+          .join(', ') || undefined
+      );
+    };
     // The bundle of this kind in one of the app's folders for them: its
     // Info.plist, and the entitlements its profile allowed its signature.
     const bundleIn = async (folder: string, kind: string) => {
@@ -253,7 +260,15 @@ const verify: Platform['verify'] = ({ app, log }) =>
         version: info.CFBundleShortVersionString,
         build: info.CFBundleVersion,
         payload: readFileSync(path.join(bundle, 'payload.txt'), 'utf8'),
-        applicationIdentifier: appId(own, 'application-identifier'),
+        applicationIdentifier: claimed(own, 'application-identifier'),
+        // What the app claims for its capabilities, as its profile allowed.
+        pushEnvironment: claimed(own, 'aps-environment'),
+        associatedDomains: claimed(
+          own,
+          'com.apple.developer.associated-domains',
+        ),
+        appGroups: claimed(own, 'com.apple.security.application-groups'),
+        keychainGroups: claimed(own, 'keychain-access-groups'),
         urlSchemes: (
           (info.CFBundleURLTypes ?? []) as { CFBundleURLSchemes?: string[] }[]
         )
@@ -266,39 +281,39 @@ const verify: Platform['verify'] = ({ app, log }) =>
             info.UISupportedInterfaceOrientations) as string[] | undefined
         )?.join(', '),
         extensionId: plugIn?.id,
-        extensionApplicationIdentifier: appId(
+        extensionApplicationIdentifier: claimed(
           plugIn?.entitlements ?? '',
           'application-identifier',
         ),
         intentsExtensionId: intents?.id,
-        intentsExtensionApplicationIdentifier: appId(
+        intentsExtensionApplicationIdentifier: claimed(
           intents?.entitlements ?? '',
           'application-identifier',
         ),
         appClipId: appClip?.id,
-        appClipApplicationIdentifier: appId(
+        appClipApplicationIdentifier: claimed(
           appClip?.entitlements ?? '',
           'application-identifier',
         ),
         // The App Clip and the app each name the other.
-        appClipParent: appId(
+        appClipParent: claimed(
           appClip?.entitlements ?? '',
           'com.apple.developer.parent-application-identifiers',
         ),
-        associatedAppClip: appId(
+        associatedAppClip: claimed(
           own,
           'com.apple.developer.associated-appclip-app-identifiers',
         ),
         // The watch app, and the app it pairs with.
         watchAppId: watchApp?.id,
         watchCompanion: watchApp?.info.WKCompanionAppBundleIdentifier,
-        watchAppApplicationIdentifier: appId(
+        watchAppApplicationIdentifier: claimed(
           watchApp?.entitlements ?? '',
           'application-identifier',
         ),
         // Its widgets, under the watch app.
         watchWidgetsId: watchWidgets?.id,
-        watchWidgetsApplicationIdentifier: appId(
+        watchWidgetsApplicationIdentifier: claimed(
           watchWidgets?.entitlements ?? '',
           'application-identifier',
         ),

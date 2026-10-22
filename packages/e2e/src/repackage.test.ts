@@ -133,6 +133,10 @@ describe('expected', () => {
       cameraUsage: "Scans the codes on OmniBuild's test cards.",
       signer: 'OmniBuild E2E',
       applicationIdentifier: 'OMNIBUILD0.dev.omnibuild.e2e.app',
+      pushEnvironment: 'development',
+      associatedDomains: 'applinks:e2e.omnibuild.example',
+      appGroups: 'group.dev.omnibuild.e2e',
+      keychainGroups: 'OMNIBUILD0.dev.omnibuild.e2e.shared',
       urlSchemes: 'omnibuild-e2e',
       orientations:
         'UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight',

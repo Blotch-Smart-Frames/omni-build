@@ -461,8 +461,25 @@ describe('verify', () => {
       }
       if (args.includes('--entitlements')) {
         return {
-          stdout:
-            '<dict>\n\t<key>application-identifier</key>\n\t<string>TEAM.dev.omnibuild.e2e.app</string>\n</dict>',
+          stdout: [
+            '<dict>',
+            '\t<key>application-identifier</key>',
+            '\t<string>TEAM.dev.omnibuild.e2e.app</string>',
+            '\t<key>aps-environment</key>',
+            '\t<string>development</string>',
+            '\t<key>com.apple.developer.associated-domains</key>',
+            '\t<array>',
+            '\t\t<string>applinks:example.com</string>',
+            '\t\t<string>webcredentials:example.com</string>',
+            '\t</array>',
+            '\t<key>com.apple.security.application-groups</key>',
+            '\t<array/>',
+            '\t<key>keychain-access-groups</key>',
+            '\t<array>',
+            '\t\t<string>TEAM.dev.omnibuild.e2e.shared</string>',
+            '\t</array>',
+            '</dict>',
+          ].join('\n'),
         };
       }
       return args[0] === '--display'
@@ -489,6 +506,12 @@ describe('verify', () => {
         build: '42',
         payload: 'the payload',
         applicationIdentifier: 'TEAM.dev.omnibuild.e2e.app',
+        // A string, or an array of them, joined, and none for an empty
+        // array.
+        pushEnvironment: 'development',
+        associatedDomains: 'applinks:example.com, webcredentials:example.com',
+        appGroups: undefined,
+        keychainGroups: 'TEAM.dev.omnibuild.e2e.shared',
         urlSchemes: 'first, second',
         // An iPhone's own, over those for every device.
         orientations:

@@ -243,6 +243,13 @@ export const expected = (
       cameraUsage,
       signer: SIGNER,
       applicationIdentifier: `${TEAM}.${APP.id}`,
+      // What app.json claims, which the profile allows: the push
+      // environment is the profile's, and the keychain group has the
+      // team's prefix in place of $(AppIdentifierPrefix).
+      pushEnvironment: 'development',
+      associatedDomains: 'applinks:e2e.omnibuild.example',
+      appGroups: 'group.dev.omnibuild.e2e',
+      keychainGroups: `${TEAM}.dev.omnibuild.e2e.shared`,
       urlSchemes: APP.urlSchemes.join(', '),
       orientations: IPHONE_ORIENTATIONS,
       extensionId: `${APP.id}.${EXTENSION}`,
