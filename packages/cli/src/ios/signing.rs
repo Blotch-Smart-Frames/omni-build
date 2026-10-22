@@ -47,41 +47,49 @@ pub struct Identity<'a> {
     /// own, which needs a profile of its own unless a wildcard covers it,
     /// and an App Clip always does.
     pub profiles: &'a [Profile],
-    /// The entitlements the app claims for the capabilities it uses
-    /// (`ios.entitlements`), which its profile has to allow. Its
-    /// extensions, App Clips and watch app are signed with those every
-    /// program has.
-    pub claims: Option<&'a BTreeMap<String, Entitlement>>,
+    /// What the app and the bundles nested in it claim for the
+    /// capabilities they use, by their IDs, which each one's profile has to
+    /// allow. A bundle that claims nothing is signed with the entitlements
+    /// every program has.
+    pub claims: BTreeMap<String, Claims<'a>>,
+}
+
+/// The entitlements a bundle claims, and where the app config gives them.
+pub struct Claims<'a> {
+    /// Such as `ios.entitlements`, the app's.
+    pub source: String,
+    pub entitlements: &'a BTreeMap<String, Entitlement>,
 }
 
 impl Identity<'_> {
-    /// The profile for the bundle `id`, and the entitlements it gives it.
+    /// The profile for the bundle `id`, and the entitlements it gives it,
+    /// with those the bundle claims.
     fn for_bundle(&self, id: &str) -> Result<(&Profile, Entitlements)> {
         let profile = self.profile(id)?;
-        let entitlements = profile
+        let mut entitlements = profile
             .entitlements(id, self.key.certificate())
             .with_context(|| format!("the provisioning profile for {id} doesn't fit"))?;
-        Ok((profile, entitlements))
-    }
-
-    /// The profile for the app `id`, and the entitlements it gives it,
-    /// with those the app claims.
-    fn for_app(&self, id: &str) -> Result<(&Profile, Entitlements)> {
-        let (profile, mut entitlements) = self.for_bundle(id)?;
-        if let Some(claims) = self.claims {
-            profile.claim(&mut entitlements, id, claims)?;
-        }
+        self.claim(profile, &mut entitlements, id)?;
         Ok((profile, entitlements))
     }
 
     /// The profile for the App Clip `id` of the app `app_id`, and the
-    /// entitlements it gives it.
+    /// entitlements it gives it, with those the App Clip claims.
     fn for_app_clip(&self, id: &str, app_id: &str) -> Result<(&Profile, Entitlements)> {
         let profile = self.profile(id)?;
-        let entitlements = profile
+        let mut entitlements = profile
             .app_clip_entitlements(id, app_id, self.key.certificate())
             .with_context(|| format!("the provisioning profile for {id} doesn't fit"))?;
+        self.claim(profile, &mut entitlements, id)?;
         Ok((profile, entitlements))
+    }
+
+    /// Adds what the bundle `id` claims to `entitlements`, if it claims
+    /// anything, as `profile` allows.
+    fn claim(&self, profile: &Profile, entitlements: &mut Entitlements, id: &str) -> Result<()> {
+        self.claims.get(id).map_or(Ok(()), |claims| {
+            profile.claim(entitlements, id, claims.entitlements, &claims.source)
+        })
     }
 
     /// The profile that fits the bundle `id` closest.
@@ -129,7 +137,7 @@ pub fn sign(
         .context("the shell's Info.plist has no bundle ID (CFBundleIdentifier)")?;
     let key = identity.map(|identity| identity.key);
     let mut profile = identity
-        .map(|identity| identity.for_app(identifier))
+        .map(|identity| identity.for_bundle(identifier))
         .transpose()?;
     if let Some((profile, _)) = &profile {
         put(
@@ -478,6 +486,8 @@ fn put(entries: &mut Vec<Entry>, name: &str, contents: &[u8]) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use sha2::{Digest, Sha256};
 
     use super::{Identity, programs, sign};
@@ -731,7 +741,7 @@ mod tests {
         let identity = Identity {
             key: &key,
             profiles: &profiles,
-            claims: None,
+            claims: BTreeMap::new(),
         };
         sign(
             shell.clone(),
@@ -946,7 +956,7 @@ mod tests {
             Some(&Identity {
                 key: &key,
                 profiles: &app_only,
-                claims: None,
+                claims: BTreeMap::new(),
             }),
         )
         .unwrap_err();
@@ -989,7 +999,7 @@ mod tests {
                 Some(&Identity {
                     key: &key,
                     profiles,
-                    claims: None,
+                    claims: BTreeMap::new(),
                 }),
             )
             .unwrap_err();
@@ -1014,7 +1024,7 @@ mod tests {
             Some(&Identity {
                 key: &key,
                 profiles: &profiles,
-                claims: None,
+                claims: BTreeMap::new(),
             }),
         )
         .unwrap();
@@ -1254,14 +1264,14 @@ mod tests {
         let stranger = Identity {
             key: &KEY,
             profiles: &profiles,
-            claims: None,
+            claims: BTreeMap::new(),
         };
         let key = identity();
         let others = [profile_for("TEAM.dev.other.*"), profile_for("TEAM.dev.app")];
         let elsewhere = Identity {
             key: &key,
             profiles: &others,
-            claims: None,
+            claims: BTreeMap::new(),
         };
         let with = |entry: Entry| -> Vec<Entry> {
             let name = entry.name.clone();

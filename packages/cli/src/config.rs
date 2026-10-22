@@ -132,6 +132,22 @@ pub struct Ios {
     /// `.entitlements` file has them. A build for devices is signed with
     /// them, and its provisioning profile has to allow each.
     pub entitlements: Option<BTreeMap<String, Entitlement>>,
+    /// What the bundles nested in the app have of their own: its app
+    /// extensions, App Clips and watch app, and the extensions in those,
+    /// such as a watch app's widgets. Each by the part of its ID after the
+    /// app's, which is the same in the shell, such as `ShellNotifications`
+    /// for `dev.example.app.ShellNotifications`.
+    pub bundles: Option<BTreeMap<String, Bundle>>,
+}
+
+/// What a bundle nested in the app has of its own.
+#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Bundle {
+    /// The entitlements it claims for the capabilities it uses, as the
+    /// app's own do, such as the App Group it shares with the app. Its own
+    /// provisioning profile has to allow each.
+    pub entitlements: Option<BTreeMap<String, Entitlement>>,
 }
 
 /// An entitlement's value, of the kinds capabilities take.
@@ -209,7 +225,8 @@ mod tests {
     use std::fs;
 
     use super::{
-        AdaptiveIcon, Android, App, Background, Entitlement, Ios, Orientation, check_url_scheme,
+        AdaptiveIcon, Android, App, Background, Bundle, Entitlement, Ios, Orientation,
+        check_url_scheme,
     };
 
     #[test]
@@ -231,6 +248,12 @@ mod tests {
                         "aps-environment": "development",
                         "com.apple.developer.associated-domains": ["applinks:example.com"],
                         "com.apple.developer.kernel.increased-memory-limit": true
+                    },
+                    "bundles": {
+                        "ShellNotifications": {
+                            "entitlements": { "com.apple.security.application-groups": ["group.dev.example"] }
+                        },
+                        "Clip": {}
                     }
                 } }"#,
         )
@@ -278,6 +301,26 @@ mod tests {
                             (
                                 "com.apple.developer.kernel.increased-memory-limit".to_owned(),
                                 Entitlement::Boolean(true)
+                            ),
+                        ]
+                        .into()
+                    ),
+                    bundles: Some(
+                        [
+                            ("Clip".to_owned(), Bundle::default()),
+                            (
+                                "ShellNotifications".to_owned(),
+                                Bundle {
+                                    entitlements: Some(
+                                        [(
+                                            "com.apple.security.application-groups".to_owned(),
+                                            Entitlement::Strings(vec![
+                                                "group.dev.example".to_owned()
+                                            ])
+                                        )]
+                                        .into()
+                                    )
+                                }
                             ),
                         ]
                         .into()

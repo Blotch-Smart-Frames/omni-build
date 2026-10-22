@@ -150,26 +150,28 @@ impl Profile {
         Ok(entitlements)
     }
 
-    /// Adds to `entitlements`, the app `bundle_id`'s, those it claims for
-    /// the capabilities it uses (`ios.entitlements`), if the profile allows
-    /// each, as iOS checks them: a key the profile has, and a value it
-    /// allows, where `TEAM.*` allows any string starting `TEAM.`, and an
-    /// array allows each string one of its own does.
+    /// Adds to `entitlements`, the bundle `bundle_id`'s, those it claims for
+    /// the capabilities it uses, which the app config gives in `source`
+    /// (`ios.entitlements` for the app), if the profile allows each, as iOS
+    /// checks them: a key the profile has, and a value it allows, where
+    /// `TEAM.*` allows any string starting `TEAM.`, and an array allows
+    /// each string one of its own does.
     pub fn claim(
         &self,
         entitlements: &mut Entitlements,
         bundle_id: &str,
         claims: &BTreeMap<String, Entitlement>,
+        source: &str,
     ) -> Result<()> {
         for (key, claim) in claims {
             if SIGNED_AS_THE_PROFILE_SAYS.contains(&key.as_str()) {
                 bail!(
-                    "OmniBuild signs the app with {key} as its provisioning profile and App Clips say: leave it out of ios.entitlements"
+                    "OmniBuild signs {bundle_id} with {key} as its provisioning profile and App Clips say: leave it out of {source}"
                 );
             }
             let Some(allowed) = self.entitlements.get(key) else {
                 bail!(
-                    "the provisioning profile for {bundle_id} doesn't allow {key}, which the app claims (ios.entitlements): turn the capability on for its App ID, and make the profile again"
+                    "the provisioning profile for {bundle_id} doesn't allow {key}, which it claims in {source}: turn the capability on for its App ID, and make the profile again"
                 );
             };
             // The push environment is the profile's, as Xcode signs it:
@@ -181,7 +183,7 @@ impl Profile {
                 entitlements.insert(key, Entitlement::String(environment.clone()));
                 continue;
             }
-            let expand = |value: &String| self.expand(value, bundle_id, key);
+            let expand = |value: &String| self.expand(value, bundle_id, key, source);
             let claim = match claim {
                 Entitlement::String(value) => Entitlement::String(expand(value)?),
                 Entitlement::Boolean(value) => Entitlement::Boolean(*value),
@@ -200,7 +202,7 @@ impl Profile {
             };
             if let Some(value) = refused {
                 bail!(
-                    "the provisioning profile for {bundle_id} doesn't allow {key} to be {value}, as the app claims (ios.entitlements)"
+                    "the provisioning profile for {bundle_id} doesn't allow {key} to be {value}, as it claims in {source}"
                 );
             }
             entitlements.insert(key, claim);
@@ -208,12 +210,12 @@ impl Profile {
         Ok(())
     }
 
-    /// `value`, claimed for `key`, with the Xcode build settings an
+    /// `value`, claimed for `key` in `source`, with the Xcode build settings an
     /// `.entitlements` file names most in their place, as an app config
     /// copied from one may name them too: Xcode writes a keychain group as
     /// `$(AppIdentifierPrefix)` and its name, and an iCloud container as
     /// `iCloud.$(CFBundleIdentifier)`.
-    fn expand(&self, value: &str, bundle_id: &str, key: &str) -> Result<String> {
+    fn expand(&self, value: &str, bundle_id: &str, key: &str, source: &str) -> Result<String> {
         let team = self
             .entitlements
             .get(TEAM_IDENTIFIER)
@@ -226,7 +228,7 @@ impl Profile {
             .replace("$(PRODUCT_BUNDLE_IDENTIFIER)", bundle_id);
         if expanded.contains("$(") {
             bail!(
-                "{value}, which the app claims for {key} (ios.entitlements), names a build setting OmniBuild doesn't know: give its value"
+                "{value}, which {bundle_id} claims for {key} in {source}, names a build setting OmniBuild doesn't know: give its value"
             );
         }
         Ok(expanded)
@@ -555,6 +557,7 @@ pub mod tests {
                         Entitlement::Boolean(true),
                     ),
                 ]),
+                "ios.entitlements",
             )
             .unwrap();
 
@@ -604,22 +607,22 @@ pub mod tests {
             (
                 "get-task-allow",
                 Entitlement::Boolean(true),
-                "OmniBuild signs the app with get-task-allow as its provisioning profile and App Clips say: leave it out of ios.entitlements",
+                "OmniBuild signs dev.example.app with get-task-allow as its provisioning profile and App Clips say: leave it out of ios.entitlements",
             ),
             (
                 "com.apple.developer.associated-appclip-app-identifiers",
                 strings(&["TEAM.dev.example.app.Clip"]),
-                "OmniBuild signs the app with com.apple.developer.associated-appclip-app-identifiers as",
+                "OmniBuild signs dev.example.app with com.apple.developer.associated-appclip-app-identifiers as",
             ),
             (
                 "com.apple.developer.healthkit",
                 Entitlement::Boolean(true),
-                "the provisioning profile for dev.example.app doesn't allow com.apple.developer.healthkit, which the app claims (ios.entitlements): turn the capability on for its App ID, and make the profile again",
+                "the provisioning profile for dev.example.app doesn't allow com.apple.developer.healthkit, which it claims in ios.entitlements: turn the capability on for its App ID, and make the profile again",
             ),
             (
                 "com.apple.security.application-groups",
                 strings(&["group.dev.example", "group.dev.other"]),
-                "the provisioning profile for dev.example.app doesn't allow com.apple.security.application-groups to be group.dev.other, as the app claims (ios.entitlements)",
+                "the provisioning profile for dev.example.app doesn't allow com.apple.security.application-groups to be group.dev.other, as it claims in ios.entitlements",
             ),
             (
                 "keychain-access-groups",
@@ -640,12 +643,12 @@ pub mod tests {
             (
                 "keychain-access-groups",
                 string("$(TeamIdentifier)shared"),
-                "$(TeamIdentifier)shared, which the app claims for keychain-access-groups (ios.entitlements), names a build setting OmniBuild doesn't know",
+                "$(TeamIdentifier)shared, which dev.example.app claims for keychain-access-groups in ios.entitlements, names a build setting OmniBuild doesn't know",
             ),
             (
                 "keychain-access-groups",
                 strings(&["$(DEVELOPMENT_TEAM).dev.example.shared"]),
-                "$(DEVELOPMENT_TEAM).dev.example.shared, which the app claims for keychain-access-groups (ios.entitlements), names a build setting OmniBuild doesn't know: give its value",
+                "$(DEVELOPMENT_TEAM).dev.example.shared, which dev.example.app claims for keychain-access-groups in ios.entitlements, names a build setting OmniBuild doesn't know: give its value",
             ),
         ];
 
@@ -655,6 +658,7 @@ pub mod tests {
                     &mut Entitlements::default(),
                     "dev.example.app",
                     &claims(&[(key, claim)]),
+                    "ios.entitlements",
                 )
                 .unwrap_err()
                 .to_string();

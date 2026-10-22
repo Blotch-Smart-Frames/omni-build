@@ -24,6 +24,13 @@
       "keychain-access-groups": [
         "$(AppIdentifierPrefix)dev.omnibuild.e2e.shared"
       ]
+    },
+    "bundles": {
+      "ShellNotifications": {
+        "entitlements": {
+          "com.apple.security.application-groups": ["group.dev.omnibuild.e2e"]
+        }
+      }
     }
   }
 }

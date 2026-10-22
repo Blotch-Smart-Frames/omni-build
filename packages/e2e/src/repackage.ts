@@ -254,6 +254,9 @@ export const expected = (
       orientations: IPHONE_ORIENTATIONS,
       extensionId: `${APP.id}.${EXTENSION}`,
       extensionApplicationIdentifier: `${TEAM}.${APP.id}.${EXTENSION}`,
+      // The App Group the extension shares with the app, as app.json's
+      // ios.bundles claims it for the extension.
+      extensionAppGroups: 'group.dev.omnibuild.e2e',
       intentsExtensionId: `${APP.id}.${INTENTS_EXTENSION}`,
       intentsExtensionApplicationIdentifier: `${TEAM}.${APP.id}.${INTENTS_EXTENSION}`,
       appClipId: `${APP.id}.${APP_CLIP}`,
