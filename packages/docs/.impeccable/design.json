@@ -130,7 +130,7 @@
       "kind": "chip",
       "refersTo": "inline-code",
       "description": "A 1px ink frame on paper: framed, never dithered, so the glyphs stay whole.",
-      "html": "<p class=\"ds-code-line\">Run <code class=\"ds-code\">omni-build --help</code> to see the commands.</p>",
+      "html": "<p class=\"ds-code-line\">Run <code class=\"ds-code\">omni --help</code> to see the commands.</p>",
       "css": ".ds-code-line { font-family: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif; font-size: 1.0625rem; color: var(--ink, #000); } .ds-code { padding: 0 4px; border: 1px solid var(--ink, #000); border-radius: 0; background: var(--paper, #fff); font-family: ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace; font-size: 0.875em; }"
     }
   ],

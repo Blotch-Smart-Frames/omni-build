@@ -61,7 +61,7 @@ export const pack = async ({
   );
   if (!existsSync(path.join(launcherDir, 'dist', 'cli.js'))) {
     throw new Error(
-      "The launcher isn't built: run `npm run build -w omni-build` first.",
+      "The launcher isn't built: run `npm run build -w @blotch/omni-build` first.",
     );
   }
   const license = path.join(root, 'LICENSE');

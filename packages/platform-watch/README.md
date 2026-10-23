@@ -1,4 +1,4 @@
-# @omni-build/platform-watch
+# @blotch/omni-build-platform-watch
 
 Opens a GitHub issue when the app shells need a newer Xcode or Android API level. Apple raises the Xcode that App Store uploads must be built with every April, and Google Play raises the API level apps must target every August 31. The shells are where that work happens: OmniBuild keeps the SDK a shell was built with rather than rewriting it, so meeting a new minimum means rebuilding the shells.
 
@@ -34,7 +34,7 @@ The watch finds its issues by the label and a hidden marker in the body, so taki
 ## Run it
 
 ```sh
-GITHUB_REPOSITORY=Blotch-Smart-Frames/omni-build npm run check -w @omni-build/platform-watch -- --dry-run
+GITHUB_REPOSITORY=Blotch-Smart-Frames/omni-build npm run check -w @blotch/omni-build-platform-watch -- --dry-run
 ```
 
 `--dry-run` reads the sources and the repository's issues, and prints what it would open, comment on, reopen or close, without a token. Without it, `GITHUB_TOKEN` must be able to write issues.

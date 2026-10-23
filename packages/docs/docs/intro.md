@@ -10,7 +10,7 @@ OmniBuild builds, signs, installs and ships iOS and Android apps with no native 
 
 :::warning[Phases 0 and 1]
 
-OmniBuild is in its first phases. `omni-build repackage` gives an Android APK or app bundle (AAB) shell, or an iOS shell built for the Simulator or for devices, an app's ID, name, version, build number, icon, payload and permissions, and signs it, frameworks included. `omni-build key create` makes an Android upload key, `omni-build key request` and `key import` an Apple signing key without a Mac, and `omni-build install` installs an APK on an Android phone plugged in by USB, an emulator or a device on the network. Build tools read what it reports as JSON lines. The npm package isn't published. These pages describe the design in [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1), and will turn into a manual as each phase lands.
+OmniBuild is in its first phases. `omni repackage` gives an Android APK or app bundle (AAB) shell, or an iOS shell built for the Simulator or for devices, an app's ID, name, version, build number, icon, payload and permissions, and signs it, frameworks included. `omni key create` makes an Android upload key, `omni key request` and `key import` an Apple signing key without a Mac, and `omni install` installs an APK on an Android phone plugged in by USB, an emulator or a device on the network. Build tools read what it reports as JSON lines. The npm package isn't published. These pages describe the design in [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1), and will turn into a manual as each phase lands.
 
 :::
 

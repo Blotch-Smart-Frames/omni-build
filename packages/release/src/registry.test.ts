@@ -12,21 +12,24 @@ let registry: Registry;
 
 beforeEach(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'omni-build-registry-'));
-  writeFileSync(path.join(dir, 'omni-build-1.0.0.tgz'), 'launcher');
-  writeFileSync(path.join(dir, 'omni-build-linux-x64-1.0.0.tgz'), 'linux');
+  writeFileSync(path.join(dir, 'blotch-omni-build-1.0.0.tgz'), 'launcher');
+  writeFileSync(
+    path.join(dir, 'blotch-omni-build-linux-x64-1.0.0.tgz'),
+    'linux',
+  );
   registry = await serve(dir, [
     {
-      file: 'omni-build-1.0.0.tgz',
+      file: 'blotch-omni-build-1.0.0.tgz',
       manifest: {
-        name: 'omni-build',
+        name: '@blotch/omni-build',
         version: '1.0.0',
-        bin: { 'omni-build': 'cli.js' },
+        bin: { omni: 'cli.js' },
       },
     },
     {
-      file: 'omni-build-linux-x64-1.0.0.tgz',
+      file: 'blotch-omni-build-linux-x64-1.0.0.tgz',
       manifest: {
-        name: '@omni-build/linux-x64',
+        name: '@blotch/omni-build-linux-x64',
         version: '1.0.0',
         os: ['linux'],
       },
@@ -44,21 +47,23 @@ const get = (url: string) => fetch(new URL(url, registry.url));
 describe('serve', () => {
   it("serves each package's document, as npm reads it", async () => {
     // As npm asks for a scoped package: with its slash escaped.
-    const response = await get(encodeURIComponent('@omni-build/linux-x64'));
+    const response = await get(
+      encodeURIComponent('@blotch/omni-build-linux-x64'),
+    );
 
     expect(registry.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      name: '@omni-build/linux-x64',
+      name: '@blotch/omni-build-linux-x64',
       'dist-tags': { latest: '1.0.0' },
       versions: {
         '1.0.0': {
-          name: '@omni-build/linux-x64',
+          name: '@blotch/omni-build-linux-x64',
           version: '1.0.0',
           os: ['linux'],
-          _id: '@omni-build/linux-x64@1.0.0',
+          _id: '@blotch/omni-build-linux-x64@1.0.0',
           dist: {
-            tarball: `${registry.url}-/omni-build-linux-x64-1.0.0.tgz`,
+            tarball: `${registry.url}-/blotch-omni-build-linux-x64-1.0.0.tgz`,
             integrity: `sha512-${createHash('sha512').update('linux').digest('base64')}`,
             shasum: createHash('sha1').update('linux').digest('hex'),
           },
@@ -68,7 +73,9 @@ describe('serve', () => {
   });
 
   it('serves the tarballs the documents point to', async () => {
-    const { versions } = (await (await get('omni-build')).json()) as {
+    const { versions } = (await (
+      await get(encodeURIComponent('@blotch/omni-build'))
+    ).json()) as {
       versions: Record<string, { dist: { tarball: string } }>;
     };
     const response = await get(versions['1.0.0'].dist.tarball);

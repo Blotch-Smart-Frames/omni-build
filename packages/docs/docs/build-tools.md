@@ -1,6 +1,6 @@
 ---
 title: Running from a build tool
-description: How a framework or build tool runs omni-build, from Node with the omni-build package's API or from anything else with --json, and reads what it reports.
+description: How a framework or build tool runs OmniBuild, from Node with the @blotch/omni-build package's API or from anything else with --json, and reads what it reports.
 ---
 
 # Running from a build tool
@@ -9,10 +9,10 @@ A framework's build command, or any other tool, runs OmniBuild as it would run a
 
 ## From Node
 
-The `omni-build` npm package runs the binary npm installed for the machine, and hands each event over, typed:
+The `@blotch/omni-build` npm package runs the binary npm installed for the machine, and hands each event over, typed:
 
 ```ts
-import { omniBuild } from 'omni-build';
+import { omniBuild } from '@blotch/omni-build';
 
 const result = await omniBuild(
   ['repackage', 'shell.apk', '--config', 'app.json', '--out', 'app.apk'],
@@ -21,14 +21,14 @@ const result = await omniBuild(
 // { event: 'repackaged', shell: 'shell.apk', out: 'app.apk', platform: 'android', format: 'apk', message: '...' }
 ```
 
-`omniBuild()` takes the command's arguments as the `omni-build` command line does, and resolves with the last event, the command's result. When the command fails, it rejects with an `OmniBuildError` whose message is OmniBuild's reason. `onEvent` gets every event as it comes, the last included. Its other options are `cwd` and `env`, for the binary's process, and `binary`, a binary to run rather than npm's. `resolveBinary()` returns the path of npm's binary, for a tool that runs it itself.
+`omniBuild()` takes the command's arguments as the `omni` command line does, and resolves with the last event, the command's result. When the command fails, it rejects with an `OmniBuildError` whose message is OmniBuild's reason. `onEvent` gets every event as it comes, the last included. Its other options are `cwd` and `env`, for the binary's process, and `binary`, a binary to run rather than npm's. `resolveBinary()` returns the path of npm's binary, for a tool that runs it itself.
 
 ## From anything else
 
 With `--json`, OmniBuild writes each event as one line of JSON on stdout, and nothing else, on any command:
 
 ```sh
-$ omni-build repackage shell.apk --out app.apk --json
+$ omni repackage shell.apk --out app.apk --json
 {"event":"key-created","key":"debug","path":"/home/jane/.omni-build/android-debug-key.pem","message":"Created a debug key for signing Android apps: /home/jane/.omni-build/android-debug-key.pem"}
 {"event":"repackaged","shell":"shell.apk","out":"app.apk","platform":"android","format":"apk","message":"Repackaged shell.apk into app.apk"}
 ```

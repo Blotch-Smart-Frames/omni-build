@@ -105,7 +105,7 @@ impl Event {
                 "Created an upload key in {path}, with the alias \"{ALIAS}\". Keep it, and its password, safe: Google Play only takes updates signed with it, unless you ask Google to reset it."
             ),
             Self::KeyRequested { path, request } => format!(
-                "Created a key for an Apple signing certificate in {path}, and its certificate signing request in {request}. Upload the request at developer.apple.com, under Certificates, then add the certificate Apple issues: omni-build key import {path} <certificate>"
+                "Created a key for an Apple signing certificate in {path}, and its certificate signing request in {request}. Upload the request at developer.apple.com, under Certificates, then add the certificate Apple issues: omni key import {path} <certificate>"
             ),
             Self::CertificateImported {
                 path,
@@ -246,7 +246,7 @@ mod tests {
                 request: "apple.certSigningRequest".to_owned(),
             }),
             Line::Stdout(
-                "Created a key for an Apple signing certificate in apple.p12, and its certificate signing request in apple.certSigningRequest. Upload the request at developer.apple.com, under Certificates, then add the certificate Apple issues: omni-build key import apple.p12 <certificate>"
+                "Created a key for an Apple signing certificate in apple.p12, and its certificate signing request in apple.certSigningRequest. Upload the request at developer.apple.com, under Certificates, then add the certificate Apple issues: omni key import apple.p12 <certificate>"
                     .to_owned()
             )
         );

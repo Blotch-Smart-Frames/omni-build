@@ -177,7 +177,7 @@ describe('run', () => {
         ],
       ]);
       expect(output).toEqual([
-        'log: \n▸ Repackaging it with omni-build, with no toolchain in reach',
+        'log: \n▸ Repackaging it with omni, with no toolchain in reach',
         `log: ${path.join(outDir, 'repackaged-a.apk')}`,
         `log: ${path.join(outDir, 'repackaged-a.aab')}`,
       ]);

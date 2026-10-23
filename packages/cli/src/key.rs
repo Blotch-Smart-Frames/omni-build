@@ -116,7 +116,7 @@ impl SigningKey {
                     .with_context(|| format!("couldn't read the keystore {}", path.display()))?;
                 if certificates.is_empty() {
                     bail!(
-                        "{} has a key but no certificate yet: add the one Apple issues for its request with `omni-build key import`",
+                        "{} has a key but no certificate yet: add the one Apple issues for its request with `omni key import`",
                         path.display()
                     );
                 }
@@ -851,7 +851,7 @@ pub mod tests {
         assert_eq!(certificates, vec![]);
         let error = SigningKey::read(&keystore, "a password").err().unwrap();
         assert!(error.to_string().ends_with(
-            "apple.p12 has a key but no certificate yet: add the one Apple issues for its request with `omni-build key import`"
+            "apple.p12 has a key but no certificate yet: add the one Apple issues for its request with `omni key import`"
         ));
         #[cfg(unix)]
         {

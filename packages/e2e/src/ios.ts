@@ -93,7 +93,7 @@ const xcodebuild = async (
 const build: Platform['build'] = async ({ buildDir, outDir, log }) => {
   const simulator = await xcodebuild('iphonesimulator', { buildDir, log });
   // Unsigned, as CI has no certificate Apple issued, but with room for a
-  // signature, which the linker reserves when asked: omni-build replaces
+  // signature, which the linker reserves when asked: omni replaces
   // a signature, and never adds one.
   const device = await xcodebuild('iphoneos', { buildDir, log }, [
     'CODE_SIGNING_ALLOWED=NO',

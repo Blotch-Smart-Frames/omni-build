@@ -1,5 +1,5 @@
-// What each npm package says about itself: the launcher, `omni-build`, and
-// one package per platform in packages/omni-build/src/platforms.ts, which
+// What each npm package says about itself: the launcher, `@blotch/omni-build`,
+// and one package per platform in packages/omni-build/src/platforms.ts, which
 // holds that platform's binary.
 
 /** The fields of a package.json the packages are made from. */
@@ -15,12 +15,25 @@ const OS_NAMES: Record<string, string> = {
   win32: 'Windows',
 };
 
-/** A platform's package, by its key in PLATFORMS (`linux-x64`). */
-export const packageName = (key: string) => `@omni-build/${key}`;
+/**
+ * The scope OmniBuild publishes under, Blotch's. `@omni-build` belongs to
+ * someone else, and npm won't take an unscoped `omni-build`, as it refuses
+ * names that differ from one it has (`omnibuild`) only in punctuation.
+ */
+export const SCOPE = '@blotch';
+
+/** The launcher's name on npm. */
+export const LAUNCHER = `${SCOPE}/omni-build`;
+
+/**
+ * A platform's package, by its key in PLATFORMS (`linux-x64`). Named after
+ * the launcher, since the scope holds Blotch's other packages too.
+ */
+export const packageName = (key: string) => `${LAUNCHER}-${key}`;
 
 /** The binary's file name in a platform's package. */
 export const binaryName = (key: string) =>
-  key.startsWith('win32-') ? 'omni-build.exe' : 'omni-build';
+  key.startsWith('win32-') ? 'omni.exe' : 'omni';
 
 /** A platform, as people name it: "Linux on x64". */
 const described = (key: string) => {
@@ -37,7 +50,7 @@ export const platformManifest = (key: string, launcher: Manifest) => {
   return {
     name: packageName(key),
     version: launcher.version,
-    description: `The omni-build binary for ${described(key)}. Install omni-build, which installs this package on the machines it's for`,
+    description: `The omni binary for ${described(key)}. Install ${LAUNCHER}, which installs this package on the machines it's for`,
     homepage: launcher.homepage,
     bugs: launcher.bugs,
     license: launcher.license,
@@ -76,7 +89,7 @@ export const launcherManifest = (launcher: Manifest, keys: string[]) => {
 /** A platform's README, for its page on npm. */
 export const platformReadme = (key: string) => `# ${packageName(key)}
 
-The [omni-build](https://www.npmjs.com/package/omni-build) binary for ${described(key)}.
+The [omni](https://www.npmjs.com/package/${LAUNCHER}) binary for ${described(key)}.
 
-Install \`omni-build\` rather than this package. It lists a package like this one for each platform it's built for, and npm installs only the one for your OS and CPU.
+Install \`${LAUNCHER}\` rather than this package. It lists a package like this one for each platform it's built for, and npm installs only the one for your OS and CPU.
 `;

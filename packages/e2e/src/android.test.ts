@@ -44,7 +44,7 @@ vi.mock('./repackage.ts', async () => {
   const { run: runMock } = await import('./process.ts');
   return {
     omniBuild: vi.fn((args: string[], _expected: unknown, options: object) =>
-      runMock('/repo/target/release/omni-build', [...args, '--json'], options),
+      runMock('/repo/target/release/omni', [...args, '--json'], options),
     ),
     toolchainFree: () => ({ HOME: '/home/me' }),
     OPEN_URL: 'omnibuild-e2e://report',
@@ -613,7 +613,7 @@ describe('runApp', () => {
     const adb = 'adb -s emulator-5584';
     expect(commands()).toEqual([
       `${adb} uninstall ${appId}`,
-      'omni-build install app.apk --device emulator-5584 --json',
+      'omni install app.apk --device emulator-5584 --json',
       `${adb} logcat -c`,
       `${adb} shell am start -W -a android.intent.action.VIEW -d omnibuild-e2e://report ${appId}`,
       `${adb} logcat -d -v raw -s OmniBuildE2E:I`,
@@ -628,7 +628,7 @@ describe('runApp', () => {
     );
   });
 
-  it('installs with omni-build without a PATH or toolchain variables', async () => {
+  it('installs with omni without a PATH or toolchain variables', async () => {
     logging(['{}\n']);
 
     await android.runApp(options);
@@ -638,12 +638,10 @@ describe('runApp', () => {
       { event: 'installed', device: 'emulator-5584' },
       { log: 'commands.log', env: { HOME: '/home/me' } },
     );
-    expect(vi.mocked(run).mock.calls[1][0]).toBe(
-      '/repo/target/release/omni-build',
-    );
+    expect(vi.mocked(run).mock.calls[1][0]).toBe('/repo/target/release/omni');
   });
 
-  it('installs on a device on the network with omni-build', async () => {
+  it('installs on a device on the network with omni', async () => {
     logging(['{}\n']);
 
     await android.runApp({
@@ -652,11 +650,11 @@ describe('runApp', () => {
     });
 
     expect(commands()[1]).toBe(
-      'omni-build install app.apk --device 192.168.1.20:5555 --json',
+      'omni install app.apk --device 192.168.1.20:5555 --json',
     );
   });
 
-  it('installs on a phone on USB with adb, until omni-build speaks USB', async () => {
+  it('installs on a phone on USB with adb, until omni speaks USB', async () => {
     logging(['{}\n']);
 
     await android.runApp({

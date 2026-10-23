@@ -189,7 +189,7 @@ jobs:
       run:
         shell: bash
     env:
-      BINARY: target/${{ matrix.target }}/release/omni-build${{ startsWith(matrix.runner, 'windows') && '.exe' || '' }}
+      BINARY: target/${{ matrix.target }}/release/omni${{ startsWith(matrix.runner, 'windows') && '.exe' || '' }}
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
@@ -234,7 +234,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run build -w omni-build
+      - run: npm run build -w @blotch/omni-build
       - uses: actions/download-artifact@v8
         with:
           pattern: omni-build-*
@@ -247,7 +247,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # `npm install omni-build` on each OS and CPU the build job builds for, from
+  # `npm install @blotch/omni-build` on each OS and CPU the build job builds for, from
   # a registry on the runner that has the packed packages: npm has to install
   # that machine's binary and no other, and both the command and the API a
   # build tool imports have to run it. Node only: the check uses nothing
@@ -284,12 +284,12 @@ jobs:
   # 1. e2e-shell-*: the real Swift and Kotlin app shells in
   #    packages/e2e/fixtures, built with Xcode and Gradle. The only stage with
   #    a native toolchain: OmniBuild's own CI makes the shells, never its users.
-  # 2. e2e-repackage: each shell through the omni-build binary from the build
+  # 2. e2e-repackage: each shell through the omni binary from the build
   #    job, on Linux, Windows and macOS, with no PATH and none of the
   #    variables that lead to a JDK, the Android SDK or Xcode.
   # 3. e2e-ios, e2e-android: every repackaged app installed and launched on
   #    the iOS Simulator and an Android emulator, each checked against the
-  #    values it reports. omni-build installs each Android app, an app
+  #    values it reports. omni installs each Android app, an app
   #    bundle as the APK bundletool makes from it. An iOS build for devices,
   #    which the Simulator can't run, is checked with codesign and by what
   #    its files say.
@@ -382,7 +382,7 @@ jobs:
         shell: bash
     env:
       # The release binary the build job made for this runner.
-      OMNI_BUILD_BINARY: ${{ github.workspace }}/omni-build-bin/omni-build${{ matrix.os == 'Windows' && '.exe' || '' }}
+      OMNI_BUILD_BINARY: ${{ github.workspace }}/omni-build-bin/omni${{ matrix.os == 'Windows' && '.exe' || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -455,7 +455,7 @@ jobs:
     env:
       # The release binary the build job made for Linux, which installs each
       # app on the emulator, as it would for a user without the Android SDK.
-      OMNI_BUILD_BINARY: ${{ github.workspace }}/omni-build-bin/omni-build
+      OMNI_BUILD_BINARY: ${{ github.workspace }}/omni-build-bin/omni
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -518,7 +518,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run build -w @omni-build/docs
+      - run: npm run build -w @blotch/omni-build-docs
 
   ci-passed:
     name: CI passed

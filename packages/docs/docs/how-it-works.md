@@ -61,7 +61,7 @@ build for android
                 → *.apk, *.aab
 ```
 
-The framework maps its own options to OmniBuild's [app config](./repackaging.md#the-app-config), and runs the binary from the `omni-build` npm package, reading what it reports as JSON lines (see [Running from a build tool](./build-tools.md)). Shells are downloaded rather than bundled in an npm package: a release asset pinned by SHA-256 and cached per user. There are release and debug variants per platform, iOS device and Simulator shells, and one universal Android shell from which only the requested ABIs are kept.
+The framework maps its own options to OmniBuild's [app config](./repackaging.md#the-app-config), and runs the binary from the `@blotch/omni-build` npm package, reading what it reports as JSON lines (see [Running from a build tool](./build-tools.md)). Shells are downloaded rather than bundled in an npm package: a release asset pinned by SHA-256 and cached per user. There are release and debug variants per platform, iOS device and Simulator shells, and one universal Android shell from which only the requested ABIs are kept.
 
 ## Native modules from npm
 

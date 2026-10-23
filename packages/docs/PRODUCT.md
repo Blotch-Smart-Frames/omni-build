@@ -35,7 +35,7 @@ Its mechanism: it doesn't compile anything. It takes a shell that OmniBuild's ow
 
 ## Capabilities and Constraints
 
-- **Status: Phase 0, the spikes.** `omni-build repackage` gives an Android APK or app bundle (AAB) shell an app's ID, name, version, build number, icon and payload, and signs it, and gives an iOS shell the same values and signs it too: ad hoc for the Simulator, and with the user's key and provisioning profile for devices, as an `.ipa`; nothing else is built. The plan is issue #1 (https://github.com/Blotch-Smart-Frames/omni-build/issues/1). The npm package is not published.
+- **Status: Phase 0, the spikes.** `omni repackage` gives an Android APK or app bundle (AAB) shell an app's ID, name, version, build number, icon and payload, and signs it, and gives an iOS shell the same values and signs it too: ad hoc for the Simulator, and with the user's key and provisioning profile for devices, as an `.ipa`; nothing else is built. The plan is issue #1 (https://github.com/Blotch-Smart-Frames/omni-build/issues/1). The npm package is not published.
 - What exists today: the repository, the npm launcher, CI gating 100% coverage and release builds on six targets, and an end-to-end pipeline that builds real Swift and Kotlin shells, runs them through the binary on Linux, Windows and macOS with no `PATH` or toolchain variables, and launches them on the iOS Simulator and an Android emulator. The binary repackages and signs both shells, and codesign checks the iOS ones; no iOS build has been through TestFlight yet.
 - Planned phases: 0 spikes, 1 Android, 2 iOS, 3 upload, 4 prebuilt native modules. Android goes first.
 - Out of scope: compiling source code (Swift, Kotlin, C++). Custom native code still means Xcode or Gradle.
@@ -43,7 +43,7 @@ Its mechanism: it doesn't compile anything. It takes a shell that OmniBuild's ow
 
 ## Brand Commitments
 
-- Name: **OmniBuild** in prose, `omni-build` for the binary and npm package, `@omni-build/*` for scoped packages.
+- Name: **OmniBuild** in prose, `omni` for the binary, `@blotch/omni-build` for the npm package, and `@blotch/omni-build-*` for the packages beside it.
 - Voice: plain, specific and honest about status, like the README and the plan. No hype and no claims the plan doesn't back (speed numbers, store acceptance, features not built).
 - Nothing may look like it belongs to Apple or Google: no platform logos, no imitation of their sites or product art. The site's one-bit desktop world (chosen by the user) keeps the medium's generic grammar and drops everything that is Apple's own: no Apple logo, no Chicago or Geneva typefaces, no Finder, Trash or happy-computer icons.
 - The landing page's main action is to follow the project on GitHub; the second is to read the plan. An install command may appear only labelled as not published yet.

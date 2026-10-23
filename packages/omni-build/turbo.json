@@ -10,10 +10,10 @@
     // dependency of this package (it's never published to npm), so `^build`
     // wouldn't order it.
     "test": {
-      "dependsOn": ["build", "@omni-build/cli#build"]
+      "dependsOn": ["build", "@blotch/omni-build-cli#build"]
     },
     "test:coverage": {
-      "dependsOn": ["build", "@omni-build/cli#build"],
+      "dependsOn": ["build", "@blotch/omni-build-cli#build"],
       "outputs": ["coverage/**"]
     }
   }

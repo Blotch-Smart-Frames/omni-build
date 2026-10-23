@@ -93,13 +93,13 @@ export type OmniBuildEvent =
   | InstalledEvent
   | ErrorEvent;
 
-/** A command that failed, with omni-build's reason as its message. */
+/** A command that failed, with omni's reason as its message. */
 export class OmniBuildError extends Error {
   name = 'OmniBuildError';
 }
 
 export interface OmniBuildOptions {
-  /** Called with each event as omni-build reports it, the last included. */
+  /** Called with each event as omni reports it, the last included. */
   onEvent?: (event: OmniBuildEvent) => void;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
@@ -108,7 +108,7 @@ export interface OmniBuildOptions {
 }
 
 /**
- * Runs an omni-build command, such as `['repackage', 'shell.apk', '--out',
+ * Runs an omni command, such as `['repackage', 'shell.apk', '--out',
  * 'app.apk']`, and resolves with the last event it reports: its result, such
  * as a `repackaged` event. Rejects with an OmniBuildError when it fails.
  */
@@ -139,9 +139,7 @@ export const omniBuild = (
       try {
         last = JSON.parse(line) as OmniBuildEvent;
       } catch {
-        throw new OmniBuildError(
-          `omni-build wrote a line that isn't JSON: ${line}`,
-        );
+        throw new OmniBuildError(`omni wrote a line that isn't JSON: ${line}`);
       }
       onEvent?.(last);
     };
@@ -162,7 +160,7 @@ export const omniBuild = (
         }
       }
     });
-    // Only for what omni-build says before it reads --json, about its
+    // Only for what omni says before it reads --json, about its
     // arguments, and for a crash.
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
       stderr += chunk;
@@ -184,7 +182,7 @@ export const omniBuild = (
             ? 'reported nothing'
             : `exited with ${code}`;
         const said = stderr.trim();
-        reject(new OmniBuildError(`omni-build ${ended}${said && `: ${said}`}`));
+        reject(new OmniBuildError(`omni ${ended}${said && `: ${said}`}`));
       }
     });
   });

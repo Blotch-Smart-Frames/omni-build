@@ -170,7 +170,9 @@ describe('Install', () => {
     });
     expect(field).toHaveAttribute('aria-readonly', 'true');
     expect(field).toHaveAttribute('aria-disabled', 'true');
-    expect(field).toHaveTextContent('npm install --save-dev omni-build');
+    expect(field).toHaveTextContent(
+      'npm install --save-dev @blotch/omni-build',
+    );
     expect(install).toHaveTextContent('Not published yet.');
     expect(
       within(install).getByRole('link', { name: 'Installation, in full' }),

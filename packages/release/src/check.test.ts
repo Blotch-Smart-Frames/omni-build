@@ -15,7 +15,11 @@ let options: ExecOptions[];
 
 /** The packages `pack` would leave: the launcher, and Linux's and macOS's. */
 const packed = (
-  names = ['@omni-build/linux-x64', '@omni-build/darwin-arm64', 'omni-build'],
+  names = [
+    '@blotch/omni-build-linux-x64',
+    '@blotch/omni-build-darwin-arm64',
+    '@blotch/omni-build',
+  ],
 ) => {
   const index = names.map((name) => ({
     file: `${name.replace(/\W/g, '-')}.tgz`,
@@ -29,12 +33,12 @@ const packed = (
 
 /**
  * npm and Node in the project: the install puts `installs` in
- * node_modules/@omni-build, omni-build prints `version`, and the API
- * reports `result`, writing the app.
+ * node_modules/@blotch, omni prints `version`, and the API reports
+ * `result`, writing the app.
  */
 const fakeExec = ({
-  installs = ['linux-x64'],
-  version = 'omni-build 1.2.3\n',
+  installs = ['omni-build', 'omni-build-linux-x64'],
+  version = 'omni 1.2.3\n',
   result = { event: 'repackaged' },
 } = {}): Exec =>
   vi.fn(async (_node, args, execOptions = {}) => {
@@ -47,8 +51,8 @@ const fakeExec = ({
     );
     const project = execOptions.cwd!;
     if (args[1] === 'install') {
-      for (const key of installs) {
-        mkdirSync(path.join(project, 'node_modules', '@omni-build', key), {
+      for (const folder of installs) {
+        mkdirSync(path.join(project, 'node_modules', '@blotch', folder), {
           recursive: true,
         });
       }
@@ -80,7 +84,7 @@ const checking = (exec: Exec, platform = 'linux') =>
   check({ packages, exec, platform, arch: 'x64', log: () => {} });
 
 describe('check', () => {
-  it('installs omni-build from the packages, and runs it two ways', async () => {
+  it('installs omni from the packages, and runs it two ways', async () => {
     const logged: string[] = [];
 
     await check({
@@ -92,13 +96,13 @@ describe('check', () => {
     });
 
     expect(commands).toEqual([
-      'install omni-build@1.2.3',
-      'exec --offline -- omni-build --version',
+      'install @blotch/omni-build@1.2.3',
+      'exec --offline -- omni --version',
       '--input-type=module -e',
     ]);
     expect(logged).toEqual([
-      "npm installed omni-build 1.2.3 with @omni-build/linux-x64, and no other platform's package",
-      'omni-build --version runs it: omni-build 1.2.3',
+      "npm installed @blotch/omni-build 1.2.3 with @blotch/omni-build-linux-x64, and no other platform's package",
+      'omni --version runs it: omni 1.2.3',
       'omniBuild() runs it, as a build tool would: it repackaged a shell',
     ]);
     // In a project of its own, with a home of its own, and nothing that
@@ -122,7 +126,7 @@ describe('check', () => {
       }
       registry = args[args.indexOf('--registry') + 1];
       const response = await fetch(
-        new URL(encodeURIComponent('@omni-build/linux-x64'), registry),
+        new URL(encodeURIComponent('@blotch/omni-build-linux-x64'), registry),
       );
       const document = (await response.json()) as Record<string, unknown>;
       expect(document['dist-tags']).toEqual({ latest: '1.2.3' });
@@ -138,21 +142,32 @@ describe('check', () => {
 
   it('fails when npm installs the wrong platforms, or none', async () => {
     await expect(
-      checking(fakeExec({ installs: ['linux-x64', 'darwin-arm64'] })),
+      checking(
+        fakeExec({
+          installs: [
+            'omni-build',
+            'omni-build-linux-x64',
+            'omni-build-darwin-arm64',
+          ],
+        }),
+      ),
     ).rejects.toThrow(
-      'npm installed @omni-build/darwin-arm64, @omni-build/linux-x64, where it should have installed @omni-build/linux-x64 alone.',
+      'npm installed @blotch/omni-build-darwin-arm64, @blotch/omni-build-linux-x64, where it should have installed @blotch/omni-build-linux-x64 alone.',
+    );
+    await expect(
+      checking(fakeExec({ installs: ['omni-build'] })),
+    ).rejects.toThrow(
+      'npm installed no platform package, where it should have installed @blotch/omni-build-linux-x64 alone.',
     );
     await expect(checking(fakeExec({ installs: [] }))).rejects.toThrow(
-      'npm installed no platform package, where it should have installed @omni-build/linux-x64 alone.',
+      'npm installed no platform package, where it should have installed @blotch/omni-build-linux-x64 alone.',
     );
   });
 
   it("fails when what npm installed doesn't run", async () => {
     await expect(
-      checking(fakeExec({ version: 'omni-build 1.0.0\n' })),
-    ).rejects.toThrow(
-      'omni-build --version printed "omni-build 1.0.0", not "omni-build 1.2.3".',
-    );
+      checking(fakeExec({ version: 'omni 1.0.0\n' })),
+    ).rejects.toThrow('omni --version printed "omni 1.0.0", not "omni 1.2.3".');
     await expect(
       checking(fakeExec({ result: { event: 'error' } })),
     ).rejects.toThrow(
@@ -162,11 +177,11 @@ describe('check', () => {
 
   it('needs the launcher, and a package for this machine', async () => {
     await expect(checking(fakeExec(), 'freebsd')).rejects.toThrow(
-      `There's no @omni-build/freebsd-x64 in ${packages}: omni-build has no binary for this machine.`,
+      `There's no @blotch/omni-build-freebsd-x64 in ${packages}: OmniBuild has no binary for this machine.`,
     );
-    packed(['@omni-build/linux-x64']);
+    packed(['@blotch/omni-build-linux-x64']);
     await expect(checking(fakeExec())).rejects.toThrow(
-      `There's no omni-build package in ${packages}.`,
+      `There's no @blotch/omni-build package in ${packages}.`,
     );
     expect(commands).toEqual([]);
   });

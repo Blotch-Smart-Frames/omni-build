@@ -1,6 +1,6 @@
 ---
 title: Installing on a device
-description: Install an APK on an Android phone, emulator or device on the network with omni-build install, over ADB, without the Android SDK.
+description: Install an APK on an Android phone, emulator or device on the network with omni install, over ADB, without the Android SDK.
 ---
 
 # Installing on a device
@@ -12,10 +12,10 @@ Android phones plugged in by USB, Android emulators, and Android devices listeni
 :::
 
 ```sh
-omni-build install app.apk                              # on the one phone plugged in, or emulator running
-omni-build install app.apk --device R5CT1234      # on one of several phones, by its serial number
-omni-build install app.apk --device emulator-5556       # on one of several emulators
-omni-build install app.apk --device 192.168.1.20:5555   # on a device on the network
+omni install app.apk                              # on the one phone plugged in, or emulator running
+omni install app.apk --device R5CT1234      # on one of several phones, by its serial number
+omni install app.apk --device emulator-5556       # on one of several emulators
+omni install app.apk --device 192.168.1.20:5555   # on a device on the network
 ```
 
 `install` sends an APK to a device over ADB, the protocol the Android SDK's `adb` speaks to devices, and has the device's package manager install it, as `adb install` does. Nothing else is installed or run: no Android SDK, no `adb`. From Android 7.0 on, the APK goes straight to the package manager. Earlier versions can't take it that way, so it's copied to `/data/local/tmp` first, installed from there and deleted, as `adb` does with them. An app with the same ID is updated, keeping its data, when it's signed with the same key.

@@ -1,5 +1,5 @@
 {
-  "name": "omni-build",
+  "name": "@blotch/omni-build",
   "version": "0.0.0",
   "description": "Build, sign, install and ship iOS and Android apps with no native toolchain: no Xcode, no JDK, no Android SDK",
   "keywords": [
@@ -22,7 +22,7 @@
     "directory": "packages/omni-build"
   },
   "bin": {
-    "omni-build": "./dist/cli.js"
+    "omni": "./dist/cli.js"
   },
   "files": [
     "dist"
@@ -34,6 +34,9 @@
       "default": "./dist/index.js"
     },
     "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

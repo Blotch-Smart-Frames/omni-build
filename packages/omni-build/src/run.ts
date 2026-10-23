@@ -28,7 +28,7 @@ export interface RunResult {
 }
 
 /**
- * Runs the omni-build binary with `args` on this process's terminal, and
+ * Runs the omni binary with `args` on this process's terminal, and
  * returns how the launcher should end so that it ends as the binary did.
  *
  * The options default to the real binary and process, and exist for tests.
@@ -41,14 +41,14 @@ export const run = (
   try {
     binary = resolve();
   } catch (error) {
-    return { status: 1, message: `omni-build: ${(error as Error).message}` };
+    return { status: 1, message: `omni: ${(error as Error).message}` };
   }
 
   const result = spawn(binary, args, { stdio: 'inherit' });
   if (result.error) {
     return {
       status: 1,
-      message: `omni-build: couldn't run ${binary}: ${result.error.message}`,
+      message: `omni: couldn't run ${binary}: ${result.error.message}`,
     };
   }
   // A binary killed by a signal has no exit status. The launcher then dies of

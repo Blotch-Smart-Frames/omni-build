@@ -39,7 +39,7 @@ describe('run', () => {
 
     expect(run([], { resolve: resolveNothing, spawn: vi.fn() })).toEqual({
       status: 1,
-      message: 'omni-build: no binary here',
+      message: 'omni: no binary here',
     });
   });
 
@@ -48,7 +48,7 @@ describe('run', () => {
 
     expect(run([], { resolve, spawn })).toEqual({
       status: 1,
-      message: "omni-build: couldn't run /opt/omni-build: spawn EACCES",
+      message: "omni: couldn't run /opt/omni-build: spawn EACCES",
     });
   });
 });
