@@ -1,6 +1,6 @@
 {
   "name": "@blotch/omni-build",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Build, sign, install and ship iOS and Android apps with no native toolchain: no Xcode, no JDK, no Android SDK",
   "keywords": [
     "aab",
