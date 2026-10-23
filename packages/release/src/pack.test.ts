@@ -34,7 +34,7 @@ const npm: Exec = async (_node, args) => {
     readFileSync(path.join(dir, 'package.json'), 'utf8'),
   );
   const files = readdirSync(dir, { recursive: true }).map(String).sort();
-  const binary = files.find((file) => file.startsWith('omni-build'));
+  const binary = files.find((file) => file.startsWith('omni'));
   staged[manifest.name] = {
     files,
     mode: binary ? statSync(path.join(dir, binary)).mode & 0o777 : 0,
@@ -67,7 +67,7 @@ beforeEach(() => {
   // As the build job's artifacts download, without their mode.
   for (const [key, target] of Object.entries(PLATFORMS)) {
     mkdirSync(path.join(binaries, `omni-build-${target}`), { recursive: true });
-    const name = key.startsWith('win32') ? 'omni-build.exe' : 'omni-build';
+    const name = key.startsWith('win32') ? 'omni.exe' : 'omni';
     writeFileSync(path.join(binaries, `omni-build-${target}`, name), target, {
       mode: 0o644,
     });
@@ -97,7 +97,7 @@ describe('pack', () => {
     ]);
     expect(logged).toEqual(names.map((name) => `Packed ${name}`));
     expect(staged['@blotch/omni-build-linux-x64']).toEqual({
-      files: ['LICENSE', 'README.md', 'omni-build', 'package.json'],
+      files: ['LICENSE', 'README.md', 'omni', 'package.json'],
       // Runnable, whatever mode the artifact came with. Windows has no
       // such modes, and CI packs on Linux.
       mode: process.platform === 'win32' ? expect.any(Number) : 0o755,
@@ -110,9 +110,7 @@ describe('pack', () => {
         '--json',
       ],
     });
-    expect(staged['@blotch/omni-build-win32-x64'].files).toContain(
-      'omni-build.exe',
-    );
+    expect(staged['@blotch/omni-build-win32-x64'].files).toContain('omni.exe');
     expect(staged['@blotch/omni-build'].files).toEqual([
       'LICENSE',
       'README.md',
@@ -147,7 +145,7 @@ describe('pack', () => {
     const missing = path.join(
       binaries,
       'omni-build-aarch64-pc-windows-msvc',
-      'omni-build.exe',
+      'omni.exe',
     );
     rmSync(missing);
 

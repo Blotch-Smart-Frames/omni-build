@@ -1,4 +1,4 @@
-//! The `omni-build` command line.
+//! The `omni` command line.
 
 mod adb;
 mod android;
@@ -34,7 +34,7 @@ const KEY_PASSWORD: &str = "OMNI_BUILD_KEY_PASSWORD";
 
 /// Build, sign, install and ship iOS and Android apps with no native toolchain.
 #[derive(Debug, Parser)]
-#[command(version, about, arg_required_else_help = true)]
+#[command(name = "omni", version, about, arg_required_else_help = true)]
 struct Cli {
     /// Report each event as a line of JSON on stdout, for build tools to
     /// read: what OmniBuild created, what it waits for, the command's

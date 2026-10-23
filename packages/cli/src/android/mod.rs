@@ -309,7 +309,7 @@ mod tests {
     const GREEN: [u8; 4] = [0, 0xff, 0, 0xff];
     const BLUE: [u8; 4] = [0, 0, 0xff, 0xff];
 
-    /// Repackages an APK or AAB from its bytes, as `omni-build repackage`
+    /// Repackages an APK or AAB from its bytes, as `omni repackage`
     /// does.
     fn repackage(shell: &[u8], app: &App, key: &SigningKey) -> Result<Vec<u8>> {
         let entries = zip::read(shell).unwrap();

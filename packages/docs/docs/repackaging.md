@@ -1,6 +1,6 @@
 ---
 title: Repackaging an app
-description: Turn an app shell, an Android APK or app bundle or an iOS app, into your app with omni-build repackage, and what the app config changes.
+description: Turn an app shell, an Android APK or app bundle or an iOS app, into your app with omni repackage, and what the app config changes.
 ---
 
 # Repackaging an app
@@ -12,10 +12,10 @@ Android shells, APKs and app bundles, and iOS shells, for the Simulator or for d
 :::
 
 ```sh
-omni-build repackage shell.apk --config app.json --out app.apk
-omni-build repackage shell.aab --config app.json --out app.aab
-omni-build repackage shell.zip --config app.json --out app.zip   # a zipped iOS .app, for the Simulator
-omni-build repackage shell.ipa --config app.json --out app.ipa \
+omni repackage shell.apk --config app.json --out app.apk
+omni repackage shell.aab --config app.json --out app.aab
+omni repackage shell.zip --config app.json --out app.zip   # a zipped iOS .app, for the Simulator
+omni repackage shell.ipa --config app.json --out app.ipa \
   --signing-key key.pem --profile app.mobileprovision            # for devices
   # and --profile again for each app extension, unless app.mobileprovision's App ID is a wildcard,
   # and for an App Clip, a watch app and its widgets
@@ -102,11 +102,11 @@ An APK is signed with APK Signature Schemes v2 and v3, which Android 7.0 and lat
 
 ```sh
 export OMNI_BUILD_KEY_PASSWORD='a password'
-omni-build key create upload.p12 --subject "CN=Your name, O=Your organization"
-omni-build repackage shell.aab --config app.json --out app.aab --signing-key upload.p12
+omni key create upload.p12 --subject "CN=Your name, O=Your organization"
+omni repackage shell.aab --config app.json --out app.aab --signing-key upload.p12
 ```
 
-`omni-build key create` makes an upload key without a JDK: an RSA key with a certificate of its own, valid for 30 years (Google Play requires an upload key to last past 2033), in a PKCS #12 keystore under the alias `upload`. keytool, Android Studio and Gradle read it too. Keep it and its password safe: Google Play takes updates signed with it alone, unless you ask Google to reset it.
+`omni key create` makes an upload key without a JDK: an RSA key with a certificate of its own, valid for 30 years (Google Play requires an upload key to last past 2033), in a PKCS #12 keystore under the alias `upload`. keytool, Android Studio and Gradle read it too. Keep it and its password safe: Google Play takes updates signed with it alone, unless you ask Google to reset it.
 
 `--signing-key` takes a PKCS #12 keystore, whose password OmniBuild reads from `OMNI_BUILD_KEY_PASSWORD` rather than a flag, which anyone listing your processes could see. That includes `.p12` files from Keychain Access or OpenSSL, and the `.jks` files keytool and Android Studio have made since Java 9; an older `.jks` is in Java's own format, which keytool converts (`keytool -importkeystore -srckeystore old.jks -destkeystore new.p12 -deststoretype pkcs12`). `--signing-key` also takes a PEM file with the private key (PKCS #8) and its certificate. Either way, the key is RSA, as Google Play's upload keys and Apple's signing certificates are.
 
@@ -124,13 +124,13 @@ Without a Mac, OmniBuild makes the key and its certificate signing request, as K
 
 ```sh
 export OMNI_BUILD_KEY_PASSWORD='a password'
-omni-build key request apple.p12 --subject "CN=Your name key"
+omni key request apple.p12 --subject "CN=Your name key"
 # Upload apple.certSigningRequest at developer.apple.com, under Certificates, and download the certificate
-omni-build key import apple.p12 distribution.cer
-omni-build repackage shell.ipa --config app.json --out app.ipa --signing-key apple.p12 --profile app.mobileprovision
+omni key import apple.p12 distribution.cer
+omni repackage shell.ipa --config app.json --out app.ipa --signing-key apple.p12 --profile app.mobileprovision
 ```
 
-`omni-build key request` makes an RSA key, in a keystore with no certificate yet, and a certificate signing request for it beside the keystore, which developer.apple.com takes to issue an Apple Development or Apple Distribution certificate. Apple names the certificate after your team, whatever the request's subject; its common name names the key, as in Keychain Access. `omni-build key import` adds the `.cer` file Apple issues to the keystore, which then signs as one exported from Keychain Access does. The keystore is in the format macOS's Keychain imports, PKCS #12's own 3DES with a SHA-1 MAC, which Keychain Access and `security import` take where they refuse the newer one OmniBuild writes upload keys in, so the key can go on a Mac too.
+`omni key request` makes an RSA key, in a keystore with no certificate yet, and a certificate signing request for it beside the keystore, which developer.apple.com takes to issue an Apple Development or Apple Distribution certificate. Apple names the certificate after your team, whatever the request's subject; its common name names the key, as in Keychain Access. `omni key import` adds the `.cer` file Apple issues to the keystore, which then signs as one exported from Keychain Access does. The keystore is in the format macOS's Keychain imports, PKCS #12's own 3DES with a SHA-1 MAC, which Keychain Access and `security import` take where they refuse the newer one OmniBuild writes upload keys in, so the key can go on a Mac too.
 
 The app also claims the entitlements in `ios.entitlements`, for the capabilities it uses, such as push notifications, and the associated domains of `webLinks`, and its profile has to allow each, as iOS checks them: turn the capability on for the App ID, and make the profile again. A profile allows a value it has, or one its wildcard covers (`TEAM.*`, or `*` for any), and an array when it allows each of its strings. `aps-environment` is the profile's, `development` or `production`, as Xcode sets it. Xcode's build settings that an `.entitlements` file names are filled in as Xcode fills them in: `$(AppIdentifierPrefix)` and `$(TeamIdentifierPrefix)` with the team's ID and a dot, so `$(AppIdentifierPrefix)com.example.shared` is a keychain group of the team's, and `$(CFBundleIdentifier)` and `$(PRODUCT_BUNDLE_IDENTIFIER)` with the ID of the bundle that claims it. The Simulator reads its entitlements from the shell's executable, where Xcode links them, rather than its signature, so they apply to builds for devices.
 

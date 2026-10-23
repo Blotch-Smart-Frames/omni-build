@@ -15,7 +15,7 @@ import { run } from './process.ts';
 import { expected, omniBuild, repackage } from './repackage.ts';
 import { SHELL } from './shell.ts';
 
-// omni-build, reporting to a build tool that each command worked: the
+// omni, reporting to a build tool that each command worked: the
 // keystore `key create` was given, or the app `repackage` wrote.
 vi.mock('./process.ts', () => ({
   run: vi.fn(async (_command: string, args: string[]) => {
@@ -36,7 +36,7 @@ vi.mock('node:fs', async (importOriginal) => {
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const APP_CONFIG = fileURLToPath(new URL('../app/app.json', import.meta.url));
-/** All omni-build gets of the environment: the home and temporary folders, and the keystores' password. */
+/** All omni gets of the environment: the home and temporary folders, and the keystores' password. */
 const ENV = {
   HOME: '/home/me',
   TMPDIR: '/tmp/me',
@@ -57,11 +57,11 @@ let outDir: string;
 
 beforeEach(() => {
   const dir = tempDir();
-  binary = path.join(dir, 'omni-build');
+  binary = path.join(dir, 'omni');
   writeFileSync(binary, '');
   outDir = path.join(dir, 'out');
   vi.stubEnv('OMNI_BUILD_BINARY', binary);
-  // A user's environment, which omni-build gets only the home and temporary
+  // A user's environment, which omni gets only the home and temporary
   // folders of.
   vi.stubEnv('HOME', '/home/me');
   vi.stubEnv('TMPDIR', '/tmp/me');
@@ -91,7 +91,7 @@ describe('expected', () => {
     payload: 'Payload from the OmniBuild E2E app\n',
   };
 
-  it("is the app's values for Android, which omni-build repackages", () => {
+  it("is the app's values for Android, which omni repackages", () => {
     expect(expected('android')).toEqual({
       ...values,
       icon: '#E8590C',
@@ -104,7 +104,7 @@ describe('expected', () => {
       orientation: 'userLandscape',
       signer: 'CN=OmniBuild Debug, O=OmniBuild',
     });
-    // An app bundle, signed with the upload key omni-build created.
+    // An app bundle, signed with the upload key omni created.
     expect(expected('android', 'OmniBuildShell-linux.aab').signer).toBe(
       'CN=OmniBuild E2E Upload',
     );
@@ -168,7 +168,7 @@ describe('expected', () => {
 });
 
 describe('repackage', () => {
-  it('runs an Android shell through omni-build with no toolchain in reach', async () => {
+  it('runs an Android shell through omni with no toolchain in reach', async () => {
     const shell = path.join('shells', 'OmniBuildShell.apk');
 
     const app = await repackage({
@@ -248,7 +248,7 @@ describe('repackage', () => {
     );
   });
 
-  it('signs an app bundle with an upload key it has omni-build create', async () => {
+  it('signs an app bundle with an upload key it has omni create', async () => {
     const shell = path.join('shells', 'OmniBuildShell.aab');
 
     const app = await repackage({ shell, outDir, log: 'commands.log' });
@@ -318,13 +318,13 @@ describe('repackage', () => {
 
     expect(app).toBe(path.join(outDir, 'OmniBuildShell-windows.apk'));
     expect(vi.mocked(run).mock.calls.map(([command]) => command)).toEqual([
-      path.join(REPO_ROOT, 'target/release', 'omni-build'),
-      path.join(REPO_ROOT, 'target/release', 'omni-build.exe'),
+      path.join(REPO_ROOT, 'target/release', 'omni'),
+      path.join(REPO_ROOT, 'target/release', 'omni.exe'),
     ]);
   });
 
   it('says how to get a binary when there is none', async () => {
-    const missing = path.join(tempDir(), 'omni-build');
+    const missing = path.join(tempDir(), 'omni');
     vi.stubEnv('OMNI_BUILD_BINARY', missing);
 
     await expect(
@@ -334,7 +334,7 @@ describe('repackage', () => {
         log: 'commands.log',
       }),
     ).rejects.toThrow(
-      `There's no omni-build binary at ${missing}. Build one with \`npm run build -w @blotch/omni-build-cli\`, or set OMNI_BUILD_BINARY to one.`,
+      `There's no omni binary at ${missing}. Build one with \`npm run build -w @blotch/omni-build-cli\`, or set OMNI_BUILD_BINARY to one.`,
     );
     expect(run).not.toHaveBeenCalled();
   });
@@ -358,11 +358,11 @@ describe('omniBuild', () => {
         options,
       ),
     ).rejects.toThrow(
-      'omni-build ended with {"event":"repackaged","out":"other.apk"}, where out should be "app.apk"',
+      'omni ended with {"event":"repackaged","out":"other.apk"}, where out should be "app.apk"',
     );
   });
 
-  it('fails when omni-build reports something other than JSON, or nothing', async () => {
+  it('fails when omni reports something other than JSON, or nothing', async () => {
     for (const stdout of ['Repackaged shell.apk into app.apk\n', '']) {
       vi.mocked(run).mockResolvedValueOnce({ code: 0, stdout, output: stdout });
 
@@ -373,7 +373,7 @@ describe('omniBuild', () => {
           options,
         ),
       ).rejects.toThrow(
-        `omni-build ended with ${stdout.trim() || 'nothing'}, where event should be "repackaged" and out should be "app.apk"`,
+        `omni ended with ${stdout.trim() || 'nothing'}, where event should be "repackaged" and out should be "app.apk"`,
       );
     }
   });

@@ -21,7 +21,7 @@ const binary = path.join(
   process.env.CARGO_TARGET_DIR ??
     fileURLToPath(new URL('../../../target', import.meta.url)),
   'release',
-  process.platform === 'win32' ? 'omni-build.exe' : 'omni-build',
+  process.platform === 'win32' ? 'omni.exe' : 'omni',
 );
 
 const run = (args: string[], omniBuildBinary = binary) =>
@@ -30,10 +30,10 @@ const run = (args: string[], omniBuildBinary = binary) =>
     env: { ...process.env, OMNI_BUILD_BINARY: omniBuildBinary },
   });
 
-describe('omni-build launcher', () => {
+describe('omni launcher', () => {
   it('passes arguments to the binary and shows its output', () => {
     // Also checks that the crate and the npm package are at the same version.
-    expect(run(['--version']).stdout).toBe(`omni-build ${version}\n`);
+    expect(run(['--version']).stdout).toBe(`omni ${version}\n`);
   });
 
   it("exits with the binary's exit code", () => {
@@ -46,7 +46,7 @@ describe('omni-build launcher', () => {
 
     expect({ status: result.status, stderr: result.stderr }).toEqual({
       status: 1,
-      stderr: expect.stringContaining("omni-build: couldn't run"),
+      stderr: expect.stringContaining("omni: couldn't run"),
     });
   });
 });

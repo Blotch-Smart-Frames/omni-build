@@ -22,7 +22,7 @@
     "directory": "packages/omni-build"
   },
   "bin": {
-    "omni-build": "./dist/cli.js"
+    "omni": "./dist/cli.js"
   },
   "files": [
     "dist"

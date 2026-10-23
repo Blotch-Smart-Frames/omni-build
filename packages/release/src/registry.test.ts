@@ -23,7 +23,7 @@ beforeEach(async () => {
       manifest: {
         name: '@blotch/omni-build',
         version: '1.0.0',
-        bin: { 'omni-build': 'cli.js' },
+        bin: { omni: 'cli.js' },
       },
     },
     {

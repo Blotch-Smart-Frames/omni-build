@@ -71,7 +71,7 @@ const COMMANDS = ['build', 'repackage', 'test'];
 export const HELP = `Usage: npm run e2e -- [command] --platform <ios|android> [options]
 
 Builds a fixture app shell (a real Swift or Kotlin project), repackages it
-with omni-build, and runs the result on the iOS Simulator or an Android
+with omni, and runs the result on the iOS Simulator or an Android
 emulator, checking the ID, name, version, payload and icon the app reports.
 
 Each command is one stage. CI runs each on different machines; with no
@@ -81,7 +81,7 @@ Commands:
   build      Build the shells with Xcode or Gradle (an Android APK and app
              bundle, an iOS app): the only stage that uses them. Writes them
              to --out (default: build/shells/<platform>).
-  repackage  Run each shell (--shell) through omni-build, which gets no
+  repackage  Run each shell (--shell) through omni, which gets no
              PATH and no toolchain variables. Writes to --out (default:
              build/repackaged/<platform>).
   test [app...]
@@ -107,7 +107,7 @@ export interface RunOptions {
   platforms?: Record<PlatformId, Platform>;
   /** The folder the stages' default build/ and artifacts/ folders are in. */
   packageDir?: string;
-  /** Runs one shell through omni-build, as repackage() in repackage.ts. */
+  /** Runs one shell through omni, as repackage() in repackage.ts. */
   repackage?: typeof repackageShell;
 }
 
@@ -115,7 +115,7 @@ export interface RunOptions {
  * Runs the stage `args` ask for, or all three (see HELP), and returns the
  * exit status.
  *
- * The options default to the real platforms, folders and omni-build binary,
+ * The options default to the real platforms, folders and omni binary,
  * and exist for tests.
  */
 export const run = async (
@@ -189,7 +189,7 @@ export const run = async (
   };
 
   const repackageStage = async (shells: string[], outDir: string) => {
-    step('Repackaging it with omni-build, with no toolchain in reach');
+    step('Repackaging it with omni, with no toolchain in reach');
     const artifacts = artifactsFor('repackage');
     const apps: string[] = [];
     for (const shell of shells) {

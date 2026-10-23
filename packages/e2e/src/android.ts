@@ -426,10 +426,10 @@ const waitForDevice: Platform<Started, Device>['waitForDevice'] = async (
 };
 
 /**
- * Whether omni-build reaches a device by its adb serial: an emulator's
+ * Whether omni reaches a device by its adb serial: an emulator's
  * (`emulator-5554`) or a device's on the network (its address and port). A
  * phone on USB has a serial of its own, and adb installs on it until
- * omni-build speaks USB.
+ * omni speaks USB.
  */
 const reachable = (serial: string) =>
   /^emulator-\d+$/.test(serial) || serial.includes(':');
@@ -462,7 +462,7 @@ const runApp: Platform<Started, Device>['runApp'] = async ({
   // shell signed with another key replaces one already installed.
   await onDevice(['uninstall', appId], { allowFailure: true });
   if (reachable(device.serial)) {
-    // As a user without the Android SDK installs it: with omni-build, which
+    // As a user without the Android SDK installs it: with omni, which
     // gets no PATH and no toolchain variables, as in the repackage stage.
     await omniBuild(
       ['install', app, '--device', device.serial],

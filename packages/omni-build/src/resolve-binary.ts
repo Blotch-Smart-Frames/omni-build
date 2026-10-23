@@ -16,7 +16,7 @@ export interface ResolveBinaryOptions {
 }
 
 /**
- * Finds the omni-build binary to run: the one `OMNI_BUILD_BINARY` names, or
+ * Finds the omni binary to run: the one `OMNI_BUILD_BINARY` names, or
  * otherwise the one in the platform package npm installed for this machine.
  *
  * The options default to the current process and exist for tests.
@@ -36,7 +36,7 @@ export const resolveBinary = ({
   const key = `${platform}-${arch}`;
   if (!Object.hasOwn(PLATFORMS, key)) {
     throw new Error(
-      `There's no prebuilt omni-build binary for ${key}. ` +
+      `There's no prebuilt omni binary for ${key}. ` +
         'Build one with `cargo install omni-build` and set OMNI_BUILD_BINARY to its path.',
     );
   }
@@ -47,13 +47,13 @@ export const resolveBinary = ({
     packageJson = resolvePackageJson(packageName);
   } catch {
     throw new Error(
-      `${packageName}, which holds the omni-build binary for this machine, isn't installed. ` +
+      `${packageName}, which holds the omni binary for this machine, isn't installed. ` +
         'npm leaves it out when optional dependencies are omitted (--omit=optional) ' +
         'or when node_modules was installed on another OS or CPU. Reinstall without those.',
     );
   }
   return path.join(
     path.dirname(packageJson),
-    platform === 'win32' ? 'omni-build.exe' : 'omni-build',
+    platform === 'win32' ? 'omni.exe' : 'omni',
   );
 };

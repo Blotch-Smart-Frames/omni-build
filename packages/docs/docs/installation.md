@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: How the omni-build binary will reach you, and the platforms it's built for.
+description: How the omni binary will reach you, and the platforms it's built for.
 ---
 
 # Installation
@@ -17,10 +17,10 @@ OmniBuild is one native binary, written in Rust, with no runtime and no dependen
 
 ```sh
 npm install --save-dev @blotch/omni-build
-npx omni-build --help
+npx omni --help
 ```
 
-The `@blotch/omni-build` package is a small launcher. npm installs the binary for your OS and CPU from one of the `@blotch/omni-build-*` packages, each of which declares its `os` and `cpu`, and `omni-build` runs it. esbuild, rspack and oxlint are distributed the same way. For every pull request, CI packs these packages from that pull request's builds and installs them on each of the platforms below, checking that npm picks the machine's own binary and that it runs.
+The `@blotch/omni-build` package is a small launcher. npm installs the binary for your OS and CPU from one of the `@blotch/omni-build-*` packages, each of which declares its `os` and `cpu`, and `omni` runs it. esbuild, rspack and oxlint are distributed the same way. For every pull request, CI packs these packages from that pull request's builds and installs them on each of the platforms below, checking that npm picks the machine's own binary and that it runs.
 
 To use a binary from somewhere else, such as one you built yourself, set `OMNI_BUILD_BINARY` to its path.
 

@@ -1,4 +1,4 @@
-//! Runs the built `omni-build` binary as a user would. Besides checking the
+//! Runs the built `omni` binary as a user would. Besides checking the
 //! command line end to end, this is what covers `main()`: cargo-llvm-cov
 //! counts binaries that tests start, but no unit test can call `main()`.
 
@@ -27,21 +27,21 @@ const CLIP_PROFILE: &str = concat!(
 );
 
 fn omni_build(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_omni-build"))
+    Command::new(env!("CARGO_BIN_EXE_omni"))
         .args(args)
         .output()
-        .expect("the omni-build binary should start")
+        .expect("the omni binary should start")
 }
 
-/// Runs omni-build with `home` as the user's home folder, where it keeps
+/// Runs omni with `home` as the user's home folder, where it keeps
 /// its debug key.
 fn omni_build_at_home(home: &Path, args: &[&str]) -> Output {
     omni_build_with_password(home, None, args)
 }
 
-/// Runs omni-build at `home`, with a keystore password, or none.
+/// Runs omni at `home`, with a keystore password, or none.
 fn omni_build_with_password(home: &Path, password: Option<&str>, args: &[&str]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_omni-build"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_omni"));
     command
         .args(args)
         .env("HOME", home)
@@ -50,9 +50,7 @@ fn omni_build_with_password(home: &Path, password: Option<&str>, args: &[&str]) 
     if let Some(password) = password {
         command.env("OMNI_BUILD_KEY_PASSWORD", password);
     }
-    command
-        .output()
-        .expect("the omni-build binary should start")
+    command.output().expect("the omni binary should start")
 }
 
 /// adb's key, as `adb keygen` makes one.
@@ -68,7 +66,7 @@ fn version_flag_prints_the_crate_version() {
 
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        format!("omni-build {}\n", env!("CARGO_PKG_VERSION"))
+        format!("omni {}\n", env!("CARGO_PKG_VERSION"))
     );
 }
 
@@ -365,7 +363,7 @@ fn requests_an_apple_certificate_and_signs_with_it_once_issued() {
     );
     assert_eq!(unissued.status.code(), Some(1));
     assert!(stderr(&unissued).ends_with(
-        "apple.p12 has a key but no certificate yet: add the one Apple issues for its request with `omni-build key import`\n"
+        "apple.p12 has a key but no certificate yet: add the one Apple issues for its request with `omni key import`\n"
     ));
     assert!(imported.status.success(), "{}", stderr(&imported));
     // Parsed, since JSON escapes the backslashes of a path on Windows.
@@ -618,7 +616,7 @@ fn fake_device(asks: bool, answers: &[&'static [u8]]) -> (u16, JoinHandle<Vec<In
                 }
                 send(&mut stream, *b"WRTE", 100, local, answer);
                 send(&mut stream, *b"CLSE", 100, local, b"");
-                // Until omni-build hangs up, as a device does: hanging up
+                // Until omni hangs up, as a device does: hanging up
                 // first would make its OKAY for the answer reset the
                 // connection.
                 stream.read_to_end(&mut Vec::new()).unwrap();
@@ -757,7 +755,7 @@ fn install_reports_why_the_device_refused_the_app() {
     );
 }
 
-/// The JSON lines omni-build wrote to stdout, for build tools.
+/// The JSON lines omni wrote to stdout, for build tools.
 fn events(output: &Output) -> Vec<serde_json::Value> {
     String::from_utf8_lossy(&output.stdout)
         .lines()

@@ -34,7 +34,7 @@ export interface CheckOptions {
  * Installs the packed packages as a user would, with `npm install
  * @blotch/omni-build` in an empty project, from a registry on this computer that has
  * them and nothing else. Then checks that npm installed this machine's
- * binary and no other, that `omni-build` runs it, and that the API a build
+ * binary and no other, that `omni` runs it, and that the API a build
  * tool imports does too. Throws at the first thing that isn't so.
  */
 export const check = async ({
@@ -56,7 +56,7 @@ export const check = async ({
   const own = packageName(`${platform}-${arch}`);
   if (!packed.some(({ manifest }) => manifest.name === own)) {
     throw new Error(
-      `There's no ${own} in ${packages}: omni-build has no binary for this machine.`,
+      `There's no ${own} in ${packages}: OmniBuild has no binary for this machine.`,
     );
   }
 
@@ -75,7 +75,7 @@ export const check = async ({
     // Nothing of the npm that may be running this (`npm run` passes its
     // settings on to scripts in npm_ variables), and no OMNI_BUILD_BINARY,
     // which would run another binary than the one npm installs. A home
-    // folder of its own, for the debug key omni-build creates.
+    // folder of its own, for the debug key omni creates.
     const env = {
       ...Object.fromEntries(
         Object.entries(process.env).filter(
@@ -125,24 +125,16 @@ export const check = async ({
     const printed = (
       await exec(
         node,
-        [
-          npm,
-          'exec',
-          '--offline',
-          ...settings,
-          '--',
-          'omni-build',
-          '--version',
-        ],
+        [npm, 'exec', '--offline', ...settings, '--', 'omni', '--version'],
         inProject,
       )
     ).trim();
-    if (printed !== `omni-build ${version}`) {
+    if (printed !== `omni ${version}`) {
       throw new Error(
-        `omni-build --version printed "${printed}", not "omni-build ${version}".`,
+        `omni --version printed "${printed}", not "omni ${version}".`,
       );
     }
-    log(`omni-build --version runs it: ${printed}`);
+    log(`omni --version runs it: ${printed}`);
 
     const app = path.join(dir, 'app.apk');
     const args = [

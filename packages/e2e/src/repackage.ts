@@ -14,7 +14,7 @@ import { SHELL } from './shell.ts';
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 /**
  * The app the tests make from each shell. Each of its values differs from
- * the shell's, so an app that reports them got them from omni-build.
+ * the shell's, so an app that reports them got them from omni.
  */
 const APP_CONFIG = fileURLToPath(new URL('../app/app.json', import.meta.url));
 const APP: {
@@ -102,7 +102,7 @@ const SIGNER = 'OmniBuild E2E';
 const TEAM = 'OMNIBUILD0';
 /** The keystores' password, the iOS key's and the upload key's. */
 const KEY_PASSWORD = 'omnibuild-e2e';
-/** The subject of the upload key omni-build creates for an app bundle. */
+/** The subject of the upload key omni creates for an app bundle. */
 const UPLOAD_KEY = 'CN=OmniBuild E2E Upload';
 
 /** The OS a repackaged app's file name says it was repackaged on. */
@@ -113,7 +113,7 @@ const OS_NAMES: Partial<Record<NodeJS.Platform, string>> = {
 };
 
 /**
- * The only environment variables omni-build gets: where the user's home and
+ * The only environment variables omni gets: where the user's home and
  * temporary folders are, and Windows's own folder, which some of its system
  * calls read. No PATH, so it can't start a program by name, and none of the
  * variables that lead tools to a JDK, the Android SDK or Xcode (JAVA_HOME,
@@ -148,20 +148,20 @@ export const omniBuildBinary = () => {
     path.join(
       REPO_ROOT,
       'target/release',
-      process.platform === 'win32' ? 'omni-build.exe' : 'omni-build',
+      process.platform === 'win32' ? 'omni.exe' : 'omni',
     );
   if (!existsSync(binary)) {
     throw new Error(
-      `There's no omni-build binary at ${binary}. Build one with \`npm run build -w @blotch/omni-build-cli\`, or set OMNI_BUILD_BINARY to one.`,
+      `There's no omni binary at ${binary}. Build one with \`npm run build -w @blotch/omni-build-cli\`, or set OMNI_BUILD_BINARY to one.`,
     );
   }
   return binary;
 };
 
 /**
- * Runs an omni-build command as a build tool would, with `--json`, and
+ * Runs an omni command as a build tool would, with `--json`, and
  * checks that the event it ends with, its result, has the `expected`
- * values: so the stages check what omni-build reports, as well as what it
+ * values: so the stages check what omni reports, as well as what it
  * makes.
  */
 export const omniBuild = async (
@@ -182,7 +182,7 @@ export const omniBuild = async (
   );
   if (wrong.length > 0) {
     throw new Error(
-      `omni-build ended with ${last || 'nothing'}, where ${wrong
+      `omni ended with ${last || 'nothing'}, where ${wrong
         .map(([name, value]) => `${name} should be ${JSON.stringify(value)}`)
         .join(' and ')}`,
     );
@@ -191,7 +191,7 @@ export const omniBuild = async (
 
 /**
  * What an app must report after the repackage stage, and what signed it:
- * the app config's values where omni-build rewrites them, and the shell's
+ * the app config's values where omni rewrites them, and the shell's
  * own elsewhere.
  */
 export const expected = (
@@ -231,9 +231,9 @@ export const expected = (
       webLinks: APP.webLinks.join(', '),
       // `landscape`, either side up.
       orientation: 'userLandscape',
-      // An app bundle is signed with the upload key omni-build created for
+      // An app bundle is signed with the upload key omni created for
       // it, and an APK with the debug key it creates and signs with when
-      // it's given no key: only omni-build could have made either.
+      // it's given no key: only omni could have made either.
       signer: app.endsWith('.aab')
         ? UPLOAD_KEY
         : 'CN=OmniBuild Debug, O=OmniBuild',
@@ -314,7 +314,7 @@ export const expected = (
 
 /**
  * The repackage stage: what OmniBuild users do, on any OS, with nothing but
- * the omni-build binary. Writes the result into `outDir`, named for the OS
+ * the omni binary. Writes the result into `outDir`, named for the OS
  * it ran on, and returns its path.
  */
 export const repackage = async ({
@@ -361,7 +361,7 @@ export const repackage = async ({
       ];
     } else if (extension === '.aab') {
       // An app bundle is signed as Google Play takes one: with an upload
-      // key, which omni-build creates first, as a developer without a JDK
+      // key, which omni creates first, as a developer without a JDK
       // would.
       const keystore = path.join(keys, 'upload.p12');
       await omniBuild(

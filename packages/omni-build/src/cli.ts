@@ -3,7 +3,7 @@
 import { run } from './run.ts';
 
 // Only wires run() to this process: its arguments, stderr and exit. The
-// launcher adds no behaviour of its own, so `omni-build` works the same from
+// launcher adds no behaviour of its own, so `omni` works the same from
 // npm as from `cargo install`. The logic is in run.ts, where tests can reach
 // it in-process; cli.test.ts runs this file, compiled, as a child process.
 

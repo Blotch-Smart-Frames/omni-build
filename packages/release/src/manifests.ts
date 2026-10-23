@@ -33,7 +33,7 @@ export const packageName = (key: string) => `${LAUNCHER}-${key}`;
 
 /** The binary's file name in a platform's package. */
 export const binaryName = (key: string) =>
-  key.startsWith('win32-') ? 'omni-build.exe' : 'omni-build';
+  key.startsWith('win32-') ? 'omni.exe' : 'omni';
 
 /** A platform, as people name it: "Linux on x64". */
 const described = (key: string) => {
@@ -50,7 +50,7 @@ export const platformManifest = (key: string, launcher: Manifest) => {
   return {
     name: packageName(key),
     version: launcher.version,
-    description: `The omni-build binary for ${described(key)}. Install ${LAUNCHER}, which installs this package on the machines it's for`,
+    description: `The omni binary for ${described(key)}. Install ${LAUNCHER}, which installs this package on the machines it's for`,
     homepage: launcher.homepage,
     bugs: launcher.bugs,
     license: launcher.license,
@@ -89,7 +89,7 @@ export const launcherManifest = (launcher: Manifest, keys: string[]) => {
 /** A platform's README, for its page on npm. */
 export const platformReadme = (key: string) => `# ${packageName(key)}
 
-The [omni-build](https://www.npmjs.com/package/${LAUNCHER}) binary for ${described(key)}.
+The [omni](https://www.npmjs.com/package/${LAUNCHER}) binary for ${described(key)}.
 
 Install \`${LAUNCHER}\` rather than this package. It lists a package like this one for each platform it's built for, and npm installs only the one for your OS and CPU.
 `;

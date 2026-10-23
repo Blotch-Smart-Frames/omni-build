@@ -18,14 +18,14 @@ const binary = path.join(
   process.env.CARGO_TARGET_DIR ??
     fileURLToPath(new URL('../../../target', import.meta.url)),
   'release',
-  process.platform === 'win32' ? 'omni-build.exe' : 'omni-build',
+  process.platform === 'win32' ? 'omni.exe' : 'omni',
 );
 const shell = fileURLToPath(
   new URL('../../cli/tests/fixtures/shell.apk', import.meta.url),
 );
 
 /**
- * Node, running `script` in place of omni-build. The `--json` that follows
+ * Node, running `script` in place of omni. The `--json` that follows
  * goes to the script, after `--`, rather than to Node.
  */
 const fake = (script: string) =>
@@ -36,7 +36,7 @@ describe('omniBuild', () => {
   let env: NodeJS.ProcessEnv;
 
   beforeEach(() => {
-    // A home folder of its own, for the debug key omni-build creates.
+    // A home folder of its own, for the debug key omni creates.
     home = mkdtempSync(path.join(tmpdir(), 'omni-build-'));
     env = { ...process.env, HOME: home, USERPROFILE: home };
   });
@@ -89,7 +89,7 @@ describe('omniBuild', () => {
     expect(result).toMatchObject({ event: 'repackaged', out });
   });
 
-  it("rejects with omni-build's reason", async () => {
+  it("rejects with omni's reason", async () => {
     const events: OmniBuildEvent[] = [];
 
     const error = await omniBuild(['install', 'missing.apk'], {
@@ -109,9 +109,9 @@ describe('omniBuild', () => {
     expect(error).toHaveProperty('name', 'OmniBuildError');
   });
 
-  it('rejects with what omni-build said about its arguments', async () => {
+  it('rejects with what omni said about its arguments', async () => {
     await expect(omniBuild(['--no-such-flag'], { binary })).rejects.toThrow(
-      /^omni-build exited with 2: error: unexpected argument '--no-such-flag'/,
+      /^omni exited with 2: error: unexpected argument '--no-such-flag'/,
     );
   });
 
@@ -125,7 +125,7 @@ describe('omniBuild', () => {
     ).rejects.toThrow(/^couldn't run .*nothing: /);
   });
 
-  it('stops omni-build when the tool stops following it', async () => {
+  it('stops omni when the tool stops following it', async () => {
     const out = path.join(home, 'app.apk');
     const thrown = new Error('the tool failed');
 
@@ -140,7 +140,7 @@ describe('omniBuild', () => {
     ).rejects.toBe(thrown);
     // --version prints text, whatever the flags.
     await expect(omniBuild(['--version'], { binary })).rejects.toThrow(
-      /^omni-build wrote a line that isn't JSON: omni-build \d/,
+      /^omni wrote a line that isn't JSON: omni \d/,
     );
   });
 
@@ -158,11 +158,11 @@ describe('omniBuild', () => {
     ]);
   });
 
-  it('rejects when omni-build stops without a result', async () => {
-    await expect(fake('')).rejects.toThrow('omni-build reported nothing');
+  it('rejects when omni stops without a result', async () => {
+    await expect(fake('')).rejects.toThrow('omni reported nothing');
     // Windows has no signals: a process that kills itself exits with 1.
     await expect(fake('process.kill(process.pid, "SIGKILL")')).rejects.toThrow(
-      /^omni-build (was stopped by SIGKILL|exited with 1)$/,
+      /^omni (was stopped by SIGKILL|exited with 1)$/,
     );
   });
 });

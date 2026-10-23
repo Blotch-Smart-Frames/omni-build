@@ -19,7 +19,7 @@ node packages/release/src/cli.ts check --packages <dir>
 
 **`pack`** takes the six release binaries as CI's build job uploads them, each in a folder named `omni-build-<Rust target>`, and writes a tarball per package, as `npm publish` takes them, with `packages.json` listing them.
 
-**`check`** installs `@blotch/omni-build` from those tarballs, as a user would: with `npm install @blotch/omni-build` in an empty project, from a registry on this computer that has the packed packages and nothing else, with a cache and settings of its own. Then it checks that npm installed this machine's binary and no other platform's, that `omni-build --version` runs it, and that `omniBuild()`, the API a build tool imports, repackages a shell with it.
+**`check`** installs `@blotch/omni-build` from those tarballs, as a user would: with `npm install @blotch/omni-build` in an empty project, from a registry on this computer that has the packed packages and nothing else, with a cache and settings of its own. Then it checks that npm installed this machine's binary and no other platform's, that `omni --version` runs it, and that `omniBuild()`, the API a build tool imports, repackages a shell with it.
 
 CI packs once, on Linux, whose file modes npm keeps (the binaries have to be executable once installed), and checks on each of the six OSes and CPUs. Publishing to npm comes with the release workflow.
 

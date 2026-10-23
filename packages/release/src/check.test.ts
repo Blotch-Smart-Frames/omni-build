@@ -33,12 +33,12 @@ const packed = (
 
 /**
  * npm and Node in the project: the install puts `installs` in
- * node_modules/@blotch, omni-build prints `version`, and the API reports
+ * node_modules/@blotch, omni prints `version`, and the API reports
  * `result`, writing the app.
  */
 const fakeExec = ({
   installs = ['omni-build', 'omni-build-linux-x64'],
-  version = 'omni-build 1.2.3\n',
+  version = 'omni 1.2.3\n',
   result = { event: 'repackaged' },
 } = {}): Exec =>
   vi.fn(async (_node, args, execOptions = {}) => {
@@ -84,7 +84,7 @@ const checking = (exec: Exec, platform = 'linux') =>
   check({ packages, exec, platform, arch: 'x64', log: () => {} });
 
 describe('check', () => {
-  it('installs omni-build from the packages, and runs it two ways', async () => {
+  it('installs omni from the packages, and runs it two ways', async () => {
     const logged: string[] = [];
 
     await check({
@@ -97,12 +97,12 @@ describe('check', () => {
 
     expect(commands).toEqual([
       'install @blotch/omni-build@1.2.3',
-      'exec --offline -- omni-build --version',
+      'exec --offline -- omni --version',
       '--input-type=module -e',
     ]);
     expect(logged).toEqual([
       "npm installed @blotch/omni-build 1.2.3 with @blotch/omni-build-linux-x64, and no other platform's package",
-      'omni-build --version runs it: omni-build 1.2.3',
+      'omni --version runs it: omni 1.2.3',
       'omniBuild() runs it, as a build tool would: it repackaged a shell',
     ]);
     // In a project of its own, with a home of its own, and nothing that
@@ -166,10 +166,8 @@ describe('check', () => {
 
   it("fails when what npm installed doesn't run", async () => {
     await expect(
-      checking(fakeExec({ version: 'omni-build 1.0.0\n' })),
-    ).rejects.toThrow(
-      'omni-build --version printed "omni-build 1.0.0", not "omni-build 1.2.3".',
-    );
+      checking(fakeExec({ version: 'omni 1.0.0\n' })),
+    ).rejects.toThrow('omni --version printed "omni 1.0.0", not "omni 1.2.3".');
     await expect(
       checking(fakeExec({ result: { event: 'error' } })),
     ).rejects.toThrow(
@@ -179,7 +177,7 @@ describe('check', () => {
 
   it('needs the launcher, and a package for this machine', async () => {
     await expect(checking(fakeExec(), 'freebsd')).rejects.toThrow(
-      `There's no @blotch/omni-build-freebsd-x64 in ${packages}: omni-build has no binary for this machine.`,
+      `There's no @blotch/omni-build-freebsd-x64 in ${packages}: OmniBuild has no binary for this machine.`,
     );
     packed(['@blotch/omni-build-linux-x64']);
     await expect(checking(fakeExec())).rejects.toThrow(
