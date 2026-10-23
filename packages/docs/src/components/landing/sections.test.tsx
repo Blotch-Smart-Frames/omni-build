@@ -160,20 +160,20 @@ describe('Where it runs', () => {
 });
 
 describe('Install', () => {
-  it('shows the command dimmed and read-only, because nothing is published yet', () => {
+  it('shows the npm command read-only, to copy, and what comes later', () => {
     render(<Sections />);
 
     const install = windowTitled('Install');
     expect(install).toHaveClass(styles.window, styles.install);
-    const field = within(install).getByRole('textbox', {
-      name: 'npm, once it’s published',
-    });
+    const field = within(install).getByRole('textbox', { name: 'npm' });
     expect(field).toHaveAttribute('aria-readonly', 'true');
-    expect(field).toHaveAttribute('aria-disabled', 'true');
+    expect(field).not.toHaveAttribute('aria-disabled');
     expect(field).toHaveTextContent(
       'npm install --save-dev @blotch/omni-build',
     );
-    expect(install).toHaveTextContent('Not published yet.');
+    expect(install).toHaveTextContent(
+      'Cargo, Homebrew and downloads from GitHub releases come later.',
+    );
     expect(
       within(install).getByRole('link', { name: 'Installation, in full' }),
     ).toHaveAttribute('data-to', '/docs/installation');

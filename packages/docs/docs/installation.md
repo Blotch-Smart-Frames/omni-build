@@ -1,13 +1,13 @@
 ---
 title: Installation
-description: How the omni binary will reach you, and the platforms it's built for.
+description: How to install the omni binary, and the platforms it's built for.
 ---
 
 # Installation
 
-:::warning[Not published yet]
+:::warning[npm only, for now]
 
-The commands below are how OmniBuild will be installed once it's released. Today there's nothing to install: follow the [repository](https://github.com/Blotch-Smart-Frames/omni-build) to hear when the first phase lands.
+OmniBuild is on npm. Cargo, Homebrew and GitHub releases come later: until then, a machine without Node builds the binary from the [repository](https://github.com/Blotch-Smart-Frames/omni-build) with `cargo build --release`.
 
 :::
 
@@ -25,6 +25,8 @@ The `@blotch/omni-build` package is a small launcher. npm installs the binary fo
 To use a binary from somewhere else, such as one you built yourself, set `OMNI_BUILD_BINARY` to its path.
 
 ## Without Node
+
+Still to come:
 
 - **Cargo:** `cargo install omni-build`
 - **Homebrew**

@@ -116,7 +116,7 @@ const config: Config = {
           type: 'html',
           position: 'right',
           value:
-            '<span class="menubar-status">Planning: nothing to install yet</span>',
+            '<span class="menubar-status">Early days: Phases 0 and 1</span>',
         },
         {
           href: repository,

@@ -7,7 +7,7 @@ description: Turn an app shell, an Android APK or app bundle or an iOS app, into
 
 :::warning[Phase 0]
 
-Android shells, APKs and app bundles, and iOS shells, for the Simulator or for devices. No iOS build OmniBuild signed has been through TestFlight yet. OmniBuild isn't published yet: build the binary from the [repository](https://github.com/Blotch-Smart-Frames/omni-build) with `cargo build --release`.
+Android shells, APKs and app bundles, and iOS shells, for the Simulator or for devices. No iOS build OmniBuild signed has been through TestFlight yet. Install OmniBuild from npm, as [Installation](./installation.md) shows.
 
 :::
 

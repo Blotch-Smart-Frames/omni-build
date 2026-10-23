@@ -10,7 +10,7 @@ OmniBuild builds, signs, installs and ships iOS and Android apps with no native 
 
 :::warning[Phases 0 and 1]
 
-OmniBuild is in its first phases. `omni repackage` gives an Android APK or app bundle (AAB) shell, or an iOS shell built for the Simulator or for devices, an app's ID, name, version, build number, icon, payload and permissions, and signs it, frameworks included. `omni key create` makes an Android upload key, `omni key request` and `key import` an Apple signing key without a Mac, and `omni install` installs an APK on an Android phone plugged in by USB, an emulator or a device on the network. Build tools read what it reports as JSON lines. The npm package isn't published. These pages describe the design in [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1), and will turn into a manual as each phase lands.
+OmniBuild is in its first phases. `omni repackage` gives an Android APK or app bundle (AAB) shell, or an iOS shell built for the Simulator or for devices, an app's ID, name, version, build number, icon, payload and permissions, and signs it, frameworks included. `omni key create` makes an Android upload key, `omni key request` and `key import` an Apple signing key without a Mac, and `omni install` installs an APK on an Android phone plugged in by USB, an emulator or a device on the network. Build tools read what it reports as JSON lines. It's on npm as `@blotch/omni-build`. These pages describe the design in [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1), and will turn into a manual as each phase lands.
 
 :::
 
@@ -33,5 +33,5 @@ OmniBuild doesn't compile source code. An app with its own Swift, Kotlin or C++ 
 ## Next
 
 - [How it works](./how-it-works.md): why no compiler is needed, step by step for each platform.
-- [Installation](./installation.md): how the binary will reach you.
+- [Installation](./installation.md): how to install the binary, and the platforms it's built for.
 - [Roadmap](./roadmap.md): the phases, the risks, and the decisions still open.

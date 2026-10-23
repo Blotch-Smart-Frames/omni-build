@@ -204,7 +204,7 @@ In dark mode (`[data-theme='dark']`) the two custom properties `--ink` and `--pa
 
 ### Patterns (the only greys)
 
-- **Dither 12** (4 by 4 tile, two dots), **Dither 25**, **Dither 50** and **Dither 75** (2 by 2 tiles): the four tones, each shown with one tile cell per `--px` (`4px 4px` for the 2 by 2 tiles). The build so far uses only Dither 50; the other three are defined for lighter and darker tones. Dither 50 is the desktop ground behind the live field, the scrollbar track, the menu-bar status square and the frame band of a read-only field.
+- **Dither 12** (4 by 4 tile, two dots), **Dither 25**, **Dither 50** and **Dither 75** (2 by 2 tiles): the four tones, each shown with one tile cell per `--px` (`4px 4px` for the 2 by 2 tiles). The build so far uses only Dither 50; the other three are defined for lighter and darker tones. Dither 50 is the desktop ground behind the live field, the scrollbar track and the menu-bar status square.
 - **Stripes** (1 by 2 tile at `2px 4px`): the active window's title bar.
 - **Diagonal** (6 by 6 tile at `12px 12px`): the barber-pole fill of a running progress bar.
 
@@ -334,7 +334,7 @@ The signature container: a white rectangle with chrome.
 ### Inline Code and Fields
 
 - **Inline code:** a 1px ink frame on paper, square, 0 4px padding (0 0.2em in docs).
-- **Read-only field:** the not-yet-published install command, in the mono face, inside a 2px ink outline with a 6px band of Dither 50 between outline and text.
+- **Read-only field:** the npm install command, in the mono face, inside a 2px ink rule on paper.
 
 ### Motion Material
 

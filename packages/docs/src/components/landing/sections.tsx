@@ -203,22 +203,18 @@ const Install = () => (
     status={<Link to="/docs/installation">Installation, in full</Link>}
   >
     <p className={styles.fieldLabel} id="install-command">
-      npm, once it&rsquo;s published
+      npm
     </p>
-    {/* Dimmed with a dither, as a disabled field was: there's nothing to
-        install yet, and a live-looking command would say otherwise. */}
     <div
       className={styles.field}
       role="textbox"
       aria-readonly="true"
-      aria-disabled="true"
       aria-labelledby="install-command"
     >
       <code>npm install --save-dev @blotch/omni-build</code>
     </div>
     <p className={styles.copy}>
-      Or <code>cargo install omni-build</code>, Homebrew, or a download from
-      GitHub releases. Not published yet.
+      Cargo, Homebrew and downloads from GitHub releases come later.
     </p>
   </Window>
 );

@@ -215,7 +215,7 @@ const Hero = () => {
         draggable
         className={styles.main}
         bodyClassName={styles.mainBody}
-        status={<span>In planning. Nothing to install yet.</span>}
+        status={<span>Early days: Phases 0 and 1 of the plan, on npm.</span>}
       >
         <h1 className={styles.headline}>
           <DecryptedText

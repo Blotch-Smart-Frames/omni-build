@@ -106,7 +106,7 @@
       "kind": "nav",
       "refersTo": "button",
       "description": "Paper bar with a 2px rule, Jersey 10 wordmark, Tiny5 20px items that invert on hover, and a printed status line.",
-      "html": "<nav class=\"ds-menubar\"><span class=\"ds-menubar-brand\">OmniBuild</span><a class=\"ds-menubar-item\" href=\"#\">Docs</a><a class=\"ds-menubar-item\" href=\"#\">The plan</a><span class=\"ds-menubar-status\">Planning: nothing to install yet</span><a class=\"ds-menubar-item\" href=\"#\">GitHub</a></nav>",
+      "html": "<nav class=\"ds-menubar\"><span class=\"ds-menubar-brand\">OmniBuild</span><a class=\"ds-menubar-item\" href=\"#\">Docs</a><a class=\"ds-menubar-item\" href=\"#\">The plan</a><span class=\"ds-menubar-status\">Early days: Phases 0 and 1</span><a class=\"ds-menubar-item\" href=\"#\">GitHub</a></nav>",
       "css": ".ds-menubar { display: flex; align-items: center; height: 48px; padding: 0 16px; border-bottom: 2px solid var(--ink, #000); background: var(--paper, #fff); color: var(--ink, #000); font-family: 'Tiny5', monospace; } .ds-menubar-brand { margin-right: 24px; font-family: 'Jersey 10', 'Tiny5', monospace; font-size: 2rem; line-height: 1; } .ds-menubar-item { padding: 4px 12px; font-size: 20px; color: var(--ink, #000); text-decoration: none; } .ds-menubar-item:hover { background: var(--ink, #000); color: var(--paper, #fff); } .ds-menubar-item:focus-visible { outline: 2px dashed var(--ink, #000); outline-offset: 2px; } .ds-menubar-status { margin-left: auto; padding: 0 12px; font-family: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif; font-size: 0.875rem; font-weight: 600; white-space: nowrap; }"
     },
     {
