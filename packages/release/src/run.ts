@@ -2,11 +2,12 @@ import { parseArgs } from 'node:util';
 
 import { check as checkPackages } from './check.ts';
 import { pack as packPackages } from './pack.ts';
+import { publish as publishPackages } from './publish.ts';
 
 export const HELP = `Usage: npm run release -w @blotch/omni-build-release -- <command> [options]
 
-Makes the npm packages a release publishes, and checks that npm installs
-them as it should, without publishing anything.
+Makes the npm packages a release publishes, checks that npm installs them
+as it should, and publishes them.
 
 Commands:
   pack   Pack the launcher, @blotch/omni-build, and a package per platform
@@ -22,6 +23,13 @@ Commands:
          installs this machine's binary alone, and that the command and
          the API run it.
          --packages <dir>  Where pack wrote them. Required.
+  publish
+         Publish the tarballs pack wrote to npm, the platforms' packages
+         first and the launcher last, leaving any version npm already has.
+         The release workflow runs it, which npm trusts to publish them.
+         --packages <dir>  Where pack wrote them. Required.
+         --tag <tag>       The git tag of the release, which has to be v and
+                           the packages' version.
 
 Options:
   --help  Show this.`;
@@ -29,6 +37,7 @@ Options:
 export interface RunOptions {
   pack?: typeof packPackages;
   check?: typeof checkPackages;
+  publish?: typeof publishPackages;
 }
 
 export interface RunResult {
@@ -44,7 +53,11 @@ export interface RunResult {
  */
 export const run = async (
   args: string[],
-  { pack = packPackages, check = checkPackages }: RunOptions = {},
+  {
+    pack = packPackages,
+    check = checkPackages,
+    publish = publishPackages,
+  }: RunOptions = {},
 ): Promise<RunResult> => {
   let values;
   let positionals;
@@ -56,6 +69,7 @@ export const run = async (
         binaries: { type: 'string' },
         out: { type: 'string' },
         packages: { type: 'string' },
+        tag: { type: 'string' },
         help: { type: 'boolean', default: false },
       },
     }));
@@ -86,6 +100,11 @@ export const run = async (
         return usage('check needs --packages');
       }
       await check({ packages: values.packages });
+    } else if (command === 'publish') {
+      if (!values.packages) {
+        return usage('publish needs --packages');
+      }
+      await publish({ packages: values.packages, tag: values.tag });
     } else {
       return usage(command ? `Unknown command '${command}'` : 'Name a command');
     }

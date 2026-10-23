@@ -8,15 +8,15 @@ Build, sign, install and ship iOS and Android apps with no native toolchain: no 
 
 An npm workspaces and [Turborepo](https://turborepo.com) monorepo, with the Rust inside it:
 
-| Package                   | What it is                                                                                                                        |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/cli`            | The `omni` binary, a Rust crate. Its `package.json` is private and only lets turbo run Cargo                                      |
-| `packages/omni-build`     | The `@blotch/omni-build` npm package: a launcher that runs the binary built for the user's OS and CPU, and an API for build tools |
-| `packages/e2e`            | End-to-end tests: real Swift and Kotlin app shells, repackaged on every OS, run on the iOS Simulator and an Android emulator      |
-| `packages/platform-watch` | Opens an issue when the app shells need a newer Xcode or Android API level, or can't read a vendor's page. Runs daily in CI       |
-| `packages/docs`           | The documentation site and landing page, built with Docusaurus and published to GitHub Pages                                      |
-| `packages/coverage-guard` | Fails the coverage gate wherever 100% would pass over untested code. `npm run test:coverage` runs it after the tests              |
-| `packages/release`        | Packs the npm packages a release publishes, and checks `npm install @blotch/omni-build` gets each machine its own binary          |
+| Package                   | What it is                                                                                                                               |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/cli`            | The `omni` binary, a Rust crate. Its `package.json` is private and only lets turbo run Cargo                                             |
+| `packages/omni-build`     | The `@blotch/omni-build` npm package: a launcher that runs the binary built for the user's OS and CPU, and an API for build tools        |
+| `packages/e2e`            | End-to-end tests: real Swift and Kotlin app shells, repackaged on every OS, run on the iOS Simulator and an Android emulator             |
+| `packages/platform-watch` | Opens an issue when the app shells need a newer Xcode or Android API level, or can't read a vendor's page. Runs daily in CI              |
+| `packages/docs`           | The documentation site and landing page, built with Docusaurus and published to GitHub Pages                                             |
+| `packages/coverage-guard` | Fails the coverage gate wherever 100% would pass over untested code. `npm run test:coverage` runs it after the tests                     |
+| `packages/release`        | Packs the npm packages a release publishes, checks `npm install @blotch/omni-build` gets each machine its own binary, and publishes them |
 
 The npm packages are TypeScript. Node runs the private ones' `.ts` files as they are, by stripping the types, so their imports name the `.ts` file and they use only syntax that strips away (no enums or namespaces). The launcher is compiled to `dist/` for npm, because Node won't strip types in `node_modules`.
 
