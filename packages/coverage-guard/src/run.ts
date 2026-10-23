@@ -18,7 +18,7 @@ import { type RustCoverage, rustCoverage as readRustCoverage } from './rust.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
-export const HELP = `Usage: npm run check -w @omni-build/coverage-guard
+export const HELP = `Usage: npm run check -w @blotch/omni-build-coverage-guard
 
 Checks that the 100% coverage gate can't pass over untested code. For every
 workspace package:

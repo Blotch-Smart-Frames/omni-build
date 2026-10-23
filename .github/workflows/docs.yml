@@ -36,7 +36,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run build -w @omni-build/docs
+      - run: npm run build -w @blotch/omni-build-docs
       - uses: actions/upload-pages-artifact@v5
         with:
           path: packages/docs/build

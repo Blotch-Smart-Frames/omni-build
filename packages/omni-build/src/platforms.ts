@@ -1,8 +1,8 @@
 // The prebuilt binaries OmniBuild publishes, keyed by Node's
 // `${process.platform}-${process.arch}`. Each becomes an npm package,
-// `@omni-build/<key>`, holding the binary Cargo builds for the Rust target,
-// with `os` and `cpu` fields so npm installs only the one matching the
-// machine, as esbuild, rspack and oxlint do.
+// `@blotch/omni-build-<key>`, holding the binary Cargo builds for the Rust
+// target, with `os` and `cpu` fields so npm installs only the one matching
+// the machine, as esbuild, rspack and oxlint do.
 //
 // The release tooling (Phase 1 in #1) generates those packages from this list
 // and writes them into this package's optionalDependencies when it publishes,

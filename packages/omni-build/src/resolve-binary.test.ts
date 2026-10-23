@@ -29,7 +29,13 @@ describe('resolveBinary', () => {
         env: {},
         resolvePackageJson: installedIn('node_modules'),
       }),
-    ).toBe(path.join('node_modules', '@omni-build/darwin-arm64', 'omni-build'));
+    ).toBe(
+      path.join(
+        'node_modules',
+        '@blotch/omni-build-darwin-arm64',
+        'omni-build',
+      ),
+    );
   });
 
   it('returns the .exe on Windows', () => {
@@ -41,7 +47,11 @@ describe('resolveBinary', () => {
         resolvePackageJson: installedIn('node_modules'),
       }),
     ).toBe(
-      path.join('node_modules', '@omni-build/win32-x64', 'omni-build.exe'),
+      path.join(
+        'node_modules',
+        '@blotch/omni-build-win32-x64',
+        'omni-build.exe',
+      ),
     );
   });
 
@@ -64,7 +74,7 @@ describe('resolveBinary', () => {
         env: {},
         resolvePackageJson: notInstalled,
       }),
-    ).toThrow(/@omni-build\/linux-x64, .* isn't installed/);
+    ).toThrow(/@blotch\/omni-build-linux-x64, .* isn't installed/);
   });
 
   it('looks for the platform package with Node module resolution', () => {
@@ -72,6 +82,6 @@ describe('resolveBinary', () => {
     // platform package (see platforms.ts), so this finds none.
     expect(() =>
       resolveBinary({ platform: 'linux', arch: 'x64', env: {} }),
-    ).toThrow(/@omni-build\/linux-x64, .* isn't installed/);
+    ).toThrow(/@blotch\/omni-build-linux-x64, .* isn't installed/);
   });
 });

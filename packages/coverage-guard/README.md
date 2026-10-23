@@ -1,4 +1,4 @@
-# @omni-build/coverage-guard
+# @blotch/omni-build-coverage-guard
 
 Fails the coverage gate wherever 100% would pass over untested code. A coverage figure counts what any test ran, and only in the files it was told to measure, so it can read 100% when:
 
@@ -31,7 +31,7 @@ A module's test runs with its package's vitest config, so its environment, setup
 
 ```sh
 npm run test:coverage                     # the tests, then the guard
-npm run check -w @omni-build/coverage-guard  # the guard alone, after a test:coverage run
+npm run check -w @blotch/omni-build-coverage-guard  # the guard alone, after a test:coverage run
 ```
 
 It runs as many modules' tests at once as the machine has cores, and takes seconds.

@@ -148,7 +148,7 @@ describe('omniBuild', () => {
     // By the package's name, as a build tool imports it: through the exports
     // in package.json to dist/index.js, which turbo builds before these
     // tests. A variable, so the type check doesn't need dist/ built.
-    const name = 'omni-build';
+    const name = '@blotch/omni-build';
     const built = (await import(name)) as Record<string, unknown>;
 
     expect(Object.keys(built).sort()).toEqual([

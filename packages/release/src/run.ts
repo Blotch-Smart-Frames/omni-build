@@ -3,22 +3,24 @@ import { parseArgs } from 'node:util';
 import { check as checkPackages } from './check.ts';
 import { pack as packPackages } from './pack.ts';
 
-export const HELP = `Usage: npm run release -w @omni-build/release -- <command> [options]
+export const HELP = `Usage: npm run release -w @blotch/omni-build-release -- <command> [options]
 
 Makes the npm packages a release publishes, and checks that npm installs
 them as it should, without publishing anything.
 
 Commands:
-  pack   Pack the launcher, omni-build, and a package per platform holding
-         its binary, which the launcher lists as optional dependencies.
-         Needs the launcher built (npm run build -w omni-build).
+  pack   Pack the launcher, @blotch/omni-build, and a package per platform
+         holding its binary, which the launcher lists as optional
+         dependencies.
+         Needs the launcher built (npm run build -w @blotch/omni-build).
          --binaries <dir>  The six release binaries, each in a folder named
                            omni-build-<Rust target>, as CI's build job
                            uploads them. Required.
          --out <dir>       Where to write the tarballs. Required.
-  check  Install omni-build from the tarballs pack wrote, as a user would,
-         from a registry on this computer, and check that npm installs this
-         machine's binary alone, and that the command and the API run it.
+  check  Install @blotch/omni-build from the tarballs pack wrote, as a user
+         would, from a registry on this computer, and check that npm
+         installs this machine's binary alone, and that the command and
+         the API run it.
          --packages <dir>  Where pack wrote them. Required.
 
 Options:

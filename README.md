@@ -8,19 +8,19 @@ Build, sign, install and ship iOS and Android apps with no native toolchain: no 
 
 An npm workspaces and [Turborepo](https://turborepo.com) monorepo, with the Rust inside it:
 
-| Package                   | What it is                                                                                                                   |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `packages/cli`            | The `omni-build` binary, a Rust crate. Its `package.json` is private and only lets turbo run Cargo                           |
-| `packages/omni-build`     | The `omni-build` npm package: a launcher that runs the binary built for the user's OS and CPU, and an API for build tools    |
-| `packages/e2e`            | End-to-end tests: real Swift and Kotlin app shells, repackaged on every OS, run on the iOS Simulator and an Android emulator |
-| `packages/platform-watch` | Opens an issue when the app shells need a newer Xcode or Android API level, or can't read a vendor's page. Runs daily in CI  |
-| `packages/docs`           | The documentation site and landing page, built with Docusaurus and published to GitHub Pages                                 |
-| `packages/coverage-guard` | Fails the coverage gate wherever 100% would pass over untested code. `npm run test:coverage` runs it after the tests         |
-| `packages/release`        | Packs the npm packages a release publishes, and checks `npm install omni-build` gets each machine its own binary             |
+| Package                   | What it is                                                                                                                        |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/cli`            | The `omni-build` binary, a Rust crate. Its `package.json` is private and only lets turbo run Cargo                                |
+| `packages/omni-build`     | The `@blotch/omni-build` npm package: a launcher that runs the binary built for the user's OS and CPU, and an API for build tools |
+| `packages/e2e`            | End-to-end tests: real Swift and Kotlin app shells, repackaged on every OS, run on the iOS Simulator and an Android emulator      |
+| `packages/platform-watch` | Opens an issue when the app shells need a newer Xcode or Android API level, or can't read a vendor's page. Runs daily in CI       |
+| `packages/docs`           | The documentation site and landing page, built with Docusaurus and published to GitHub Pages                                      |
+| `packages/coverage-guard` | Fails the coverage gate wherever 100% would pass over untested code. `npm run test:coverage` runs it after the tests              |
+| `packages/release`        | Packs the npm packages a release publishes, and checks `npm install @blotch/omni-build` gets each machine its own binary          |
 
 The npm packages are TypeScript. Node runs the private ones' `.ts` files as they are, by stripping the types, so their imports name the `.ts` file and they use only syntax that strips away (no enums or namespaces). The `omni-build` launcher is compiled to `dist/` for npm, because Node won't strip types in `node_modules`.
 
-The per-platform npm packages that hold the binaries (`@omni-build/darwin-arm64`, `@omni-build/linux-x64`, ...) aren't in the repository. npm refuses to install a workspace whose `os` or `cpu` doesn't match the machine, so `packages/release` makes them from the list in `packages/omni-build/src/platforms.ts`, and CI installs them on each OS and CPU from a registry on the runner. Nothing is published yet.
+The per-platform npm packages that hold the binaries (`@blotch/omni-build-darwin-arm64`, `@blotch/omni-build-linux-x64`, ...) aren't in the repository. npm refuses to install a workspace whose `os` or `cpu` doesn't match the machine, so `packages/release` makes them from the list in `packages/omni-build/src/platforms.ts`, and CI installs them on each OS and CPU from a registry on the runner. Nothing is published yet.
 
 ## Development
 
@@ -44,6 +44,6 @@ The USB tests (`packages/cli/src/adb/usb.rs`) plug made-up phones into vhci-hcd,
 docker run --rm --privileged -v /dev:/dev -v "$PWD":/src -w /src -e CARGO_TARGET_DIR=/tmp/target rust:1.99.0 cargo test adb::usb
 ```
 
-Pull requests must pass CI: formatting, lint (warnings are errors), spelling, type checks, 100% test coverage, tests on Linux, macOS and Windows, a release build on each of the six targets OmniBuild ships for, `npm install omni-build` from those builds on each of the six, the end-to-end tests on the iOS Simulator and an Android emulator, and a build of the docs site.
+Pull requests must pass CI: formatting, lint (warnings are errors), spelling, type checks, 100% test coverage, tests on Linux, macOS and Windows, a release build on each of the six targets OmniBuild ships for, `npm install @blotch/omni-build` from those builds on each of the six, the end-to-end tests on the iOS Simulator and an Android emulator, and a build of the docs site.
 
 Cargo also works on its own from the repository root, for example `cargo run -- --help`.

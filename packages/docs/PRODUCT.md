@@ -43,7 +43,7 @@ Its mechanism: it doesn't compile anything. It takes a shell that OmniBuild's ow
 
 ## Brand Commitments
 
-- Name: **OmniBuild** in prose, `omni-build` for the binary and npm package, `@omni-build/*` for scoped packages.
+- Name: **OmniBuild** in prose, `omni-build` for the binary, `@blotch/omni-build` for the npm package, and `@blotch/omni-build-*` for the packages beside it.
 - Voice: plain, specific and honest about status, like the README and the plan. No hype and no claims the plan doesn't back (speed numbers, store acceptance, features not built).
 - Nothing may look like it belongs to Apple or Google: no platform logos, no imitation of their sites or product art. The site's one-bit desktop world (chosen by the user) keeps the medium's generic grammar and drops everything that is Apple's own: no Apple logo, no Chicago or Geneva typefaces, no Finder, Trash or happy-computer icons.
 - The landing page's main action is to follow the project on GitHub; the second is to read the plan. An install command may appear only labelled as not published yet.

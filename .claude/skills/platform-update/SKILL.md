@@ -19,7 +19,7 @@ Apple raises the Xcode that App Store uploads must be built with every April. Go
 
 ```bash
 gh issue list --label platform-watch --state open
-GITHUB_REPOSITORY=Blotch-Smart-Frames/omni-build npm run check -w @omni-build/platform-watch -- --dry-run
+GITHUB_REPOSITORY=Blotch-Smart-Frames/omni-build npm run check -w @blotch/omni-build-platform-watch -- --dry-run
 ```
 
 - **With an issue:** read all of it, comments included (`gh issue view <number> --comments`).
@@ -111,11 +111,11 @@ The issue quotes the error and names the source by its `id` in `packages/platfor
 ## 2. Check it
 
 ```bash
-npm run test:coverage -w @omni-build/platform-watch   # only if the watch changed; 100% coverage is required
-npm run typecheck -w @omni-build/platform-watch       # likewise
+npm run test:coverage -w @blotch/omni-build-platform-watch   # only if the watch changed; 100% coverage is required
+npm run typecheck -w @blotch/omni-build-platform-watch       # likewise
 npm run lint
 npm run format:check
-GITHUB_REPOSITORY=Blotch-Smart-Frames/omni-build npm run check -w @omni-build/platform-watch -- --dry-run
+GITHUB_REPOSITORY=Blotch-Smart-Frames/omni-build npm run check -w @blotch/omni-build-platform-watch -- --dry-run
 ```
 
 The dry run is the real test of the change. It reads the live pages and your edited files, then prints what it would do. It should print no `couldn't` lines. With an issue, it should list `close #<number>` for it. Without one, its `open an issue: ...` line should be gone. If neither happens, the pin or the levels didn't reach the version, or the watch can't read your edit.

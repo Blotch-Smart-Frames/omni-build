@@ -1,15 +1,15 @@
-# omni-build
+# @blotch/omni-build
 
 Build, sign, install and ship iOS and Android apps with no native toolchain: no Xcode, no JDK, no Android SDK.
 
 **Status:** Phase 0 of [the plan](https://github.com/Blotch-Smart-Frames/omni-build/issues/1), and not published yet.
 
 ```sh
-npm install --save-dev omni-build
+npm install --save-dev @blotch/omni-build
 npx omni-build --help
 ```
 
-OmniBuild is a native binary written in Rust. This package is a small launcher: npm installs the binary for your OS and CPU from one of the `@omni-build/*` packages, and `omni-build` runs it.
+OmniBuild is a native binary written in Rust. This package is a small launcher: npm installs the binary for your OS and CPU from one of the `@blotch/omni-build-*` packages, and `omni-build` runs it.
 
 To use a binary from somewhere else, for a platform without a prebuilt binary or one you built with `cargo install omni-build`, set `OMNI_BUILD_BINARY` to its path.
 
@@ -18,7 +18,7 @@ To use a binary from somewhere else, for a platform without a prebuilt binary or
 A framework or build tool runs omni-build through the package's API, which hands over each event the binary reports, typed, and resolves with the command's result:
 
 ```ts
-import { omniBuild } from 'omni-build';
+import { omniBuild } from '@blotch/omni-build';
 
 const { out } = await omniBuild(
   ['repackage', 'shell.apk', '--config', 'app.json', '--out', 'app.apk'],

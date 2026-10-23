@@ -1,5 +1,5 @@
 {
-  "name": "@omni-build/cli",
+  "name": "@blotch/omni-build-cli",
   "version": "0.0.0",
   "private": true,
   "description": "The omni-build binary, in Rust. This package.json only lets turbo run Cargo alongside the npm packages",

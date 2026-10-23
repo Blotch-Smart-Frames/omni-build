@@ -334,7 +334,7 @@ describe('repackage', () => {
         log: 'commands.log',
       }),
     ).rejects.toThrow(
-      `There's no omni-build binary at ${missing}. Build one with \`npm run build -w @omni-build/cli\`, or set OMNI_BUILD_BINARY to one.`,
+      `There's no omni-build binary at ${missing}. Build one with \`npm run build -w @blotch/omni-build-cli\`, or set OMNI_BUILD_BINARY to one.`,
     );
     expect(run).not.toHaveBeenCalled();
   });

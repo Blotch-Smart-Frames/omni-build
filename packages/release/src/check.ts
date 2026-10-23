@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { packageName } from './manifests.ts';
+import { LAUNCHER, SCOPE, packageName } from './manifests.ts';
 import { INDEX } from './pack.ts';
 import { type Exec, exec as execCommand, npmCommand } from './process.ts';
 import { type Packed, serve } from './registry.ts';
@@ -32,7 +32,7 @@ export interface CheckOptions {
 
 /**
  * Installs the packed packages as a user would, with `npm install
- * omni-build` in an empty project, from a registry on this computer that has
+ * @blotch/omni-build` in an empty project, from a registry on this computer that has
  * them and nothing else. Then checks that npm installed this machine's
  * binary and no other, that `omni-build` runs it, and that the API a build
  * tool imports does too. Throws at the first thing that isn't so.
@@ -48,11 +48,9 @@ export const check = async ({
   const packed: Packed[] = JSON.parse(
     readFileSync(path.join(packages, INDEX), 'utf8'),
   );
-  const launcher = packed.find(
-    ({ manifest }) => manifest.name === 'omni-build',
-  );
+  const launcher = packed.find(({ manifest }) => manifest.name === LAUNCHER);
   if (!launcher) {
-    throw new Error(`There's no omni-build package in ${packages}.`);
+    throw new Error(`There's no ${LAUNCHER} package in ${packages}.`);
   }
   const { version } = launcher.manifest;
   const own = packageName(`${platform}-${arch}`);
@@ -104,13 +102,15 @@ export const check = async ({
 
     await exec(
       node,
-      [npm, 'install', `omni-build@${version}`, ...settings],
+      [npm, 'install', `${LAUNCHER}@${version}`, ...settings],
       inProject,
     );
-    const scope = path.join(project, 'node_modules', '@omni-build');
+    // The scope's folder holds the launcher too.
+    const scope = path.join(project, 'node_modules', SCOPE);
     const installed = existsSync(scope)
       ? readdirSync(scope)
-          .map((key) => packageName(key))
+          .map((folder) => `${SCOPE}/${folder}`)
+          .filter((name) => name !== LAUNCHER)
           .sort()
       : [];
     if (installed.join() !== own) {
@@ -119,7 +119,7 @@ export const check = async ({
       );
     }
     log(
-      `npm installed omni-build ${version} with ${own}, and no other platform's package`,
+      `npm installed ${LAUNCHER} ${version} with ${own}, and no other platform's package`,
     );
 
     const printed = (
@@ -151,7 +151,7 @@ export const check = async ({
       '--out',
       app,
     ];
-    const script = `import { omniBuild } from 'omni-build';\nconsole.log(JSON.stringify(await omniBuild(${JSON.stringify(args)})));`;
+    const script = `import { omniBuild } from '${LAUNCHER}';\nconsole.log(JSON.stringify(await omniBuild(${JSON.stringify(args)})));`;
     const result = JSON.parse(
       await exec(node, ['--input-type=module', '-e', script], inProject),
     );

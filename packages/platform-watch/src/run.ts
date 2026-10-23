@@ -9,7 +9,7 @@ import { SOURCES, type SourceReadings } from './sources.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
-export const HELP = `Usage: npm run check -w @omni-build/platform-watch -- [options]
+export const HELP = `Usage: npm run check -w @blotch/omni-build-platform-watch -- [options]
 
 Compares the toolchain the app shells are built with against what Apple and
 Google require and have released, and opens, updates and closes GitHub

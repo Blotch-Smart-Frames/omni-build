@@ -56,7 +56,7 @@ beforeEach(() => {
   writeFileSync(
     path.join(launcher, 'package.json'),
     JSON.stringify({
-      name: 'omni-build',
+      name: '@blotch/omni-build',
       version: '1.2.3',
       scripts: { build: 'tsc' },
     }),
@@ -92,11 +92,11 @@ describe('pack', () => {
 
     const names = packed.map(({ manifest }) => manifest.name);
     expect(names).toEqual([
-      ...Object.keys(PLATFORMS).map((key) => `@omni-build/${key}`),
-      'omni-build',
+      ...Object.keys(PLATFORMS).map((key) => `@blotch/omni-build-${key}`),
+      '@blotch/omni-build',
     ]);
     expect(logged).toEqual(names.map((name) => `Packed ${name}`));
-    expect(staged['@omni-build/linux-x64']).toEqual({
+    expect(staged['@blotch/omni-build-linux-x64']).toEqual({
       files: ['LICENSE', 'README.md', 'omni-build', 'package.json'],
       // Runnable, whatever mode the artifact came with. Windows has no
       // such modes, and CI packs on Linux.
@@ -110,8 +110,10 @@ describe('pack', () => {
         '--json',
       ],
     });
-    expect(staged['@omni-build/win32-x64'].files).toContain('omni-build.exe');
-    expect(staged['omni-build'].files).toEqual([
+    expect(staged['@blotch/omni-build-win32-x64'].files).toContain(
+      'omni-build.exe',
+    );
+    expect(staged['@blotch/omni-build'].files).toEqual([
       'LICENSE',
       'README.md',
       'dist',
@@ -119,9 +121,9 @@ describe('pack', () => {
       'package.json',
     ]);
     const launcher = packed.at(-1)!;
-    expect(launcher.file).toBe('omni-build-1.2.3.tgz');
+    expect(launcher.file).toBe('blotch-omni-build-1.2.3.tgz');
     expect(launcher.manifest.optionalDependencies).toMatchObject({
-      '@omni-build/linux-x64': '1.2.3',
+      '@blotch/omni-build-linux-x64': '1.2.3',
     });
     expect(launcher.manifest.scripts).toBeUndefined();
     // The index check serves the tarballs by, beside them.
@@ -137,7 +139,7 @@ describe('pack', () => {
     });
 
     await expect(pack({ binaries, out, root, exec: npm })).rejects.toThrow(
-      "The launcher isn't built: run `npm run build -w omni-build` first.",
+      "The launcher isn't built: run `npm run build -w @blotch/omni-build` first.",
     );
   });
 

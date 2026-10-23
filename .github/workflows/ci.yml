@@ -234,7 +234,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run build -w omni-build
+      - run: npm run build -w @blotch/omni-build
       - uses: actions/download-artifact@v8
         with:
           pattern: omni-build-*
@@ -247,7 +247,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # `npm install omni-build` on each OS and CPU the build job builds for, from
+  # `npm install @blotch/omni-build` on each OS and CPU the build job builds for, from
   # a registry on the runner that has the packed packages: npm has to install
   # that machine's binary and no other, and both the command and the API a
   # build tool imports have to run it. Node only: the check uses nothing
@@ -518,7 +518,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run build -w @omni-build/docs
+      - run: npm run build -w @blotch/omni-build-docs
 
   ci-passed:
     name: CI passed

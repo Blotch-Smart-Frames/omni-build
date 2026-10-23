@@ -1,13 +1,13 @@
-# @omni-build/docs
+# @blotch/omni-build-docs
 
 OmniBuild's documentation site and landing page, built with [Docusaurus](https://docusaurus.io) and published to GitHub Pages at https://blotch-smart-frames.github.io/omni-build/.
 
 ```sh
-npm start -w @omni-build/docs          # dev server with live reload
-npm run build -w @omni-build/docs      # the production site, in build/
-npm run serve -w @omni-build/docs      # serve build/ locally
-npm test -w @omni-build/docs           # every module's tests; test:coverage fails below 100%
-npm run typecheck -w @omni-build/docs  # tsc; Docusaurus itself only strips the types
+npm start -w @blotch/omni-build-docs          # dev server with live reload
+npm run build -w @blotch/omni-build-docs      # the production site, in build/
+npm run serve -w @blotch/omni-build-docs      # serve build/ locally
+npm test -w @blotch/omni-build-docs           # every module's tests; test:coverage fails below 100%
+npm run typecheck -w @blotch/omni-build-docs  # tsc; Docusaurus itself only strips the types
 ```
 
 The pages are in `docs/`. The landing page is `src/pages/index.tsx`, and its components are in `src/components/`.

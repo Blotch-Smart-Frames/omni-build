@@ -41,7 +41,7 @@ export const resolveBinary = ({
     );
   }
 
-  const packageName = `@omni-build/${key}`;
+  const packageName = `@blotch/omni-build-${key}`;
   let packageJson;
   try {
     packageJson = resolvePackageJson(packageName);

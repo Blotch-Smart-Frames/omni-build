@@ -1,4 +1,4 @@
-# @omni-build/e2e
+# @blotch/omni-build-e2e
 
 End-to-end tests on real platforms: real Swift and Kotlin app shells, repackaged by omni-build on Linux, Windows and macOS, then installed and launched on the iOS Simulator and an Android emulator. They run on every pull request.
 
@@ -123,4 +123,4 @@ The extensions' profiles are made the same way, with the same key and certificat
 - **The fixtures are native projects**, so they keep Xcode's and Android Studio's formatting: oxfmt skips `fixtures/`.
 - **The release APK is signed with the Android SDK's debug key**, so it installs without a keystore of its own. omni-build re-signs it with its own.
 - **The harness uses only Node's built-in modules**, and Node runs its TypeScript as it is, stripping the types (Node 22.18 or later), so CI runs it without `npm ci` or a build.
-- **The harness has unit tests too**, a `.test.ts` beside each module, which CI's coverage job holds to 100%. They stand in for Xcode, Gradle, the JDK, adb, simctl and the emulator, so they run on any machine in a fraction of a second and catch a broken harness before the slow jobs do. Run them with `npm test -w @omni-build/e2e`. As in the other packages, `cli.ts` only wires `run.ts` to the process, so the tests reach everything else in-process.
+- **The harness has unit tests too**, a `.test.ts` beside each module, which CI's coverage job holds to 100%. They stand in for Xcode, Gradle, the JDK, adb, simctl and the emulator, so they run on any machine in a fraction of a second and catch a broken harness before the slow jobs do. Run them with `npm test -w @blotch/omni-build-e2e`. As in the other packages, `cli.ts` only wires `run.ts` to the process, so the tests reach everything else in-process.

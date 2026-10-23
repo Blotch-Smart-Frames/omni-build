@@ -9,10 +9,10 @@ A framework's build command, or any other tool, runs OmniBuild as it would run a
 
 ## From Node
 
-The `omni-build` npm package runs the binary npm installed for the machine, and hands each event over, typed:
+The `@blotch/omni-build` npm package runs the binary npm installed for the machine, and hands each event over, typed:
 
 ```ts
-import { omniBuild } from 'omni-build';
+import { omniBuild } from '@blotch/omni-build';
 
 const result = await omniBuild(
   ['repackage', 'shell.apk', '--config', 'app.json', '--out', 'app.apk'],

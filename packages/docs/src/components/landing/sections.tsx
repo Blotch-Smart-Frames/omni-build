@@ -214,7 +214,7 @@ const Install = () => (
       aria-disabled="true"
       aria-labelledby="install-command"
     >
-      <code>npm install --save-dev omni-build</code>
+      <code>npm install --save-dev @blotch/omni-build</code>
     </div>
     <p className={styles.copy}>
       Or <code>cargo install omni-build</code>, Homebrew, or a download from

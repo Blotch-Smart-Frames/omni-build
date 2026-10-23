@@ -6,7 +6,7 @@ Build, sign, install and ship iOS and Android apps with no native toolchain (no 
 
 ## Repository
 
-An npm workspaces + turbo monorepo with the Rust inside `packages/` (see the README for the package table). The npm names are `omni-build` for the launcher and `@omni-build/<platform>-<arch>` for the platform packages. Things that aren't obvious from the files:
+An npm workspaces + turbo monorepo with the Rust inside `packages/` (see the README for the package table). The npm names are in Blotch's scope: `@blotch/omni-build` for the launcher and `@blotch/omni-build-<platform>-<arch>` for the platform packages. `@omni-build` is someone else's, and npm refuses an unscoped `omni-build` as too close to the `omnibuild` it has. Things that aren't obvious from the files:
 
 - **Each Rust crate is listed by path** in the root `Cargo.toml`'s `members`. A `packages/*` glob would also match the npm packages, which have no `Cargo.toml`, and Cargo would fail.
 - **A Rust crate that turbo should run has a private `package.json`** whose scripts call Cargo (see `packages/cli`). Its turbo `build` and `test` aren't cached: Cargo caches them in the shared `target/`.
