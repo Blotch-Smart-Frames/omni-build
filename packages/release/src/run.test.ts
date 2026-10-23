@@ -4,7 +4,8 @@ import { HELP, run } from './run.ts';
 
 const pack = vi.fn(async () => []);
 const check = vi.fn(async () => {});
-const running = (args: string[]) => run(args, { pack, check });
+const publish = vi.fn(async () => {});
+const running = (args: string[]) => run(args, { pack, check, publish });
 
 beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -14,6 +15,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   pack.mockClear();
   check.mockClear();
+  publish.mockClear();
 });
 
 describe('run', () => {
@@ -29,6 +31,20 @@ describe('run', () => {
       status: 0,
     });
     expect(check).toHaveBeenCalledWith({ packages: 'npm' });
+  });
+
+  it('publishes, for a tag or none', async () => {
+    expect(
+      await running(['publish', '--packages', 'npm', '--tag', 'v1.2.3']),
+    ).toEqual({ status: 0 });
+    expect(publish).toHaveBeenCalledWith({ packages: 'npm', tag: 'v1.2.3' });
+    expect(await running(['publish', '--packages', 'npm'])).toEqual({
+      status: 0,
+    });
+    expect(publish).toHaveBeenLastCalledWith({
+      packages: 'npm',
+      tag: undefined,
+    });
   });
 
   it('says why a command failed', async () => {
@@ -54,8 +70,8 @@ describe('run', () => {
     });
 
     expect(await running([])).toEqual(usage('Name a command'));
-    expect(await running(['publish'])).toEqual(
-      usage("Unknown command 'publish'"),
+    expect(await running(['deploy'])).toEqual(
+      usage("Unknown command 'deploy'"),
     );
     expect(await running(['pack', 'extra'])).toEqual(
       usage("Unexpected argument 'extra'"),
@@ -67,11 +83,15 @@ describe('run', () => {
       usage('pack needs --binaries and --out'),
     );
     expect(await running(['check'])).toEqual(usage('check needs --packages'));
+    expect(await running(['publish', '--tag', 'v1.2.3'])).toEqual(
+      usage('publish needs --packages'),
+    );
     expect(await running(['check', '--bogus'])).toEqual({
       status: 2,
       message: expect.stringMatching(/^release: Unknown option '--bogus'/),
     });
     expect(pack).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
   });
 });

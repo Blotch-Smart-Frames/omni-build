@@ -19,11 +19,11 @@ describe('release command', () => {
   });
 
   it("prints run()'s message on stderr and exits with its status", () => {
-    const result = run(['publish']);
+    const result = run(['deploy']);
 
     expect(result.status).toBe(2);
     expect(result.stderr).toBe(
-      "release: Unknown command 'publish'. See --help.\n",
+      "release: Unknown command 'deploy'. See --help.\n",
     );
   });
 });
