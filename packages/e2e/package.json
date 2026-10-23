@@ -1,6 +1,6 @@
 {
   "name": "@blotch/omni-build-e2e",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "description": "End-to-end tests: real Swift and Kotlin app shells, built with Xcode and Gradle, run on the iOS Simulator and an Android emulator",
   "license": "MIT",

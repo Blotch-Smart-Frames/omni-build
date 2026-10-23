@@ -1,6 +1,6 @@
 {
   "name": "@blotch/omni-build-cli",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "description": "The omni binary, in Rust. This package.json only lets turbo run Cargo alongside the npm packages",
   "license": "MIT",
