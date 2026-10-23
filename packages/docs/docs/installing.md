@@ -7,7 +7,7 @@ description: Install an APK on an Android phone, emulator or device on the netwo
 
 :::warning[Phase 1]
 
-Android phones plugged in by USB, Android emulators, and Android devices listening for ADB on the network. Android 11's wireless debugging, which pairs with a code first, comes next. On iOS, install through TestFlight for now. OmniBuild isn't published yet: build the binary from the [repository](https://github.com/Blotch-Smart-Frames/omni-build) with `cargo build --release`.
+Android phones plugged in by USB, Android emulators, and Android devices listening for ADB on the network. Android 11's wireless debugging, which pairs with a code first, comes next. On iOS, install through TestFlight for now. Install OmniBuild from npm, as [Installation](./installation.md) shows.
 
 :::
 

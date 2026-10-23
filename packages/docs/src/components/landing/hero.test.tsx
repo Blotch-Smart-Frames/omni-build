@@ -253,7 +253,7 @@ describe('the desktop', () => {
       `${REPOSITORY}/issues/1`,
     );
     expect(
-      screen.getByText('In planning. Nothing to install yet.'),
+      screen.getByText('Early days: Phases 0 and 1 of the plan, on npm.'),
     ).toBeInTheDocument();
   });
 

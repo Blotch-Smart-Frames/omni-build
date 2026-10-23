@@ -190,21 +190,16 @@
 }
 
 /*
- * Disabled, as a dimmed field was: the dither is on its frame, a band of 50%
- * inside an ink rule, and never under the command, so the text reads.
+ * Read-only, as a field holding text to copy was: an ink rule round the
+ * command, on paper.
  */
 .field {
   width: 100%;
   margin-bottom: 20px;
-  padding: 10px 12px;
-  border: calc(var(--px) * 3) solid transparent;
+  padding: 14px 16px;
+  border: var(--px) solid var(--ink);
   border-radius: 0;
-  outline: var(--px) solid var(--ink);
-  background:
-    linear-gradient(var(--paper), var(--paper)) padding-box,
-    var(--dither-50) 0 0 / 4px 4px border-box;
   background-color: var(--paper);
-  image-rendering: pixelated;
   color: var(--ink);
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.9375rem;
