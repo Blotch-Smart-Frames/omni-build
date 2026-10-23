@@ -51,10 +51,10 @@ This is done once, for all seven packages. npm can only trust a workflow with a 
    npm publish ./blotch-omni-build-<version>.tgz --access public
    ```
 
-3. Trust the workflow with each package, as only the `npm` environment may use it (npm 11.15.0 or later):
+3. Shortly before the first release from the workflow, trust the workflow with each package, as only the `npm` environment may use it (npm 11.15.0 or later). npm expires a trusted publisher that hasn't published within 2 days of being added, and it then has to be deleted and added again.
 
    ```sh
    npm trust github <package> --repo Blotch-Smart-Frames/omni-build --file release.yml --env npm --allow-publish
    ```
 
-4. On npm's website, in each package's **Settings**, under **Publishing access**, choose **Require two-factor authentication and disallow tokens**.
+4. Once the workflow has published a release, on npm's website, in each package's **Settings**, under **Publishing access**, choose **Require two-factor authentication and disallow tokens**.
