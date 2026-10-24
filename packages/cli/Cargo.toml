@@ -9,11 +9,12 @@ homepage = "https://blotch-smart-frames.github.io/omni-build/"
 readme = "README.md"
 keywords = ["android", "ios", "apk", "codesign", "mobile"]
 categories = ["command-line-utilities", "development-tools::build-utils"]
-# What crates.io gets: the code, and what it has to come with. Not the
-# package.json, turbo and cspell settings that only the monorepo reads, nor
-# the tests, whose fixtures `cargo install` doesn't need. LICENSE links to the
-# repository's, which Cargo copies in as a file.
-include = ["/src/**/*.rs", "/LICENSE", "/README.md"]
+# What crates.io gets: the code, with the files it embeds (Apple's
+# certificates), and what it has to come with. Not the package.json, turbo
+# and cspell settings that only the monorepo reads, nor the tests, whose
+# fixtures `cargo install` doesn't need. LICENSE links to the repository's,
+# which Cargo copies in as a file.
+include = ["/src/**", "/LICENSE", "/README.md"]
 
 # The command is `omni`, shorter to type than the crate's name, which
 # `cargo install omni-build` installs it by.
