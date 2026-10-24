@@ -172,7 +172,7 @@ describe('Install', () => {
       'npm install --save-dev @blotch/omni-build',
     );
     expect(install).toHaveTextContent(
-      'Cargo, Homebrew and downloads from GitHub releases come later.',
+      'Cargo, Homebrew and downloads from GitHub releases start with the release after 0.0.1.',
     );
     expect(
       within(install).getByRole('link', { name: 'Installation, in full' }),
@@ -235,12 +235,12 @@ describe('Roadmap', () => {
     );
   });
 
-  it('links to the phases, risks and open decisions', () => {
+  it('links to the phases, risks and decisions', () => {
     render(<Sections />);
 
     expect(
       within(windowTitled('Roadmap')).getByRole('link', {
-        name: 'Phases, risks and open decisions',
+        name: 'Phases, risks and decisions',
       }),
     ).toHaveAttribute('data-to', '/docs/roadmap');
   });

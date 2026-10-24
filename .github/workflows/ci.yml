@@ -247,14 +247,44 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # `npm install @blotch/omni-build` on each OS and CPU the build job builds for, from
-  # a registry on the runner that has the packed packages: npm has to install
-  # that machine's binary and no other, and both the command and the API a
-  # build tool imports have to run it. Node only: the check uses nothing
-  # else, so no `npm ci`.
-  npm-install:
-    name: npm-install (${{ matrix.runner }})
-    needs: npm-pack
+  # The archives a release attaches to its GitHub release, made from the
+  # build job's binaries (see packages/release): one per platform, a zip for
+  # Windows and a gzipped tar elsewhere, and SHA256SUMS. The release workflow
+  # publishes these, and the Homebrew formula and cargo-binstall download
+  # them, so they're checked below as each of those uses them.
+  archives:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: omni-build-*
+          path: binaries
+      # The release tool uses only Node's built-in modules, so no `npm ci`.
+      - run: node packages/release/src/cli.ts archive --binaries binaries --out release-archives
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-archives
+          path: release-archives
+          if-no-files-found: error
+          retention-days: 7
+
+  # On each OS and CPU the build job builds for, what a release gives users.
+  # `npm install @blotch/omni-build`, from a registry on the runner that has
+  # the packed packages: npm has to install that machine's binary and no
+  # other, and both the command and the API a build tool imports have to run
+  # it. Then that machine's archive from the GitHub release, unpacked as a
+  # user would: it has to match its SHA-256, and its omni has to run. Node
+  # only: the checks use nothing else, so no `npm ci`.
+  install:
+    name: install (${{ matrix.runner }})
+    needs: [npm-pack, archives]
     strategy:
       fail-fast: false
       matrix:
@@ -278,6 +308,68 @@ jobs:
           name: npm-packages
           path: npm-packages
       - run: node packages/release/src/cli.ts check --packages npm-packages
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-archives
+          path: release-archives
+      - run: node packages/release/src/cli.ts check-archive --archives release-archives
+
+  # The Homebrew formula the release workflow publishes to the tap, written
+  # for the archives the archives job made, from a folder rather than the
+  # GitHub release, which doesn't exist yet. Homebrew installs it from a tap
+  # of its own on the runner, runs its test (omni --version), and audits it
+  # as strictly as it does its own formulae. On macOS and Linux, the two
+  # systems Homebrew runs on.
+  homebrew:
+    name: homebrew (${{ matrix.runner }})
+    needs: archives
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      HOMEBREW_NO_ANALYTICS: 1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-archives
+          path: release-archives
+      # Linux runners have Homebrew installed, but not on the PATH.
+      - name: Put Homebrew on the PATH
+        if: runner.os == 'Linux'
+        run: echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+      - name: Install the formula from a tap of its own
+        run: |
+          brew tap-new --no-git omnibuild-ci/local
+          node packages/release/src/cli.ts formula --archives release-archives --url "file://$PWD/release-archives" --out "$(brew --repository omnibuild-ci/local)/Formula/omni-build.rb"
+          brew install omnibuild-ci/local/omni-build
+      - run: brew test omnibuild-ci/local/omni-build
+      - run: brew audit --strict --formula omnibuild-ci/local/omni-build
+      - run: brew style omnibuild-ci/local/omni-build
+
+  # The crate the release workflow publishes to crates.io, packaged as
+  # `cargo publish` packages it and built from the package alone, so a file
+  # it leaves out, or one crates.io would refuse, fails here rather than in
+  # a release. `cargo install omni-build` builds from what it lists.
+  crate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - run: cargo publish --dry-run --locked --package omni-build
 
   # End to end, in the three stages OmniBuild is used in (see packages/e2e):
   #
@@ -534,7 +626,10 @@ jobs:
       - test
       - build
       - npm-pack
-      - npm-install
+      - archives
+      - install
+      - homebrew
+      - crate
       - e2e-shell-ios
       - e2e-shell-android
       - e2e-repackage

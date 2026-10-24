@@ -5,6 +5,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://blotch-smart-frames.github.io/omni-build/"
+readme = "README.md"
+keywords = ["android", "ios", "apk", "codesign", "mobile"]
+categories = ["command-line-utilities", "development-tools::build-utils"]
+# What crates.io gets: the code, and what it has to come with. Not the
+# package.json, turbo and cspell settings that only the monorepo reads, nor
+# the tests, whose fixtures `cargo install` doesn't need. LICENSE links to the
+# repository's, which Cargo copies in as a file.
+include = ["/src/**/*.rs", "/LICENSE", "/README.md"]
 
 # The command is `omni`, shorter to type than the crate's name, which
 # `cargo install omni-build` installs it by.
@@ -65,6 +74,21 @@ x509-cert = { version = "0.2.5", features = ["builder", "pem"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+# For `cargo binstall omni-build`, which downloads the binary the GitHub
+# release has rather than building it: where each target's archive is, and
+# where the binary is inside it. packages/release makes the archives, and its
+# tests check these templates name them.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/omni-build-{ target }{ archive-suffix }"
+bin-dir = "omni-build-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [lints]
 workspace = true

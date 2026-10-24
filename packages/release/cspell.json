@@ -2,5 +2,5 @@
   "$schema": "../../node_modules/@cspell/cspell-types/cspell.schema.json",
   "version": "0.2",
   "import": ["../../cspell.json"],
-  "words": ["userconfig"]
+  "words": ["bsdtar", "userconfig", "ustar"]
 }
