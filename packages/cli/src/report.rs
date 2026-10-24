@@ -47,6 +47,18 @@ pub enum Event {
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
     },
+    /// `tcpip` had the device listen for ADB on the network, where this
+    /// computer reached it.
+    Listening {
+        /// The device's name, as `--device` took it.
+        device: String,
+        /// The device's model, as its user knows it, if it says.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        /// Where it listens, as `--device` takes it from now on
+        /// (`192.168.1.20:5555`).
+        address: String,
+    },
     /// Why the command failed. It's the last event, and OmniBuild exits
     /// with 1. The reason is the event's message, so it has no field of
     /// its own.
@@ -128,6 +140,19 @@ impl Event {
                 device,
                 model: None,
             } => format!("Installed {app} on {device}"),
+            // Until it restarts: adbd forgets the port then, as it does
+            // for adb.
+            Self::Listening {
+                device,
+                model,
+                address,
+            } => format!(
+                "{} listens for ADB at {address} until it restarts. Unplug it, and install with --device {address}",
+                match model {
+                    Some(model) => format!("{model} ({device})"),
+                    None => device.clone(),
+                }
+            ),
             Self::Error { message } => message.clone(),
         }
     }
@@ -144,6 +169,7 @@ impl Event {
                 | Self::CertificateImported { .. }
                 | Self::Repackaged { .. }
                 | Self::Installed { .. }
+                | Self::Listening { .. }
         )
     }
 }
@@ -236,6 +262,18 @@ mod tests {
             people.line(&installed(None)),
             Line::Stdout("Installed app.apk on emulator-5554".to_owned())
         );
+        for (model, device) in [(Some("Pixel 8"), "Pixel 8 (R5CT1234)"), (None, "R5CT1234")] {
+            assert_eq!(
+                people.line(&Event::Listening {
+                    device: "R5CT1234".to_owned(),
+                    model: model.map(str::to_owned),
+                    address: "192.168.1.20:5555".to_owned(),
+                }),
+                Line::Stdout(format!(
+                    "{device} listens for ADB at 192.168.1.20:5555 until it restarts. Unplug it, and install with --device 192.168.1.20:5555"
+                ))
+            );
+        }
         assert!(matches!(
             people.line(&key(KeyKind::Upload)),
             Line::Stdout(line) if line.starts_with("Created an upload key in key.p12, with the alias \"upload\".")
@@ -321,6 +359,16 @@ mod tests {
                     .to_owned()
             )
         );
+        assert!(matches!(
+            tools.line(&Event::Listening {
+                device: "R5CT1234".to_owned(),
+                model: Some("Pixel 8".to_owned()),
+                address: "192.168.1.20:5555".to_owned(),
+            }),
+            Line::Stdout(line) if line.starts_with(
+                r#"{"event":"listening","device":"R5CT1234","model":"Pixel 8","address":"192.168.1.20:5555","message":"Pixel 8 (R5CT1234) listens for ADB at "#
+            )
+        ));
         assert_eq!(
             tools.line(&Event::Error {
                 message: "couldn't read \"shell\"".to_owned()

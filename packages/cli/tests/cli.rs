@@ -846,3 +846,160 @@ fn tells_build_tools_when_the_device_asks_its_user() {
         })
     );
 }
+
+/// What `ip -o -4 addr show` prints on a device on Wi-Fi, whose address is
+/// this computer's.
+const ON_WI_FI: &[u8] = b"30: wlan0    inet 127.0.0.1/8 scope global wlan0\n";
+
+/// A stand-in for a device's adbd, on a port of this computer, which
+/// connects without checking the key, answers the services it's asked for
+/// with `outputs`, in turn, and waits for omni to hang up. Returns its
+/// port, and the services it was asked for.
+fn fake_services(outputs: Vec<Vec<u8>>) -> (u16, JoinHandle<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let device = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        assert_eq!(&receive(&mut stream).0, b"CNXN");
+        let banner = b"device::ro.product.model=Pixel 8;features=shell_v2,cmd\0";
+        send(&mut stream, *b"CNXN", 0x0100_0001, 4096, banner);
+        let services = outputs
+            .into_iter()
+            .map(|output| {
+                let (open, local, _, service) = receive(&mut stream);
+                assert_eq!(&open, b"OPEN");
+                send(&mut stream, *b"OKAY", 100, local, b"");
+                send(&mut stream, *b"WRTE", 100, local, &output);
+                send(&mut stream, *b"CLSE", 100, local, b"");
+                // omni's OKAY for the output.
+                assert_eq!(&receive(&mut stream).0, b"OKAY");
+                let service = String::from_utf8(service).unwrap();
+                service.trim_end_matches('\0').to_owned()
+            })
+            .collect();
+        stream.read_to_end(&mut Vec::new()).unwrap();
+        services
+    });
+    (port, device)
+}
+
+/// A device on the network that restarts to listen on another port when
+/// omni asks, with a stand-in listening there. Returns the device's port,
+/// the one it listens on next, and the services omni asked it for.
+fn restarting_device() -> (u16, u16, JoinHandle<Vec<String>>) {
+    let (new_port, _) = fake_services(Vec::new());
+    let answer = format!("restarting in TCP mode port: {new_port}\n");
+    let (port, device) = fake_services(vec![ON_WI_FI.to_vec(), answer.into_bytes()]);
+    (port, new_port, device)
+}
+
+#[test]
+fn tcpip_has_a_device_listen_on_the_network() {
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir(home.path().join(".android")).unwrap();
+    fs::copy(ADB_KEY, home.path().join(".android/adbkey")).unwrap();
+    let (port, new_port, device) = restarting_device();
+
+    let output = omni_build_at_home(
+        home.path(),
+        &[
+            "tcpip",
+            "--device",
+            &format!("127.0.0.1:{port}"),
+            "--port",
+            &new_port.to_string(),
+        ],
+    );
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!(
+            "Pixel 8 (127.0.0.1:{port}) listens for ADB at 127.0.0.1:{new_port} until it restarts. Unplug it, and install with --device 127.0.0.1:{new_port}\n"
+        )
+    );
+    assert_eq!(
+        device.join().unwrap(),
+        [
+            "shell:ip -o -4 addr show".to_owned(),
+            format!("tcpip:{new_port}")
+        ]
+    );
+}
+
+#[test]
+fn tells_build_tools_where_the_device_listens() {
+    let home = tempfile::tempdir().unwrap();
+    let (port, new_port, _) = restarting_device();
+    let device = format!("127.0.0.1:{port}");
+    let address = format!("127.0.0.1:{new_port}");
+
+    let output = omni_build_at_home(
+        home.path(),
+        &[
+            "tcpip",
+            "-d",
+            &device,
+            "-p",
+            &new_port.to_string(),
+            "--json",
+        ],
+    );
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let events = events(&output);
+    assert_eq!(events[0]["event"], "key-created");
+    assert_eq!(
+        events[1..],
+        [serde_json::json!({
+            "event": "listening",
+            "device": device,
+            "model": "Pixel 8",
+            "address": address,
+            "message": format!("Pixel 8 ({device}) listens for ADB at {address} until it restarts. Unplug it, and install with --device {address}"),
+        })]
+    );
+}
+
+#[test]
+fn tcpip_reports_what_went_wrong() {
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir(home.path().join(".android")).unwrap();
+    fs::copy(ADB_KEY, home.path().join(".android/adbkey")).unwrap();
+    let (port, _) = fake_services(vec![b"1: lo    inet 127.0.0.1/8 scope host lo\n".to_vec()]);
+    let off_the_network = format!("127.0.0.1:{port}");
+    let unreadable = tempfile::tempdir().unwrap();
+    // A folder where the key should be.
+    fs::create_dir_all(unreadable.path().join(".android/adbkey")).unwrap();
+    let cases = [
+        (
+            home.path(),
+            vec!["tcpip", "--device", "R5CT1234"],
+            "error: found no device named \"R5CT1234\": ".to_owned(),
+        ),
+        (
+            home.path(),
+            vec!["tcpip", "--device", &off_the_network],
+            format!(
+                "error: Pixel 8 ({off_the_network}) isn't on Wi-Fi or Ethernet: connect it to the network this computer is on\n"
+            ),
+        ),
+        (
+            unreadable.path(),
+            vec!["tcpip"],
+            "error: couldn't read ".to_owned(),
+        ),
+    ];
+
+    for (home, args, message) in cases {
+        let output = omni_build_at_home(home, &args);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(stderr(&output).starts_with(&message), "{}", stderr(&output));
+    }
+    // No device listens on port 0.
+    let output = omni_build(&["tcpip", "--port", "0"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("--port"), "{}", stderr(&output));
+}

@@ -1,17 +1,19 @@
 //! Installing apps on Android devices with no Android SDK, over ADB, the
 //! protocol the SDK's adb speaks to them: to phones plugged in by USB, and
 //! over TCP to the emulators running on this computer and to devices on
-//! the network.
+//! the network, which a phone plugged in becomes when it's asked to listen
+//! there.
 
 mod connection;
 mod key;
 mod usb;
 
 use std::fmt;
+use std::io;
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 
 use connection::{Connection, Stream};
 pub use key::{AdbKey, key_path, owner};
@@ -32,6 +34,18 @@ const PUSHED_APK: &str = "/data/local/tmp/omni-build.apk";
 const PUSHED_MODE: u32 = 0o100_644;
 /// The most a sync DATA request carries.
 const SYNC_DATA_MAX: usize = 64 * 1024;
+/// How long OmniBuild waits for a device it has asked to listen on the
+/// network to be listening there: its adbd restarts to listen, which takes
+/// a second or two, and an old phone longer.
+pub const LISTEN_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long each attempt to connect to a device on the network waits. A
+/// network that keeps its devices apart drops the attempt rather than
+/// refusing it, which the system would otherwise wait on for a minute or
+/// more.
+const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long OmniBuild waits between attempts, while the device's adbd
+/// restarts and refuses connections.
+const RETRY_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The ports where emulators on this computer listen for ADB, and where
 /// adb looks for them: each emulator takes two ports from 5554 on, its
@@ -53,8 +67,10 @@ pub trait UsbDevices {
 
 /// How OmniBuild reaches a device.
 enum Route {
-    /// Over TCP, connected.
+    /// Over TCP, connected: a device on the network.
     Tcp(TcpStream),
+    /// Over TCP, connected: an emulator on this computer.
+    Emulator(TcpStream),
     /// Plugged in by USB, not yet opened.
     Usb,
 }
@@ -64,6 +80,8 @@ pub struct Device {
     /// Its name, as adb's: a phone's serial number, `emulator-5554`, or
     /// its address.
     serial: String,
+    /// Whether it's an emulator on this computer.
+    emulator: bool,
     connection: Connection<'static>,
 }
 
@@ -85,21 +103,19 @@ impl Device {
             Some(device) => (device.to_owned(), reach(device, usb)?),
             None => only_device(emulator_ports, usb)?,
         };
+        let emulator = matches!(route, Route::Emulator(_));
         let stream = match route {
-            // Without Nagle's algorithm, as adb: each small message would
-            // otherwise wait for the device to acknowledge the last.
-            Route::Tcp(stream) => stream
-                .set_read_timeout(Some(TIMEOUT))
-                .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)))
-                .and_then(|()| stream.set_nodelay(true))
-                .map(|()| Box::new(stream) as Box<dyn Stream>)
-                .map_err(anyhow::Error::from),
+            Route::Tcp(stream) | Route::Emulator(stream) => tcp(stream),
             Route::Usb => usb.open(&serial, TIMEOUT),
         };
         let connection = stream
             .and_then(|stream| Connection::open(stream, key, &|| authorizing(&serial)))
             .with_context(|| format!("couldn't connect to {serial}"))?;
-        Ok(Self { serial, connection })
+        Ok(Self {
+            serial,
+            emulator,
+            connection,
+        })
     }
 
     /// Its name, as adb's: a phone's serial number, `emulator-5554`, or
@@ -168,6 +184,69 @@ impl Device {
         Ok(output)
     }
 
+    /// Has the device listen for ADB on the network, on `port`, as `adb
+    /// tcpip` does, so OmniBuild reaches it there without its cable until it
+    /// restarts. Reads the device's address, asks its adbd to restart
+    /// listening on the port, which ends this connection, then connects to
+    /// it there within `patience`, proving OmniBuild's identity with `key`
+    /// again and calling `authorizing` with the address if the device asks
+    /// its user. Returns the address.
+    pub fn listen(
+        &mut self,
+        port: u16,
+        key: &AdbKey,
+        authorizing: &dyn Fn(&str),
+        patience: Duration,
+    ) -> Result<SocketAddr> {
+        // An emulator listens on a network of its own, inside the emulator,
+        // which this computer reaches only through the ports the emulator
+        // forwards to it: as `emulator-5554`, already.
+        if self.emulator {
+            bail!(
+                "{self} is an emulator, which this computer reaches over the network already: name it with --device {}",
+                self.serial
+            );
+        }
+        // Before the switch, which ends the connection to ask on.
+        let addresses = self
+            .connection
+            .run("shell:ip -o -4 addr show", &[])
+            .with_context(|| format!("couldn't read the address of {self}"))?;
+        let Some(ip) = network_address(&String::from_utf8_lossy(&addresses)) else {
+            bail!(
+                "{self} isn't on Wi-Fi or Ethernet: connect it to the network this computer is on"
+            );
+        };
+        // "restarting in TCP mode port: 5555", and then adbd restarts.
+        let answer = self
+            .connection
+            .run(&format!("tcpip:{port}"), &[])
+            .with_context(|| format!("couldn't ask {self} to listen on the network"))?;
+        let answer = String::from_utf8_lossy(&answer);
+        if !answer.starts_with("restarting in TCP mode") {
+            bail!(
+                "{self} didn't listen on the network: {}",
+                match answer.trim() {
+                    "" => "it gave no reason",
+                    reason => reason,
+                }
+            );
+        }
+        let address = SocketAddr::from((ip, port));
+        let stream = wait_for(address, patience).map_err(|error| {
+            anyhow!(
+                "{self} listens for ADB at {address} now, but this computer couldn't reach it there ({error}): it may be on another network, or on one that keeps its devices apart, as many guest networks do"
+            )
+        })?;
+        // The device trusts the key over USB, but asks its user again if
+        // they allowed it only that once.
+        let name = address.to_string();
+        tcp(stream)
+            .and_then(|stream| Connection::open(stream, key, &|| authorizing(&name)))
+            .with_context(|| format!("couldn't connect to {name}"))?;
+        Ok(address)
+    }
+
     /// Writes `contents` to the file at `path` on the device, as `adb push`
     /// does, through the device's sync service: requests of an ID and a
     /// length, the file's path and mode first, then its contents in pieces,
@@ -210,6 +289,59 @@ impl fmt::Display for Device {
     }
 }
 
+/// A TCP connection to a device, set up as adb sets one up.
+fn tcp(stream: TcpStream) -> Result<Box<dyn Stream>> {
+    // Without Nagle's algorithm, as adb: each small message would
+    // otherwise wait for the device to acknowledge the last.
+    stream
+        .set_read_timeout(Some(TIMEOUT))
+        .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)))
+        .and_then(|()| stream.set_nodelay(true))
+        .map(|()| Box::new(stream) as Box<dyn Stream>)
+        .map_err(anyhow::Error::from)
+}
+
+/// Connects to `address` once something listens there, trying until
+/// `patience` runs out: a device's adbd refuses connections while it
+/// restarts to listen on the network.
+fn wait_for(address: SocketAddr, patience: Duration) -> io::Result<TcpStream> {
+    let deadline = Instant::now() + patience;
+    loop {
+        match TcpStream::connect_timeout(&address, ATTEMPT_TIMEOUT) {
+            Err(_) if Instant::now() < deadline => std::thread::sleep(RETRY_INTERVAL),
+            result => return result,
+        }
+    }
+}
+
+/// The device's address on a network this computer may share with it, from
+/// what `ip -o -4 addr show` prints, a line for each address, such as `30:
+/// wlan0    inet 192.168.1.20/24 brd 192.168.1.255 scope global wlan0`: its
+/// address on Wi-Fi, or else on Ethernet. Not one on mobile data
+/// (`rmnet_data0`, `ccmni0`), a VPN's tunnel or loopback, where no computer
+/// nearby reaches it.
+fn network_address(ip: &str) -> Option<Ipv4Addr> {
+    let addresses: Vec<(&str, Ipv4Addr)> = ip
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let interface = words.nth(1)?;
+            let address = words.skip_while(|word| *word != "inet").nth(1)?;
+            // With its prefix's length, the size of its network.
+            let address = address
+                .split_once('/')
+                .map_or(address, |(address, _)| address);
+            Some((interface, address.parse().ok()?))
+        })
+        .collect();
+    ["wlan", "eth"].iter().find_map(|kind| {
+        addresses
+            .iter()
+            .find(|(interface, _)| interface.starts_with(kind))
+            .map(|&(_, address)| address)
+    })
+}
+
 /// Reaches a device by its name: an emulator's, `emulator-<console
 /// port>`, which listens for ADB on the next port, a device's address and
 /// port, or a phone's serial number, the name adb gives it.
@@ -218,19 +350,17 @@ fn reach(device: &str, usb: &dyn UsbDevices) -> Result<Route> {
         .strip_prefix("emulator-")
         .and_then(|port| port.parse::<u16>().ok())
         .and_then(|port| port.checked_add(1));
-    let stream = match emulator {
-        Some(port) => TcpStream::connect((Ipv4Addr::LOCALHOST, port)),
+    let route = match emulator {
+        Some(port) => TcpStream::connect((Ipv4Addr::LOCALHOST, port)).map(Route::Emulator),
         // Before addresses: a phone without a serial number is named by
         // where it's plugged in, such as `usb:001-3`.
         None if usb.names().iter().any(|name| name == device) => return Ok(Route::Usb),
-        None if device.contains(':') => TcpStream::connect(device),
+        None if device.contains(':') => TcpStream::connect(device).map(Route::Tcp),
         None => bail!(
             "found no device named \"{device}\": name a phone plugged in by USB, with USB debugging on, by its serial number, as adb devices shows it; an emulator, such as emulator-5554; or a device on the network by its address and port, such as 192.168.1.20:5555"
         ),
     };
-    stream
-        .map(Route::Tcp)
-        .with_context(|| format!("couldn't reach {device}"))
+    route.with_context(|| format!("couldn't reach {device}"))
 }
 
 /// The only device there is: a phone in `usb`, or an emulator listening on
@@ -241,7 +371,7 @@ fn only_device(ports: &[u16], usb: &dyn UsbDevices) -> Result<(String, Route)> {
         .chain(
             running_emulators(ports)
                 .into_iter()
-                .map(|(name, stream)| (name, Route::Tcp(stream))),
+                .map(|(name, stream)| (name, Route::Emulator(stream))),
         )
         .collect();
     match devices.len() {
@@ -252,7 +382,7 @@ fn only_device(ports: &[u16], usb: &dyn UsbDevices) -> Result<(String, Route)> {
         count => {
             let names: Vec<_> = devices.iter().map(|(name, _)| name.as_str()).collect();
             bail!(
-                "found {count} devices ({}): name the one to install on with --device",
+                "found {count} devices ({}): name one with --device",
                 names.join(", ")
             )
         }
@@ -296,7 +426,7 @@ mod tests {
     use super::connection::tests::{
         Answer, BANNER, Respond, asking, exec_device, serve, service_device,
     };
-    use super::{AdbKey, Device, TIMEOUT, UsbDevices, emulator_ports};
+    use super::{AdbKey, Device, TIMEOUT, UsbDevices, emulator_ports, network_address};
 
     const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/adb/adbkey");
     static KEY: LazyLock<AdbKey> =
@@ -339,9 +469,13 @@ mod tests {
         emulator_ports: &[u16],
         phones: &Phones,
     ) -> anyhow::Result<Device> {
-        Device::connect(device, emulator_ports, phones, &KEY, &|name| {
-            ASKED.with_borrow_mut(|asked| asked.push(name.to_owned()));
-        })
+        Device::connect(device, emulator_ports, phones, &KEY, &asking_user)
+    }
+
+    /// Notes in `ASKED` that the device named `name` asks its user to allow
+    /// the key.
+    fn asking_user(name: &str) {
+        ASKED.with_borrow_mut(|asked| asked.push(name.to_owned()));
     }
 
     /// A port on this computer with something listening, and its number.
@@ -431,7 +565,7 @@ mod tests {
         assert_eq!(
             emulators.to_string(),
             format!(
-                "found 2 devices (emulator-{}, emulator-{}): name the one to install on with --device",
+                "found 2 devices (emulator-{}, emulator-{}): name one with --device",
                 one - 1,
                 two - 1
             )
@@ -439,7 +573,7 @@ mod tests {
         assert_eq!(
             phone_and_emulator.to_string(),
             format!(
-                "found 2 devices (R5CT1234, emulator-{}): name the one to install on with --device",
+                "found 2 devices (R5CT1234, emulator-{}): name one with --device",
                 one - 1
             )
         );
@@ -729,5 +863,236 @@ mod tests {
 
         assert_eq!(ports.len(), 16);
         assert_eq!((ports[0], ports[15]), (5555, 5585));
+    }
+
+    /// What `ip -o -4 addr show` prints on a phone on Wi-Fi and mobile data,
+    /// where this computer's address is `127.0.0.1`, as a pseudo-terminal
+    /// gives it before Android 7.0, with each line ending in `\r\n`.
+    const ON_WI_FI: &[u8] = b"1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever preferred_lft forever\r\n\
+        12: rmnet_data0    inet 10.141.7.9/30 scope global rmnet_data0\\       valid_lft forever preferred_lft forever\r\n\
+        30: wlan0    inet 127.0.0.1/24 brd 127.0.0.255 scope global wlan0\\       valid_lft forever preferred_lft forever\r\n";
+
+    /// What a phone answers each service with, by the start of its name:
+    /// its output, or with none, it hangs up.
+    type Services = Vec<(&'static str, Option<Vec<u8>>)>;
+
+    /// A phone that answers services as `answers` says, and others with
+    /// nothing.
+    fn phone(answers: Services) -> impl Respond {
+        service_device(4096, BANNER, move |service, _| {
+            match answers.iter().find(|(name, _)| service.starts_with(name)) {
+                Some((_, None)) => Answer::HangUp,
+                Some((_, Some(output))) => Answer::Done(output.clone()),
+                None => Answer::Done(Vec::new()),
+            }
+        })
+    }
+
+    /// A phone on Wi-Fi that restarts to listen on `port` when asked.
+    fn restarting(port: u16) -> Services {
+        vec![
+            ("shell:ip", Some(ON_WI_FI.to_vec())),
+            (
+                "tcpip:",
+                Some(format!("restarting in TCP mode port: {port}\n").into_bytes()),
+            ),
+        ]
+    }
+
+    /// Has the device at `port` listen on `new_port`, waiting a second for
+    /// it, as `tcpip` does.
+    fn listen(port: u16, new_port: u16) -> anyhow::Result<std::net::SocketAddr> {
+        let mut device = connect(Some(&format!("127.0.0.1:{port}")), &[]).unwrap();
+        device.listen(new_port, &KEY, &asking_user, Duration::from_secs(1))
+    }
+
+    #[test]
+    fn has_a_phone_plugged_in_listen_on_the_network() {
+        let (listener, port) = listening();
+        let new_port = closed();
+        let log = Log::default();
+        let asked = Arc::clone(&log);
+        // A phone whose adbd restarts when asked to listen on the network,
+        // and listens there a moment later, where it asks its user to
+        // allow the key again.
+        serve(
+            listener,
+            service_device(4096, BANNER, move |service, input| {
+                asked
+                    .lock()
+                    .unwrap()
+                    .push((service.to_owned(), input.to_vec()));
+                if service.starts_with("shell:ip") {
+                    return Answer::Done(ON_WI_FI.to_vec());
+                }
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(300));
+                    let listener = TcpListener::bind(("127.0.0.1", new_port)).unwrap();
+                    serve(
+                        listener,
+                        asking(service_device(4096, BANNER, |_, _| Answer::HangUp)),
+                    );
+                });
+                Answer::Done(format!("restarting in TCP mode port: {new_port}\n").into_bytes())
+            }),
+        );
+        let phones = Phones(vec![("R5CT1234", Some(port))]);
+        let mut phone = connect_with(None, &[closed()], &phones).unwrap();
+
+        let address = phone
+            .listen(new_port, &KEY, &asking_user, Duration::from_secs(5))
+            .unwrap();
+
+        assert_eq!(address.to_string(), format!("127.0.0.1:{new_port}"));
+        assert_eq!(ASKED.take(), [address.to_string()]);
+        assert_eq!(
+            services(&log),
+            [
+                "shell:ip -o -4 addr show".to_owned(),
+                format!("tcpip:{new_port}")
+            ]
+        );
+    }
+
+    #[test]
+    fn says_why_a_device_didnt_listen_on_the_network() {
+        let fails = |answers: Services| {
+            let (listener, port) = listening();
+            serve(listener, phone(answers));
+            let error = listen(port, 5555).err().unwrap();
+            format!("{error:#}").replace(&port.to_string(), "PORT")
+        };
+        let on_wi_fi = || ("shell:ip", Some(ON_WI_FI.to_vec()));
+
+        assert_eq!(
+            fails(vec![(
+                "shell:ip",
+                Some(b"1: lo    inet 127.0.0.1/8 scope host lo\n".to_vec())
+            )]),
+            "Pixel 8 (127.0.0.1:PORT) isn't on Wi-Fi or Ethernet: connect it to the network this computer is on"
+        );
+        assert_eq!(
+            fails(vec![("shell:ip", None)]),
+            "couldn't read the address of Pixel 8 (127.0.0.1:PORT): the device closed the connection"
+        );
+        assert_eq!(
+            fails(vec![on_wi_fi(), ("tcpip:", None)]),
+            "couldn't ask Pixel 8 (127.0.0.1:PORT) to listen on the network: the device closed the connection"
+        );
+        assert_eq!(
+            fails(vec![
+                on_wi_fi(),
+                ("tcpip:", Some(b"invalid port 0\n".to_vec()))
+            ]),
+            "Pixel 8 (127.0.0.1:PORT) didn't listen on the network: invalid port 0"
+        );
+        assert_eq!(
+            fails(vec![on_wi_fi()]),
+            "Pixel 8 (127.0.0.1:PORT) didn't listen on the network: it gave no reason"
+        );
+    }
+
+    #[test]
+    fn says_when_it_cant_reach_the_device_on_the_network() {
+        // Nothing listens on the new port.
+        let (listener, port) = listening();
+        let unreachable = closed();
+        serve(listener, phone(restarting(unreachable)));
+        // Something on the new port that hangs up.
+        let (second, second_port) = listening();
+        let (hanging_up, hanging_up_port) = listening();
+        serve(second, phone(restarting(hanging_up_port)));
+        serve(hanging_up, |_| None);
+
+        let mut device = connect(Some(&format!("127.0.0.1:{port}")), &[]).unwrap();
+        let refused = device
+            .listen(unreachable, &KEY, &asking_user, Duration::ZERO)
+            .err()
+            .unwrap();
+        let hung_up = listen(second_port, hanging_up_port).err().unwrap();
+
+        let refused = format!("{refused:#}");
+        assert!(
+            refused.starts_with(&format!(
+                "Pixel 8 (127.0.0.1:{port}) listens for ADB at 127.0.0.1:{unreachable} now, but this computer couldn't reach it there ("
+            )),
+            "{refused}"
+        );
+        assert!(
+            refused.ends_with("): it may be on another network, or on one that keeps its devices apart, as many guest networks do"),
+            "{refused}"
+        );
+        assert_eq!(
+            format!("{hung_up:#}"),
+            format!(
+                "couldn't connect to 127.0.0.1:{hanging_up_port}: the device closed the connection"
+            )
+        );
+    }
+
+    #[test]
+    fn leaves_emulators_on_their_own_network() {
+        let (first, one) = listening();
+        let (second, two) = listening();
+        serve(first, phone(Vec::new()));
+        serve(second, phone(Vec::new()));
+
+        let named = connect(Some(&format!("emulator-{}", one - 1)), &[]).unwrap();
+        let only = connect(None, &[two]).unwrap();
+
+        for (mut emulator, port) in [(named, one), (only, two)] {
+            let error = emulator
+                .listen(5555, &KEY, &asking_user, Duration::ZERO)
+                .err()
+                .unwrap();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "Pixel 8 (emulator-{0}) is an emulator, which this computer reaches over the network already: name it with --device emulator-{0}",
+                    port - 1
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn finds_the_address_on_wi_fi_or_ethernet() {
+        let address = |ip: &str| network_address(ip).map(|address| address.to_string());
+
+        assert_eq!(
+            address(&String::from_utf8_lossy(ON_WI_FI)),
+            Some("127.0.0.1".to_owned())
+        );
+        // Wi-Fi before Ethernet, whichever comes first.
+        assert_eq!(
+            address(
+                "2: eth0    inet 10.0.2.15/24 brd 10.0.2.255 scope global eth0\n\
+                 3: wlan0    inet 192.168.1.20/24 scope global wlan0\n"
+            ),
+            Some("192.168.1.20".to_owned())
+        );
+        assert_eq!(
+            address("2: eth0    inet 10.0.2.15/24 scope global eth0\n"),
+            Some("10.0.2.15".to_owned())
+        );
+        // An address without its prefix's length.
+        assert_eq!(
+            address("3: wlan0    inet 192.168.1.20 scope global wlan0\n"),
+            Some("192.168.1.20".to_owned())
+        );
+        // Nothing on Wi-Fi or Ethernet: mobile data, a VPN, loopback, and
+        // lines that say nothing.
+        assert_eq!(
+            address(
+                "1: lo    inet 127.0.0.1/8 scope host lo\n\
+                 12: rmnet_data0    inet 10.141.7.9/30 scope global rmnet_data0\n\
+                 40: tun0    inet 10.8.0.2/24 scope global tun0\n\
+                 \n\
+                 3: wlan0\n\
+                 3: wlan0    inet\n\
+                 3: wlan0    inet not-an-address/24\n"
+            ),
+            None
+        );
     }
 }
