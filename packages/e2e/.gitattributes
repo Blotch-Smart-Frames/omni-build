@@ -1,4 +1,6 @@
-# The E2E app's files are compared byte for byte with what the app reports,
-# from a shell repackaged on Windows too, where Git would otherwise check
-# text files out with CRLF line endings.
+# The E2E apps' files are compared byte for byte with what the apps report,
+# from shells repackaged on Windows too, where Git would otherwise check
+# text files out with CRLF line endings: the fixture app's, and the WebView
+# shell's web app.
 /app/** -text
+/fixtures/web-app/** -text

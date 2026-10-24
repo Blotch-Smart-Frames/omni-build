@@ -509,21 +509,29 @@ const REPORTS: Record<
     // "10-24 23:20:25.962  4733  4733 I OmniBuildWebView: {...}": the
     // date, time, process, thread, priority and tag, then the message.
     // Android 5.0's adb ends each line with a carriage return too.
-    const line = logged.stdout
+    const reports = logged.stdout
       .split(/\r?\n/)
       .map((candidate) =>
         /^\S+\s+\S+\s+(\d+)\s+\d+\s+\w\s+\S+\s*: (\{.*)$/.exec(candidate),
       )
-      .find((match) => match !== null);
-    if (!line) {
-      return undefined;
+      .filter((match) => match !== null)
+      .reverse();
+    // The newest report from a process that's still running. Android 5.0's
+    // `logcat -c` doesn't always empty the log, which can still hold an
+    // earlier run's report, from a process that went with its app. The
+    // device's shell prints nothing for a process that's gone, rather than
+    // the error, which old versions of adb send to stdout.
+    for (const [, pid, report] of reports) {
+      const name = await onDevice(
+        ['shell', 'cat', `/proc/${pid}/cmdline`, '2>/dev/null'],
+        { log: undefined, allowFailure: true },
+      );
+      const id = name.stdout.split('\0')[0].trim();
+      if (id) {
+        return { ...JSON.parse(report), id };
+      }
     }
-    const [, pid, report] = line;
-    const name = await onDevice(['shell', 'cat', `/proc/${pid}/cmdline`], {
-      log: undefined,
-      allowFailure: true,
-    });
-    return { ...JSON.parse(report), id: name.stdout.split('\0')[0].trim() };
+    return undefined;
   },
 };
 

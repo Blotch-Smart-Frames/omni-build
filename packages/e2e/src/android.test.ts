@@ -770,19 +770,23 @@ describe('runApp', () => {
 
     /**
      * Answers the search of the shell's log (logcat's threadtime dump) with
-     * each of `dumps` in turn, and the name of the process that logged it
-     * with `name`, as /proc has it.
+     * each of `dumps` in turn, and each running process's name, by its ID,
+     * as /proc has it: nothing for a process that's gone.
      */
     const consoleLogging = (
       dumps: string[],
-      name = 'dev.omnibuild.e2e.web\0',
+      names: Record<string, string> = {
+        4733: 'dev.omnibuild.e2e.web\0',
+        3739: 'dev.omnibuild.e2e.web\0',
+      },
     ) => {
       respond = (_, args) => {
         if (args.includes('threadtime')) {
           return { stdout: dumps.shift() ?? '' };
         }
         if (args.includes('cat')) {
-          return { stdout: name };
+          const pid = /^\/proc\/(\d+)\/cmdline$/.exec(args[4])![1];
+          return { stdout: names[pid] ?? '' };
         }
         return undefined;
       };
@@ -812,7 +816,7 @@ describe('runApp', () => {
         `${adb} shell am start -W -n dev.omnibuild.e2e.web/dev.omnibuild.webview.MainActivity`,
         search,
         search,
-        `${adb} shell cat /proc/4733/cmdline`,
+        `${adb} shell cat /proc/4733/cmdline 2>/dev/null`,
         `${adb} shell screencap -p /data/local/tmp/omni-build-e2e.png`,
         `${adb} pull /data/local/tmp/omni-build-e2e.png ${path.join('artifacts', 'screenshot.png')}`,
         `${adb} logcat -d -v time`,
@@ -830,10 +834,23 @@ describe('runApp', () => {
       });
     });
 
-    it('reports no ID when the process is gone', async () => {
-      consoleLogging(['01-01 00:00:00.000  1  1 I OmniBuildWebView: {}\n'], '');
+    it("passes over an earlier run's report, from a process that's gone, for this run's", async () => {
+      const earlier =
+        '10-24 23:29:20.000  3604  3604 I OmniBuildWebView: {"run":"earlier"}';
+      consoleLogging([
+        // Only the earlier run's report, which Android 5.0 can leave in
+        // the log: its process went with its app.
+        `${earlier}\r\n`,
+        `${earlier}\r\n10-24 23:29:27.773  3739  3739 I OmniBuildWebView: {"run":"this"}\r\n`,
+      ]);
 
-      expect(await android.runApp(webApp)).toEqual({ id: '' });
+      expect(await android.runApp(webApp)).toEqual({
+        run: 'this',
+        id: 'dev.omnibuild.e2e.web',
+      });
+      expect(commands()).toContain(
+        'adb -s emulator-5584 shell cat /proc/3604/cmdline 2>/dev/null',
+      );
     });
   });
 });
