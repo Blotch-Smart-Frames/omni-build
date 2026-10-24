@@ -281,9 +281,10 @@ jobs:
 
   # End to end, in the three stages OmniBuild is used in (see packages/e2e):
   #
-  # 1. e2e-shell-*: the real Swift and Kotlin app shells in
-  #    packages/e2e/fixtures, built with Xcode and Gradle. The only stage with
-  #    a native toolchain: OmniBuild's own CI makes the shells, never its users.
+  # 1. e2e-shell-*: the real Swift and Kotlin app shells, the fixture in
+  #    packages/e2e/fixtures and OmniBuild's WebView shell in packages/shells,
+  #    built with Xcode and Gradle. The only stage with a native toolchain:
+  #    OmniBuild's own CI makes the shells, never its users.
   # 2. e2e-repackage: each shell through the omni binary from the build
   #    job, on Linux, Windows and macOS, with no PATH and none of the
   #    variables that lead to a JDK, the Android SDK or Xcode.
@@ -337,7 +338,7 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      # The JDK the fixture is developed with; AGP 9 needs 17 or later.
+      # The JDK the shells are developed with; AGP 9 needs 17 or later.
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -402,8 +403,8 @@ jobs:
           pattern: e2e-shell-*
           path: e2e/shells
           merge-multiple: true
-      - run: node packages/e2e/src/cli.ts repackage --platform ios --shell e2e/shells/OmniBuildShell.zip --shell e2e/shells/OmniBuildShell.ipa --out e2e/repackaged
-      - run: node packages/e2e/src/cli.ts repackage --platform android --shell e2e/shells/OmniBuildShell.apk --shell e2e/shells/OmniBuildShell.aab --out e2e/repackaged
+      - run: node packages/e2e/src/cli.ts repackage --platform ios --shell e2e/shells/OmniBuildShell.zip --shell e2e/shells/OmniBuildShell.ipa --shell e2e/shells/WebViewShell.zip --shell e2e/shells/WebViewShell.ipa --out e2e/repackaged
+      - run: node packages/e2e/src/cli.ts repackage --platform android --shell e2e/shells/OmniBuildShell.apk --shell e2e/shells/OmniBuildShell.aab --shell e2e/shells/WebViewShell.apk --shell e2e/shells/WebViewShell.aab --out e2e/repackaged
       - uses: actions/upload-artifact@v7
         with:
           name: e2e-repackaged-${{ matrix.os }}
@@ -449,8 +450,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The oldest Android the fixture runs on, 5.0, where an APK installs
-        # only with a v1 signature and without `cmd`, and a recent one.
+        # The oldest Android the shells run on, 5.0, where an APK installs
+        # only with a v1 signature and without `cmd`, and whose WebView is
+        # Chrome 37, and a recent one.
         api-level: [21, 34]
     env:
       # The release binary the build job made for Linux, which installs each
@@ -488,7 +490,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       # Emulator images of their own, apart from the API level the shells
-      # target: the fixture targets API 37 and runs on 21 and later. A device
+      # target: the shells target API 37 and run on 21 and later. A device
       # only applies the behaviour changes of the level an app targets when it
       # runs that level or newer, so this checks the shells install and run,
       # not those changes.

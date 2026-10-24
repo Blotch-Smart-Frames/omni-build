@@ -51,7 +51,10 @@ vi.mock('./repackage.ts', async () => {
   };
 });
 
-const PROJECT = fileURLToPath(new URL('../fixtures/android/', import.meta.url));
+const FIXTURE = fileURLToPath(new URL('../fixtures/android/', import.meta.url));
+const WEBVIEW_SHELL = fileURLToPath(
+  new URL('../../shells/webview/android/', import.meta.url),
+);
 const BUILD_DIR = fileURLToPath(new URL('../build/', import.meta.url));
 const BUNDLETOOL_JAR = path.join(BUILD_DIR, 'bundletool-1.18.3.jar');
 const BUNDLETOOL_URL =
@@ -114,37 +117,49 @@ afterEach(() => {
 });
 
 describe('build', () => {
-  it('builds a release APK and app bundle with Gradle, and copies them out', async () => {
+  it("builds each shell's release APK and app bundle with Gradle, and copies them out under its name", async () => {
     const shells = await android.build({
       ...artifacts,
       buildDir: 'build',
       outDir: 'out',
     });
 
-    expect(run).toHaveBeenCalledWith(
-      path.join(PROJECT, 'gradlew'),
+    const gradle = (project: string) => [
+      path.join(project, 'gradlew'),
       ['assembleRelease', 'bundleRelease', '--console=plain'],
       {
-        cwd: PROJECT,
+        cwd: project,
         env: expect.objectContaining({ ANDROID_HOME: '/sdk' }),
         log: 'commands.log',
       },
-    );
+    ];
+    expect(vi.mocked(run).mock.calls).toEqual([
+      gradle(FIXTURE),
+      gradle(WEBVIEW_SHELL),
+    ]);
     expect(mkdirSync).toHaveBeenCalledWith('out', { recursive: true });
-    const outputs = path.join(PROJECT, 'app/build/outputs');
+    const copies = (project: string, shell: string) => {
+      const outputs = path.join(project, 'app/build/outputs');
+      return [
+        [
+          path.join(outputs, 'apk/release/app-release.apk'),
+          path.join('out', `${shell}.apk`),
+        ],
+        [
+          path.join(outputs, 'bundle/release/app-release.aab'),
+          path.join('out', `${shell}.aab`),
+        ],
+      ];
+    };
     expect(vi.mocked(copyFileSync).mock.calls).toEqual([
-      [
-        path.join(outputs, 'apk/release/app-release.apk'),
-        path.join('out', 'OmniBuildShell.apk'),
-      ],
-      [
-        path.join(outputs, 'bundle/release/app-release.aab'),
-        path.join('out', 'OmniBuildShell.aab'),
-      ],
+      ...copies(FIXTURE, 'OmniBuildShell'),
+      ...copies(WEBVIEW_SHELL, 'WebViewShell'),
     ]);
     expect(shells).toEqual([
       path.join('out', 'OmniBuildShell.apk'),
       path.join('out', 'OmniBuildShell.aab'),
+      path.join('out', 'WebViewShell.apk'),
+      path.join('out', 'WebViewShell.aab'),
     ]);
   });
 });
@@ -259,7 +274,13 @@ describe('verify', () => {
             ? { stdout: `${schemes()}\n${line}\n` }
             : undefined;
 
-        expect(await android.verify({ ...artifacts, app: 'app.apk' })).toEqual({
+        expect(
+          await android.verify({
+            ...artifacts,
+            shell: 'OmniBuildShell',
+            app: 'app.apk',
+          }),
+        ).toEqual({
           signer: 'CN=Me, O=Us',
         });
         expect(vi.mocked(run).mock.calls.map(([command]) => command)).toEqual([
@@ -278,7 +299,13 @@ describe('verify', () => {
     it('has no signer when apksigner names none', async () => {
       respond = () => ({ stdout: schemes() });
 
-      expect(await android.verify({ ...artifacts, app: 'app.apk' })).toEqual({
+      expect(
+        await android.verify({
+          ...artifacts,
+          shell: 'OmniBuildShell',
+          app: 'app.apk',
+        }),
+      ).toEqual({
         signer: undefined,
       });
     });
@@ -290,7 +317,11 @@ describe('verify', () => {
       respond = () => ({ stdout });
 
       await expect(
-        android.verify({ ...artifacts, app: 'app.apk' }),
+        android.verify({
+          ...artifacts,
+          shell: 'OmniBuildShell',
+          app: 'app.apk',
+        }),
       ).rejects.toThrow(`apksigner found no ${missing} signature in app.apk.`);
     });
 
@@ -301,7 +332,11 @@ describe('verify', () => {
       arrange();
 
       await expect(
-        android.verify({ ...artifacts, app: 'app.apk' }),
+        android.verify({
+          ...artifacts,
+          shell: 'OmniBuildShell',
+          app: 'app.apk',
+        }),
       ).rejects.toThrow(
         `No build tools in ${buildTools}. Install them with \`sdkmanager 'build-tools;36.0.0'\`.`,
       );
@@ -331,7 +366,11 @@ describe('verify', () => {
             ? { stdout: APP_LINKS }
             : undefined;
 
-      const result = await android.verify({ ...artifacts, app: 'app.aab' });
+      const result = await android.verify({
+        ...artifacts,
+        shell: 'OmniBuildShell',
+        app: 'app.aab',
+      });
 
       expect(result).toEqual({
         installable: path.join('artifacts', 'universal.apk'),
@@ -350,7 +389,11 @@ describe('verify', () => {
     it("uses JAVA_HOME's JDK when it's set", async () => {
       vi.stubEnv('JAVA_HOME', '/jdk');
 
-      await android.verify({ ...artifacts, app: 'app.aab' });
+      await android.verify({
+        ...artifacts,
+        shell: 'OmniBuildShell',
+        app: 'app.aab',
+      });
 
       expect(vi.mocked(run).mock.calls[0][0]).toBe(
         path.join('/jdk', 'bin', 'jarsigner'),
@@ -368,7 +411,11 @@ describe('verify', () => {
       const update = vi.fn(() => ({ digest: () => BUNDLETOOL_SHA256 }));
       vi.mocked(createHash).mockReturnValue({ update } as unknown as Hash);
 
-      await android.verify({ ...artifacts, app: 'app.aab' });
+      await android.verify({
+        ...artifacts,
+        shell: 'OmniBuildShell',
+        app: 'app.aab',
+      });
 
       expect(fetch).toHaveBeenCalledWith(BUNDLETOOL_URL);
       expect(createHash).toHaveBeenCalledWith('sha256');
@@ -394,7 +441,11 @@ describe('verify', () => {
       } as unknown as Hash);
 
       await expect(
-        android.verify({ ...artifacts, app: 'app.aab' }),
+        android.verify({
+          ...artifacts,
+          shell: 'OmniBuildShell',
+          app: 'app.aab',
+        }),
       ).rejects.toThrow(
         `${BUNDLETOOL_URL} has SHA-256 abc, not ${BUNDLETOOL_SHA256}.`,
       );
@@ -409,7 +460,11 @@ describe('verify', () => {
       );
 
       await expect(
-        android.verify({ ...artifacts, app: 'app.aab' }),
+        android.verify({
+          ...artifacts,
+          shell: 'OmniBuildShell',
+          app: 'app.aab',
+        }),
       ).rejects.toThrow(`Couldn't download ${BUNDLETOOL_URL}: 404`);
     });
 
@@ -418,7 +473,11 @@ describe('verify', () => {
       respond = () => ({ stdout: 'no manifest.\n\njar is unsigned.\n' });
 
       await expect(
-        android.verify({ ...artifacts, app: 'app.aab' }),
+        android.verify({
+          ...artifacts,
+          shell: 'OmniBuildShell',
+          app: 'app.aab',
+        }),
       ).rejects.toThrow("jarsigner didn't verify app.aab's signature.");
     });
 
@@ -427,7 +486,11 @@ describe('verify', () => {
         program === 'jarsigner' ? { stdout: 'jar verified.\n' } : undefined;
 
       expect(
-        await android.verify({ ...artifacts, app: 'app.aab' }),
+        await android.verify({
+          ...artifacts,
+          shell: 'OmniBuildShell',
+          app: 'app.aab',
+        }),
       ).toMatchObject({ signer: undefined });
     });
   });
@@ -586,7 +649,13 @@ describe('waitForDevice', () => {
 describe('runApp', () => {
   const device = { serial: 'emulator-5584', started: true };
   const appId = 'dev.omnibuild.e2e.app';
-  const options = { ...artifacts, device, app: 'app.apk', appId };
+  const options = {
+    ...artifacts,
+    device,
+    app: 'app.apk',
+    appId,
+    shell: 'OmniBuildShell' as const,
+  };
 
   /**
    * Answers the report search (logcat's raw dump) with each of `dumps` in
@@ -690,6 +759,82 @@ describe('runApp', () => {
     await expect(android.runApp(options)).rejects.toThrow(
       new RegExp(`launching\\. The device's log is in artifacts\\.$`),
     );
+  });
+
+  describe('made from the WebView shell', () => {
+    const webApp = {
+      ...options,
+      appId: 'dev.omnibuild.e2e.web',
+      shell: 'WebViewShell' as const,
+    };
+
+    /**
+     * Answers the search of the shell's log (logcat's threadtime dump) with
+     * each of `dumps` in turn, and the name of the process that logged it
+     * with `name`, as /proc has it.
+     */
+    const consoleLogging = (
+      dumps: string[],
+      name = 'dev.omnibuild.e2e.web\0',
+    ) => {
+      respond = (_, args) => {
+        if (args.includes('threadtime')) {
+          return { stdout: dumps.shift() ?? '' };
+        }
+        if (args.includes('cat')) {
+          return { stdout: name };
+        }
+        return undefined;
+      };
+    };
+
+    it("launches the shell's activity under the app's ID, and returns what the page logged, with the ID of the app that logged it", async () => {
+      consoleLogging([
+        '--------- beginning of main\n',
+        [
+          '--------- beginning of main',
+          '10-24 23:20:25.100  4733  4733 W OmniBuildWebView: Not the report (https://appassets.androidplatform.net/assets/app.js:3)',
+          '10-24 23:20:25.962  4733  4733 I OmniBuildWebView: {"origin":"https://appassets.androidplatform.net"}',
+          '',
+        ].join('\n'),
+      ]);
+
+      expect(await android.runApp(webApp)).toEqual({
+        origin: 'https://appassets.androidplatform.net',
+        id: 'dev.omnibuild.e2e.web',
+      });
+      const adb = 'adb -s emulator-5584';
+      const search = `${adb} logcat -d -v threadtime -s OmniBuildWebView:I`;
+      expect(commands()).toEqual([
+        `${adb} uninstall dev.omnibuild.e2e.web`,
+        'omni install app.apk --device emulator-5584 --json',
+        `${adb} logcat -c`,
+        `${adb} shell am start -W -n dev.omnibuild.e2e.web/dev.omnibuild.webview.MainActivity`,
+        search,
+        search,
+        `${adb} shell cat /proc/4733/cmdline`,
+        `${adb} shell screencap -p /data/local/tmp/omni-build-e2e.png`,
+        `${adb} pull /data/local/tmp/omni-build-e2e.png ${path.join('artifacts', 'screenshot.png')}`,
+        `${adb} logcat -d -v time`,
+      ]);
+    });
+
+    it("reads Android 5.0's log, whose lines end with a carriage return too", async () => {
+      consoleLogging([
+        '--------- beginning of main\r\n10-24 23:29:27.773  3739  3739 I OmniBuildWebView: {"storage":"works"}\r\n',
+      ]);
+
+      expect(await android.runApp(webApp)).toEqual({
+        storage: 'works',
+        id: 'dev.omnibuild.e2e.web',
+      });
+    });
+
+    it('reports no ID when the process is gone', async () => {
+      consoleLogging(['01-01 00:00:00.000  1  1 I OmniBuildWebView: {}\n'], '');
+
+      expect(await android.runApp(webApp)).toEqual({ id: '' });
+    });
   });
 });
 

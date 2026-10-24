@@ -1,0 +1,18 @@
+<!doctype html>
+<!--
+  The web app the tests make from the WebView shell. app.js reports what the
+  page finds to the console, which the shell forwards to logcat or the
+  unified log, where the harness reads it.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OmniBuild E2E web app</title>
+  </head>
+  <body>
+    <h1>OmniBuild E2E web app</h1>
+    <pre id="report">Reporting…</pre>
+    <script src="app.js"></script>
+  </body>
+</html>

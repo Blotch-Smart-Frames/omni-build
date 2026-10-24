@@ -16,6 +16,8 @@
     "target/**",
     "**/dist/**",
     "packages/e2e/fixtures/**",
+    "packages/shells/*/android/**",
+    "packages/shells/*/ios/**",
     "packages/docs/build/**",
     "packages/docs/.docusaurus/**",
     "**/.impeccable/**"

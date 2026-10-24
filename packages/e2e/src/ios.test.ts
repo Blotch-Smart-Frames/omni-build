@@ -40,9 +40,14 @@ vi.mock('./process.ts', async (importOriginal) => ({
   run: vi.fn(),
 }));
 
-const PROJECT = fileURLToPath(
-  new URL('../fixtures/ios/OmniBuildShell.xcodeproj', import.meta.url),
-);
+const PROJECTS = {
+  OmniBuildShell: fileURLToPath(
+    new URL('../fixtures/ios/OmniBuildShell.xcodeproj', import.meta.url),
+  ),
+  WebViewShell: fileURLToPath(
+    new URL('../../shells/webview/ios/WebViewShell.xcodeproj', import.meta.url),
+  ),
+};
 const IOS_26 = 'com.apple.CoreSimulator.SimRuntime.iOS-26-0';
 const IOS_27 = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0';
 const IPHONE = 'com.apple.CoreSimulator.SimDeviceType.iPhone-17';
@@ -107,7 +112,7 @@ afterEach(() => {
 });
 
 describe('build', () => {
-  it('builds the shell for the simulator and for devices with Xcode, and zips each', async () => {
+  it('builds each shell for the simulator and for devices with Xcode, and zips each under its name', async () => {
     const shells = await ios.build({
       ...artifacts,
       buildDir: 'build',
@@ -115,35 +120,53 @@ describe('build', () => {
     });
 
     const derivedData = path.join('build', 'ios');
-    const xcodebuild = `xcodebuild build -project ${PROJECT} -scheme OmniBuildShell -configuration Release`;
-    const simulator = path.join(
-      derivedData,
-      'Build/Products/Release-iphonesimulator',
-      'OmniBuildShell.app',
-    );
-    const device = path.join(
-      derivedData,
-      'Build/Products/Release-iphoneos',
-      'OmniBuildShell.app',
-    );
     const payload = path.join('build', 'ios-ipa', 'Payload');
-    const zip = path.join('out', 'OmniBuildShell.zip');
-    const ipa = path.join('out', 'OmniBuildShell.ipa');
-    expect(commands()).toEqual([
-      `${xcodebuild} -destination generic/platform=iOS Simulator -derivedDataPath ${derivedData}`,
-      `${xcodebuild} -destination generic/platform=iOS -derivedDataPath ${derivedData} CODE_SIGNING_ALLOWED=NO OTHER_LDFLAGS=-Wl,-adhoc_codesign`,
-      `ditto -c -k --keepParent ${simulator} ${zip}`,
-      `ditto ${device} ${path.join(payload, 'OmniBuildShell.app')}`,
-      `ditto -c -k --keepParent ${payload} ${ipa}`,
-    ]);
+    /** The commands that build one shell, and its zip and .ipa. */
+    const building = (shell: keyof typeof PROJECTS) => {
+      const xcodebuild = `xcodebuild build -project ${PROJECTS[shell]} -scheme ${shell} -configuration Release`;
+      const simulator = path.join(
+        derivedData,
+        'Build/Products/Release-iphonesimulator',
+        `${shell}.app`,
+      );
+      const device = path.join(
+        derivedData,
+        'Build/Products/Release-iphoneos',
+        `${shell}.app`,
+      );
+      const zip = path.join('out', `${shell}.zip`);
+      const ipa = path.join('out', `${shell}.ipa`);
+      return {
+        commands: [
+          `${xcodebuild} -destination generic/platform=iOS Simulator -derivedDataPath ${derivedData}`,
+          `${xcodebuild} -destination generic/platform=iOS -derivedDataPath ${derivedData} CODE_SIGNING_ALLOWED=NO OTHER_LDFLAGS=-Wl,-adhoc_codesign`,
+          `ditto -c -k --keepParent ${simulator} ${zip}`,
+          `ditto ${device} ${path.join(payload, `${shell}.app`)}`,
+          `ditto -c -k --keepParent ${payload} ${ipa}`,
+        ],
+        zip,
+        ipa,
+      };
+    };
+    const fixture = building('OmniBuildShell');
+    const webView = building('WebViewShell');
+    expect(commands()).toEqual([...fixture.commands, ...webView.commands]);
     expect(mkdirSync).toHaveBeenCalledWith('out', { recursive: true });
-    expect(rmSync).toHaveBeenCalledWith(zip, { force: true });
-    expect(rmSync).toHaveBeenCalledWith(ipa, { force: true });
-    expect(rmSync).toHaveBeenCalledWith(payload, {
-      recursive: true,
-      force: true,
-    });
-    expect(shells).toEqual([zip, ipa]);
+    expect(rmSync).toHaveBeenCalledWith(fixture.zip, { force: true });
+    expect(rmSync).toHaveBeenCalledWith(webView.ipa, { force: true });
+    // Emptied for each shell, so one's .ipa holds no other's app.
+    expect(
+      vi.mocked(rmSync).mock.calls.filter(([file]) => file === payload),
+    ).toEqual([
+      [payload, { recursive: true, force: true }],
+      [payload, { recursive: true, force: true }],
+    ]);
+    expect(shells).toEqual([
+      fixture.zip,
+      fixture.ipa,
+      webView.zip,
+      webView.ipa,
+    ]);
   });
 });
 
@@ -273,7 +296,13 @@ describe('waitForDevice', () => {
 
 describe('runApp', () => {
   const appId = 'dev.omnibuild.e2e.app';
-  const options = { ...artifacts, device: 'UDID', app: 'app.zip', appId };
+  const options = {
+    ...artifacts,
+    device: 'UDID',
+    app: 'app.zip',
+    appId,
+    shell: 'OmniBuildShell' as const,
+  };
   const unzipped = '/tmp/omni-build-e2e-1';
   const reportFile = path.join('/container', 'Documents/omni-build-e2e.json');
   const crashReports = path.join('/home/me', 'Library/Logs/DiagnosticReports');
@@ -353,7 +382,7 @@ describe('runApp', () => {
     );
 
     await expect(ios.runApp(options)).rejects.toThrow(
-      `${appId} didn't save its report within a minute of launching: it may have crashed. Its log and any crash report are in artifacts.`,
+      `${appId} didn't report within a minute of launching: it may have crashed. Its log and any crash report are in artifacts.`,
     );
     expect(commands()).toContain(
       'xcrun simctl spawn UDID log show --last 10m --style compact --predicate process == "OmniBuildShell"',
@@ -389,6 +418,100 @@ describe('runApp', () => {
     );
     expect(copyFileSync).not.toHaveBeenCalled();
   });
+
+  describe('made from the WebView shell', () => {
+    const webApp = {
+      ...options,
+      appId: 'dev.omnibuild.e2e.web',
+      shell: 'WebViewShell' as const,
+    };
+    const search =
+      'xcrun simctl spawn UDID log show --last 5m --style ndjson --predicate processID == 41657 AND category == "console"';
+
+    /**
+     * simctl starting the app as process 41657, and the unified log answering
+     * each search with each of `searches` in turn.
+     */
+    const launching = (
+      searches: string[],
+      launched = 'dev.omnibuild.e2e.web: 41657\n',
+    ) => {
+      respond = (_, args) => {
+        if (args.includes('launch')) {
+          return { stdout: launched };
+        }
+        if (args.includes('ndjson')) {
+          return { stdout: searches.shift() ?? '' };
+        }
+        if (args.includes('log')) {
+          return { stdout: 'what the app logged\n' };
+        }
+        return undefined;
+      };
+      vi.mocked(readdirSync)
+        .mockReset()
+        .mockReturnValueOnce(['WebViewShell.app'] as never);
+    };
+
+    it("returns what the page logged, from the process it launched, with the log's subsystem for the ID", async () => {
+      const entry = (fields: object) => JSON.stringify(fields);
+      launching([
+        '{"count":0,"finished":1}\n',
+        [
+          'getpwuid_r did not find a match for uid 501',
+          entry({
+            subsystem: 'dev.omnibuild.e2e.web',
+            eventMessage: 'Not the report',
+          }),
+          entry({ subsystem: 'dev.omnibuild.e2e.web' }),
+          entry({
+            subsystem: 'dev.omnibuild.e2e.web',
+            eventMessage: '{"origin":"app://localhost"}',
+          }),
+          '{"count":3,"finished":1}',
+          '',
+        ].join('\n'),
+      ]);
+
+      expect(await ios.runApp(webApp)).toEqual({
+        origin: 'app://localhost',
+        id: 'dev.omnibuild.e2e.web',
+      });
+      expect(commands()).toEqual([
+        `ditto -x -k app.zip ${unzipped}`,
+        'xcrun simctl uninstall UDID dev.omnibuild.e2e.web',
+        `xcrun simctl install UDID ${path.join(unzipped, 'WebViewShell.app')}`,
+        'xcrun simctl launch UDID dev.omnibuild.e2e.web',
+        search,
+        search,
+        `xcrun simctl io UDID screenshot ${path.join('artifacts', 'screenshot.png')}`,
+      ]);
+    });
+
+    it('saves the log of its own process when the page never reports', async () => {
+      launching([]);
+      vi.spyOn(Date, 'now')
+        .mockReturnValueOnce(1000)
+        .mockReturnValueOnce(1000)
+        .mockReturnValue(61_001);
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      await expect(ios.runApp(webApp)).rejects.toThrow(
+        "dev.omnibuild.e2e.web didn't report within a minute of launching",
+      );
+      expect(commands()).toContain(
+        'xcrun simctl spawn UDID log show --last 10m --style compact --predicate process == "WebViewShell"',
+      );
+    });
+
+    it("says when simctl doesn't name the process it started", async () => {
+      launching([], 'Launched\n');
+
+      await expect(ios.runApp(webApp)).rejects.toThrow(
+        'simctl launched dev.omnibuild.e2e.web without naming its process: Launched',
+      );
+    });
+  });
 });
 
 describe('verify', () => {
@@ -406,7 +529,13 @@ describe('verify', () => {
     signedBy('Identifier=dev.omnibuild.e2e.app\nSignature=adhoc\n');
     vi.mocked(readdirSync).mockReturnValueOnce(['OmniBuildShell.app'] as never);
 
-    expect(await ios.verify({ ...artifacts, app: 'app.zip' })).toEqual({
+    expect(
+      await ios.verify({
+        ...artifacts,
+        shell: 'OmniBuildShell',
+        app: 'app.zip',
+      }),
+    ).toEqual({
       signer: 'ad hoc',
     });
     const bundle = path.join(unzipped, 'OmniBuildShell.app');
@@ -425,9 +554,17 @@ describe('verify', () => {
     vi.mocked(readdirSync).mockReturnValue(['OmniBuildShell.app'] as never);
 
     signedBy('Authority=OmniBuild E2E\nAuthority=Its issuer\n');
-    const signed = await ios.verify({ ...artifacts, app: 'app.zip' });
+    const signed = await ios.verify({
+      ...artifacts,
+      shell: 'OmniBuildShell',
+      app: 'app.zip',
+    });
     signedBy('Identifier=dev.omnibuild.e2e.app\n');
-    const unsigned = await ios.verify({ ...artifacts, app: 'app.zip' });
+    const unsigned = await ios.verify({
+      ...artifacts,
+      shell: 'OmniBuildShell',
+      app: 'app.zip',
+    });
 
     expect(signed).toEqual({ signer: 'OmniBuild E2E' });
     expect(unsigned).toEqual({ signer: undefined });
@@ -488,7 +625,11 @@ describe('verify', () => {
         : undefined;
     };
 
-    const verified = await ios.verify({ ...artifacts, app: 'app.ipa' });
+    const verified = await ios.verify({
+      ...artifacts,
+      shell: 'OmniBuildShell',
+      app: 'app.ipa',
+    });
     display = {};
     respond = (
       (previous) => (program: string, args: string[]) =>
@@ -496,7 +637,11 @@ describe('verify', () => {
           ? { stdout: '<dict/>' }
           : previous(program, args)
     )(respond);
-    const nameless = await ios.verify({ ...artifacts, app: 'app.ipa' });
+    const nameless = await ios.verify({
+      ...artifacts,
+      shell: 'OmniBuildShell',
+      app: 'app.ipa',
+    });
 
     expect(verified).toEqual({
       signer: 'OmniBuild E2E',
@@ -607,7 +752,11 @@ describe('verify', () => {
       return args[0] === '--display' ? { output: '' } : undefined;
     };
 
-    const verified = await ios.verify({ ...artifacts, app: 'app.ipa' });
+    const verified = await ios.verify({
+      ...artifacts,
+      shell: 'OmniBuildShell',
+      app: 'app.ipa',
+    });
 
     expect(verified.report).toMatchObject({
       id: 'dev.omnibuild.e2e.app',
@@ -659,7 +808,11 @@ describe('verify', () => {
       return args[0] === '--display' ? { output: '' } : { stdout: '<dict/>' };
     };
 
-    const verified = await ios.verify({ ...artifacts, app: 'app.ipa' });
+    const verified = await ios.verify({
+      ...artifacts,
+      shell: 'OmniBuildShell',
+      app: 'app.ipa',
+    });
 
     expect(verified.report).toMatchObject({
       name: 'OmniBuild E2E',
@@ -668,6 +821,69 @@ describe('verify', () => {
     });
     expect(commands()).toContain(`plutil -convert json -o - ${strings}`);
     expect(commands()).toContain(`plutil -convert json -o - ${french}`);
+  });
+});
+
+describe("verify, for the WebView shell's build for devices", () => {
+  it('reads its values, a file of its payload, and the App ID its profile allowed', async () => {
+    vi.mocked(readdirSync).mockReturnValue(['WebViewShell.app'] as never);
+    vi.mocked(readFileSync).mockReturnValue('the message');
+    const bundle = path.join(
+      '/tmp/omni-build-e2e-1',
+      'Payload',
+      'WebViewShell.app',
+    );
+    const info: Record<string, string> = {
+      CFBundleIdentifier: 'dev.omnibuild.e2e.web',
+      CFBundleDisplayName: 'OmniBuild E2E Web',
+      CFBundleName: 'WebViewShell',
+      CFBundleShortVersionString: '3.1.0',
+      CFBundleVersion: '7',
+    };
+    respond = (program, args) => {
+      if (program === 'plutil') {
+        return { stdout: JSON.stringify(info) };
+      }
+      if (args.includes('--entitlements')) {
+        return {
+          stdout:
+            '<dict>\n\t<key>application-identifier</key>\n\t<string>TEAM.dev.omnibuild.e2e.web</string>\n</dict>',
+        };
+      }
+      return args[0] === '--display'
+        ? { output: 'Authority=OmniBuild E2E\n' }
+        : undefined;
+    };
+
+    const verified = await ios.verify({
+      ...artifacts,
+      shell: 'WebViewShell',
+      app: 'WebViewShell-linux.ipa',
+    });
+    delete info.CFBundleDisplayName;
+    const nameless = await ios.verify({
+      ...artifacts,
+      shell: 'WebViewShell',
+      app: 'WebViewShell-linux.ipa',
+    });
+
+    expect(verified).toEqual({
+      signer: 'OmniBuild E2E',
+      report: {
+        id: 'dev.omnibuild.e2e.web',
+        name: 'OmniBuild E2E Web',
+        version: '3.1.0',
+        build: '7',
+        message: 'the message',
+        applicationIdentifier: 'TEAM.dev.omnibuild.e2e.web',
+      },
+    });
+    expect(readFileSync).toHaveBeenCalledWith(
+      path.join(bundle, 'message.txt'),
+      'utf8',
+    );
+    // Without a display name, the bundle's name is what iOS shows.
+    expect(nameless.report?.name).toBe('WebViewShell');
   });
 });
 

@@ -13,7 +13,7 @@ import { android } from './android.ts';
 import { ios } from './ios.ts';
 import { step } from './process.ts';
 import { expected, repackage as repackageShell } from './repackage.ts';
-import { differences } from './shell.ts';
+import { type ShellName, differences, shellOf } from './shell.ts';
 
 /** A stage's own artifacts folder, and the log of the commands it runs. */
 export interface Artifacts {
@@ -27,14 +27,15 @@ export interface DeviceOptions extends Artifacts {
 }
 
 /**
- * What run() needs of a platform (ios.ts, android.ts) to build its shell
+ * What run() needs of a platform (ios.ts, android.ts) to build its shells
  * and run apps on a device. `Started` is what startDevice() leaves for
- * waitForDevice(), and `Device` the device the apps then run on.
+ * waitForDevice(), and `Device` the device the apps then run on. Each app
+ * comes with the shell it was made from, which says how it reports.
  */
 export interface Platform<Started = unknown, Device = unknown> {
   name: string;
   toolchain: string;
-  /** Builds the shells into `outDir`, and returns their paths. */
+  /** Builds every shell into `outDir`, and returns their paths. */
   build(
     options: Artifacts & { buildDir: string; outDir: string },
   ): Promise<string[]>;
@@ -46,7 +47,7 @@ export interface Platform<Started = unknown, Device = unknown> {
    * returns what the app's files say (`report`), which is checked in place
    * of what the app would report.
    */
-  verify(options: DeviceOptions & { app: string }): Promise<{
+  verify(options: DeviceOptions & { app: string; shell: ShellName }): Promise<{
     installable?: string;
     signer?: string;
     webLinks?: string;
@@ -57,7 +58,12 @@ export interface Platform<Started = unknown, Device = unknown> {
   waitForDevice(started: Started, options: DeviceOptions): Promise<Device>;
   /** Installs and launches the app, and returns what it reported. */
   runApp(
-    options: DeviceOptions & { device: Device; app: string; appId: string },
+    options: DeviceOptions & {
+      device: Device;
+      app: string;
+      appId: string;
+      shell: ShellName;
+    },
   ): Promise<Record<string, unknown>>;
   stopDevice(device: Started | Device, options: Artifacts): Promise<unknown>;
 }
@@ -70,17 +76,20 @@ const COMMANDS = ['build', 'repackage', 'test'];
 
 export const HELP = `Usage: npm run e2e -- [command] --platform <ios|android> [options]
 
-Builds a fixture app shell (a real Swift or Kotlin project), repackages it
-with omni, and runs the result on the iOS Simulator or an Android
-emulator, checking the ID, name, version, payload and icon the app reports.
+Builds the app shells (real Swift or Kotlin projects: the fixture, and
+OmniBuild's WebView shell), repackages them with omni, and runs the results
+on the iOS Simulator or an Android emulator, checking what each app reports:
+the fixture its ID, name, version, payload and icon, and the WebView shell's
+web app what its page finds.
 
 Each command is one stage. CI runs each on different machines; with no
 command, all three run here in turn.
 
 Commands:
   build      Build the shells with Xcode or Gradle (an Android APK and app
-             bundle, an iOS app): the only stage that uses them. Writes them
-             to --out (default: build/shells/<platform>).
+             bundle, an iOS app for the simulator and one for devices, of
+             each shell): the only stage that uses them. Writes them to --out
+             (default: build/shells/<platform>).
   repackage  Run each shell (--shell) through omni, which gets no
              PATH and no toolchain variables. Writes to --out (default:
              build/repackaged/<platform>).
@@ -178,7 +187,7 @@ export const run = async (
   };
 
   const buildStage = async (outDir: string) => {
-    step(`Building the ${platform.name} shell with ${platform.toolchain}`);
+    step(`Building the ${platform.name} shells with ${platform.toolchain}`);
     const shells = await platform.build({
       ...artifactsFor('build'),
       buildDir,
@@ -189,7 +198,7 @@ export const run = async (
   };
 
   const repackageStage = async (shells: string[], outDir: string) => {
-    step('Repackaging it with omni, with no toolchain in reach');
+    step('Repackaging them with omni, with no toolchain in reach');
     const artifacts = artifactsFor('repackage');
     const apps: string[] = [];
     for (const shell of shells) {
@@ -225,6 +234,7 @@ export const run = async (
         mkdirSync(artifactsDir);
         try {
           const want = expected(platformId, app);
+          const shell = shellOf(app);
           // The platform's own tools check the package before it's
           // installed, and report what signed it. An app bundle is turned
           // into an APK to install, as an app store would.
@@ -236,6 +246,7 @@ export const run = async (
             ...options,
             artifactsDir,
             app,
+            shell,
           });
           const report = {
             ...(files ??
@@ -245,6 +256,7 @@ export const run = async (
                 device,
                 app: installable,
                 appId: want.id,
+                shell,
               }))),
             ...verified,
           };

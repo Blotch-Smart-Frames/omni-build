@@ -13,7 +13,7 @@ const root = mkdtempSync(path.join(tmpdir(), 'platform-watch-'));
 for (const [file, content] of Object.entries({
   '.github/workflows/ci.yml':
     'DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer\n',
-  'packages/e2e/fixtures/android/app/build.gradle.kts':
+  'packages/shells/webview/android/app/build.gradle.kts':
     'compileSdk = 36\ntargetSdk = 36\n',
 })) {
   mkdirSync(path.join(root, path.dirname(file)), { recursive: true });

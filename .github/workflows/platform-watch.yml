@@ -20,7 +20,7 @@ on:
     paths:
       - .github/workflows/ci.yml
       - .github/workflows/platform-watch.yml
-      - packages/e2e/fixtures/android/app/build.gradle.kts
+      - packages/shells/webview/android/app/build.gradle.kts
       - packages/platform-watch/src/**
   workflow_dispatch:
 

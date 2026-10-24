@@ -1,0 +1,33 @@
+<!doctype html>
+<!--
+  The shell's placeholder page, for running the shell before it's
+  repackaged. OmniBuild replaces it with the app's own index.html, from the
+  payload folder in the app config.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>WebView Shell</title>
+    <style>
+      body {
+        font: 16px/1.5 system-ui, sans-serif;
+        margin: 0;
+        padding: 24px;
+        padding-top: max(24px, env(safe-area-inset-top));
+      }
+      code {
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WebView Shell</h1>
+    <p>
+      This is OmniBuild's WebView shell, before it has an app's page. Give
+      <code>omni repackage</code> an app config whose <code>payload</code> is
+      a folder with an <code>index.html</code> at its top, and the app opens
+      that instead.
+    </p>
+  </body>
+</html>
