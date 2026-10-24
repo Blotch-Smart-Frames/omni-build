@@ -11,21 +11,24 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { Artifacts, Platform } from './run.ts';
 import { type RunOptions, poll, run } from './process.ts';
+import { SHELLS, type ShellName, XCODE_PROJECTS } from './shell.ts';
 
-const PROJECT = fileURLToPath(
-  new URL('../fixtures/ios/OmniBuildShell.xcodeproj', import.meta.url),
-);
-/** The scheme, and the name of the .app and of its process. */
-const SHELL = 'OmniBuildShell';
 /** The simulator the tests create and reuse, so a developer's own stay untouched. */
 const DEVICE_NAME = 'OmniBuild E2E';
-/** Where the app saves its report, in its data container (ShellReport.swift). */
+/**
+ * Where the fixture app saves its report, in its data container
+ * (ShellReport.swift).
+ */
 const REPORT_FILE = 'Documents/omni-build-e2e.json';
+/**
+ * The category the WebView shell logs its page's console under, in the
+ * unified log, where the web app's report goes (ConsoleHandler.swift).
+ */
+const CONSOLE_CATEGORY = 'console';
 
 const simctl = (args: string[], options: RunOptions) =>
   run('xcrun', ['simctl', ...args], options);
@@ -53,8 +56,12 @@ const DESTINATIONS = {
   iphoneos: 'generic/platform=iOS',
 };
 
-/** Builds the shell with Xcode for one SDK, and returns the .app's path. */
+/**
+ * Builds a shell with Xcode for one SDK, and returns the .app's path. Each
+ * shell's scheme, and its .app, are named after it.
+ */
 const xcodebuild = async (
+  shell: ShellName,
   sdk: keyof typeof DESTINATIONS,
   { buildDir, log }: { buildDir: string; log: string },
   settings: string[] = [],
@@ -65,9 +72,9 @@ const xcodebuild = async (
     [
       'build',
       '-project',
-      PROJECT,
+      XCODE_PROJECTS[shell],
       '-scheme',
-      SHELL,
+      shell,
       '-configuration',
       'Release',
       '-destination',
@@ -81,40 +88,47 @@ const xcodebuild = async (
   return path.join(
     derivedData,
     `Build/Products/Release-${sdk}`,
-    `${SHELL}.app`,
+    `${shell}.app`,
   );
 };
 
 /**
- * Builds the shell with Xcode for the simulator and for devices, zips each
+ * Builds each shell with Xcode for the simulator and for devices, zips each
  * into `outDir`, and returns their paths: the simulator's a zipped .app,
  * and the devices' an .ipa, a zip of a Payload folder with the .app.
  */
 const build: Platform['build'] = async ({ buildDir, outDir, log }) => {
-  const simulator = await xcodebuild('iphonesimulator', { buildDir, log });
-  // Unsigned, as CI has no certificate Apple issued, but with room for a
-  // signature, which the linker reserves when asked: omni replaces
-  // a signature, and never adds one.
-  const device = await xcodebuild('iphoneos', { buildDir, log }, [
-    'CODE_SIGNING_ALLOWED=NO',
-    'OTHER_LDFLAGS=-Wl,-adhoc_codesign',
-  ]);
-
-  // A .app is a folder, and its executable's mode wouldn't survive a
-  // workflow artifact or a Windows file system on the way to the repackage
-  // stage. So the shells travel as zips, which ditto writes with every
-  // file's mode.
   mkdirSync(outDir, { recursive: true });
-  const zip = path.join(outDir, `${SHELL}.zip`);
-  const ipa = path.join(outDir, `${SHELL}.ipa`);
-  rmSync(zip, { force: true });
-  rmSync(ipa, { force: true });
-  await run('ditto', ['-c', '-k', '--keepParent', simulator, zip], { log });
-  const payload = path.join(buildDir, 'ios-ipa', 'Payload');
-  rmSync(payload, { recursive: true, force: true });
-  await run('ditto', [device, path.join(payload, `${SHELL}.app`)], { log });
-  await run('ditto', ['-c', '-k', '--keepParent', payload, ipa], { log });
-  return [zip, ipa];
+  const shells: string[] = [];
+  for (const shell of SHELLS) {
+    const simulator = await xcodebuild(shell, 'iphonesimulator', {
+      buildDir,
+      log,
+    });
+    // Unsigned, as CI has no certificate Apple issued, but with room for a
+    // signature, which the linker reserves when asked: omni replaces
+    // a signature, and never adds one.
+    const device = await xcodebuild(shell, 'iphoneos', { buildDir, log }, [
+      'CODE_SIGNING_ALLOWED=NO',
+      'OTHER_LDFLAGS=-Wl,-adhoc_codesign',
+    ]);
+
+    // A .app is a folder, and its executable's mode wouldn't survive a
+    // workflow artifact or a Windows file system on the way to the
+    // repackage stage. So the shells travel as zips, which ditto writes
+    // with every file's mode.
+    const zip = path.join(outDir, `${shell}.zip`);
+    const ipa = path.join(outDir, `${shell}.ipa`);
+    rmSync(zip, { force: true });
+    rmSync(ipa, { force: true });
+    await run('ditto', ['-c', '-k', '--keepParent', simulator, zip], { log });
+    const payload = path.join(buildDir, 'ios-ipa', 'Payload');
+    rmSync(payload, { recursive: true, force: true });
+    await run('ditto', [device, path.join(payload, `${shell}.app`)], { log });
+    await run('ditto', ['-c', '-k', '--keepParent', payload, ipa], { log });
+    shells.push(zip, ipa);
+  }
+  return shells;
 };
 
 /**
@@ -148,7 +162,7 @@ const withApp = async <T>(
  * can't run on the simulator, so for one it reads what the app's files
  * say instead, which the harness checks in place of what the app reports.
  */
-const verify: Platform['verify'] = ({ app, log }) =>
+const verify: Platform['verify'] = ({ app, shell, log }) =>
   withApp(app, log, async (bundle) => {
     await run(
       'codesign',
@@ -199,6 +213,24 @@ const verify: Platform['verify'] = ({ app, log }) =>
           .join(', ') || undefined
       );
     };
+    // The web app: its values, a file from its payload, and the App ID its
+    // profile gave its signature. The WebView shell has no extensions.
+    if (shell === 'WebViewShell') {
+      return {
+        signer,
+        report: {
+          id: info.CFBundleIdentifier,
+          name: info.CFBundleDisplayName ?? info.CFBundleName,
+          version: info.CFBundleShortVersionString,
+          build: info.CFBundleVersion,
+          message: readFileSync(path.join(bundle, 'message.txt'), 'utf8'),
+          applicationIdentifier: claimed(
+            await entitlements(bundle),
+            'application-identifier',
+          ),
+        },
+      };
+    }
     // The bundle of this kind in one of the app's folders for them: its
     // Info.plist, and the entitlements its profile allowed its signature.
     const bundleIn = async (folder: string, kind: string) => {
@@ -407,14 +439,16 @@ const bootSimulator = async ({ log, wait }: { log: string; wait: boolean }) => {
 
 /**
  * Saves what the app logged, and any crash report, for a run in which it
- * never reported.
+ * never reported. Its process, and its crash reports, are named after the
+ * shell's .app.
  */
 const saveAppLogs = async ({
   udid,
+  shell,
   artifactsDir,
   log,
   since,
-}: Artifacts & { udid: string; since: number }) => {
+}: Artifacts & { udid: string; shell: ShellName; since: number }) => {
   const appLog = await simctl(
     [
       'spawn',
@@ -426,7 +460,7 @@ const saveAppLogs = async ({
       '--style',
       'compact',
       '--predicate',
-      `process == "${SHELL}"`,
+      `process == "${shell}"`,
     ],
     { log, allowFailure: true },
   );
@@ -437,21 +471,59 @@ const saveAppLogs = async ({
   if (existsSync(reports)) {
     for (const name of readdirSync(reports)) {
       const file = path.join(reports, name);
-      if (name.startsWith(SHELL) && statSync(file).mtimeMs >= since) {
+      if (name.startsWith(shell) && statSync(file).mtimeMs >= since) {
         copyFileSync(file, path.join(artifactsDir, name));
       }
     }
   }
 };
 
+/** An entry of the unified log, as `log show --style ndjson` prints it. */
+interface LogEntry {
+  subsystem?: string;
+  eventMessage?: string;
+}
+
+/**
+ * The report the web app's page logs to its console, which the WebView
+ * shell sends to the unified log, from the process `pid`. The ID is the
+ * log's subsystem, which the shell sets to its bundle's ID as it runs.
+ */
+const webAppReport = async (udid: string, pid: string) => {
+  // No log: this runs every half second until the report is there.
+  const shown = await simctl(
+    [
+      'spawn',
+      udid,
+      'log',
+      'show',
+      '--last',
+      '5m',
+      '--style',
+      'ndjson',
+      '--predicate',
+      `processID == ${pid} AND category == "${CONSOLE_CATEGORY}"`,
+    ],
+    { allowFailure: true },
+  );
+  const entry = shown.stdout
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .map((line) => JSON.parse(line) as LogEntry)
+    .find((candidate) => candidate.eventMessage?.startsWith('{'));
+  return entry && { ...JSON.parse(entry.eventMessage!), id: entry.subsystem };
+};
+
 /**
  * Installs the zipped app on the simulator, launches it, and returns the
- * report it saves on launch.
+ * report it makes on launch: the one the fixture saves in its data
+ * container, or the one the WebView shell's page logs.
  */
 const runApp: Platform<string, string>['runApp'] = async ({
   device: udid,
   app,
   appId,
+  shell,
   artifactsDir,
   log,
 }) => {
@@ -462,25 +534,37 @@ const runApp: Platform<string, string>['runApp'] = async ({
     await simctl(['uninstall', udid, appId], { log, allowFailure: true });
     await simctl(['install', udid, bundle], { log });
   });
-  const container = (
-    await simctl(['get_app_container', udid, appId, 'data'], { log })
-  ).stdout.trim();
-  await simctl(['launch', udid, appId], { log });
+  let read: () => Promise<Record<string, unknown> | undefined>;
+  if (shell === 'WebViewShell') {
+    // simctl names the process it started, "dev.omnibuild.e2e.web: 41657",
+    // so the report can only be this launch's.
+    const launched = await simctl(['launch', udid, appId], { log });
+    const pid = /: (\d+)\s*$/.exec(launched.stdout)?.[1];
+    if (!pid) {
+      throw new Error(
+        `simctl launched ${appId} without naming its process: ${launched.stdout.trim()}`,
+      );
+    }
+    read = () => webAppReport(udid, pid);
+  } else {
+    const container = (
+      await simctl(['get_app_container', udid, appId, 'data'], { log })
+    ).stdout.trim();
+    await simctl(['launch', udid, appId], { log });
+    const reportFile = path.join(container, REPORT_FILE);
+    read = async () =>
+      existsSync(reportFile)
+        ? JSON.parse(readFileSync(reportFile, 'utf8'))
+        : undefined;
+  }
 
-  const reportFile = path.join(container, REPORT_FILE);
   try {
-    const report = await poll(
-      async () =>
-        existsSync(reportFile)
-          ? JSON.parse(readFileSync(reportFile, 'utf8'))
-          : undefined,
-      {
-        timeoutMs: 60_000,
-        message: `${appId} didn't save its report within a minute of launching: it may have crashed. Its log and any crash report are in ${artifactsDir}.`,
-      },
-    );
-    // The report is saved before the first frame; give SwiftUI a moment to
-    // draw it.
+    const report = await poll(read, {
+      timeoutMs: 60_000,
+      message: `${appId} didn't report within a minute of launching: it may have crashed. Its log and any crash report are in ${artifactsDir}.`,
+    });
+    // The report comes before the first frame, or as the page has loaded;
+    // give the view a moment to draw it.
     await sleep(1000);
     await simctl(
       ['io', udid, 'screenshot', path.join(artifactsDir, 'screenshot.png')],
@@ -488,13 +572,13 @@ const runApp: Platform<string, string>['runApp'] = async ({
     );
     return report;
   } catch (error) {
-    await saveAppLogs({ udid, artifactsDir, log, since });
+    await saveAppLogs({ udid, shell, artifactsDir, log, since });
     throw error;
   }
 };
 
 /**
- * Building the iOS shell and running it on the iOS Simulator. See run.ts.
+ * Building the iOS shells and running them on the iOS Simulator. See run.ts.
  * The device is the simulator's UDID.
  */
 export const ios: Platform<string, string> = {

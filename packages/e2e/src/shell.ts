@@ -1,3 +1,47 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * The shells the harness builds and runs, each a Swift and a Kotlin
+ * project: the fixture (`fixtures/`), which reports every value OmniBuild
+ * rewrites, and OmniBuild's WebView shell (`packages/shells/webview`), which
+ * runs a web app from its payload. The name is each one's files' (the build
+ * stage writes `WebViewShell.apk`, the repackage stage
+ * `WebViewShell-linux.apk`) and, on iOS, its scheme, .app and process.
+ */
+export const SHELLS = ['OmniBuildShell', 'WebViewShell'] as const;
+export type ShellName = (typeof SHELLS)[number];
+
+/** The shell an app was made from, by its file's name. */
+export const shellOf = (app: string): ShellName =>
+  path.basename(app).startsWith('WebViewShell')
+    ? 'WebViewShell'
+    : 'OmniBuildShell';
+
+/** Each shell's Xcode project. */
+export const XCODE_PROJECTS: Record<ShellName, string> = {
+  OmniBuildShell: fileURLToPath(
+    new URL('../fixtures/ios/OmniBuildShell.xcodeproj', import.meta.url),
+  ),
+  WebViewShell: fileURLToPath(
+    new URL('../../shells/webview/ios/WebViewShell.xcodeproj', import.meta.url),
+  ),
+};
+
+/**
+ * Each shell's Gradle project. The platform watch reads the API levels of
+ * the WebView shell's, and shell.test.ts checks every one has the same, so
+ * a new level moves them all.
+ */
+export const GRADLE_PROJECTS: Record<ShellName, string> = {
+  OmniBuildShell: fileURLToPath(
+    new URL('../fixtures/android/', import.meta.url),
+  ),
+  WebViewShell: fileURLToPath(
+    new URL('../../shells/webview/android/', import.meta.url),
+  ),
+};
+
 /**
  * The values the fixture shells are built with, and so what they must
  * report on launch. They're set in:

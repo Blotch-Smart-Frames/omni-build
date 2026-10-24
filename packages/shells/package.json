@@ -1,0 +1,10 @@
+{
+  "name": "@blotch/omni-build-shells",
+  "version": "0.0.1",
+  "private": true,
+  "description": "The app shells OmniBuild ships: Swift and Kotlin projects, built with Xcode and Gradle in CI, which omni repackages into apps",
+  "license": "MIT",
+  "scripts": {
+    "cspell": "cspell --no-progress ."
+  }
+}

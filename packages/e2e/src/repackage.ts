@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { type RunOptions, run } from './process.ts';
-import { SHELL } from './shell.ts';
+import { SHELL, shellOf } from './shell.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 /**
@@ -36,6 +36,29 @@ const APP: {
 } = JSON.parse(readFileSync(APP_CONFIG, 'utf8'));
 /** The colour of every pixel of the app's icon, `app/icon.png`. */
 const APP_ICON = '#E8590C';
+/**
+ * The web app the tests make from the WebView shell: its own ID, name,
+ * version and build, and a payload of a page (`fixtures/web-app/index.html`)
+ * whose script reports what it finds to the console.
+ */
+const WEB_APP_CONFIG = fileURLToPath(
+  new URL('../app/webview.json', import.meta.url),
+);
+const WEB_APP: {
+  id: string;
+  name: string;
+  version: string;
+  build: number;
+  payload: string;
+} = JSON.parse(readFileSync(WEB_APP_CONFIG, 'utf8'));
+/**
+ * The origin each platform's WebView shell serves the payload from: a host
+ * Android keeps for an app's own files, and a scheme of the iOS shell's own.
+ */
+const WEB_ORIGINS = {
+  android: 'https://appassets.androidplatform.net',
+  ios: 'app://localhost',
+};
 /**
  * The link the tests open each Android app with, which only the app's own
  * URL scheme leads to it. iOS asks its user before it opens an app's link,
@@ -83,6 +106,10 @@ const WATCH_APP_PROFILE = fileURLToPath(
 );
 const WATCH_WIDGETS_PROFILE = fileURLToPath(
   new URL('../app/ShellWatchWidgets.mobileprovision', import.meta.url),
+);
+/** The web app's profile, for its ID, made as the others are. */
+const WEB_APP_PROFILE = fileURLToPath(
+  new URL('../app/WebView.mobileprovision', import.meta.url),
 );
 /**
  * The extensions in the iOS shell, under the shell's ID and the app's: an
@@ -190,6 +217,51 @@ export const omniBuild = async (
 };
 
 /**
+ * What signed an Android app: the upload key omni created for an app bundle,
+ * and for an APK the debug key it creates and signs with when it's given no
+ * key. Only omni could have made either.
+ */
+const androidSigner = (app: string) =>
+  app.endsWith('.aab') ? UPLOAD_KEY : 'CN=OmniBuild Debug, O=OmniBuild';
+
+/**
+ * What an app made from the WebView shell must report, and what signed it.
+ * The page reports what it found: its title, from the payload's index.html
+ * rather than the shell's placeholder, the origin the shell serves it from,
+ * that storage works there, and a file beside it, which it read as a web app
+ * reads its data. The harness adds the ID of the app that logged it. A build
+ * for devices, which the simulator can't run, gets what its files say.
+ */
+const expectedWebApp = (
+  platform: 'ios' | 'android',
+  app: string,
+): Record<string, string> => {
+  const payload = path.join(path.dirname(WEB_APP_CONFIG), WEB_APP.payload);
+  const message = readFileSync(path.join(payload, 'message.txt'), 'utf8');
+  if (app.endsWith('.ipa')) {
+    return {
+      id: WEB_APP.id,
+      name: WEB_APP.name,
+      version: WEB_APP.version,
+      build: String(WEB_APP.build),
+      message,
+      signer: SIGNER,
+      applicationIdentifier: `${TEAM}.${WEB_APP.id}`,
+    };
+  }
+  return {
+    id: WEB_APP.id,
+    title: readFileSync(path.join(payload, 'index.html'), 'utf8').match(
+      /<title>(.*)<\/title>/,
+    )![1],
+    origin: WEB_ORIGINS[platform],
+    storage: 'works',
+    message,
+    signer: platform === 'android' ? androidSigner(app) : 'ad hoc',
+  };
+};
+
+/**
  * What an app must report after the repackage stage, and what signed it:
  * the app config's values where omni rewrites them, and the shell's
  * own elsewhere.
@@ -198,6 +270,9 @@ export const expected = (
   platform: 'ios' | 'android',
   app = '',
 ): Record<string, string> => {
+  if (shellOf(app) === 'WebViewShell') {
+    return expectedWebApp(platform, app);
+  }
   const values = {
     id: APP.id,
     name: APP.name,
@@ -231,12 +306,7 @@ export const expected = (
       webLinks: APP.webLinks.join(', '),
       // `landscape`, either side up.
       orientation: 'userLandscape',
-      // An app bundle is signed with the upload key omni created for
-      // it, and an APK with the debug key it creates and signs with when
-      // it's given no key: only omni could have made either.
-      signer: app.endsWith('.aab')
-        ? UPLOAD_KEY
-        : 'CN=OmniBuild Debug, O=OmniBuild',
+      signer: androidSigner(app),
     };
   }
   const cameraUsage = APP.ios.usageDescriptions.NSCameraUsageDescription;
@@ -335,30 +405,33 @@ export const repackage = async ({
     `${path.basename(shell, extension)}-${OS_NAMES[process.platform] ?? process.platform}${extension}`,
   );
   const env = { ...toolchainFree(), OMNI_BUILD_KEY_PASSWORD: KEY_PASSWORD };
+  const webApp = shellOf(shell) === 'WebViewShell';
   // A hidden folder, which no stage takes for an app.
   const keys = mkdtempSync(path.join(outDir, '.keys-'));
   try {
     let signing: string[] = [];
     if (extension === '.ipa') {
       // A build for devices has to be signed with a key and a profile, and
-      // each extension, the watch app, its widgets and the App Clip with
-      // one of its own.
-      signing = [
-        '--signing-key',
-        SIGNING_KEY,
-        '--profile',
-        PROFILE,
-        '--profile',
-        EXTENSION_PROFILE,
-        '--profile',
-        INTENTS_EXTENSION_PROFILE,
-        '--profile',
-        APP_CLIP_PROFILE,
-        '--profile',
-        WATCH_APP_PROFILE,
-        '--profile',
-        WATCH_WIDGETS_PROFILE,
-      ];
+      // each of the fixture's extensions, the watch app, its widgets and
+      // the App Clip with one of its own. The web app has none of those.
+      signing = webApp
+        ? ['--signing-key', SIGNING_KEY, '--profile', WEB_APP_PROFILE]
+        : [
+            '--signing-key',
+            SIGNING_KEY,
+            '--profile',
+            PROFILE,
+            '--profile',
+            EXTENSION_PROFILE,
+            '--profile',
+            INTENTS_EXTENSION_PROFILE,
+            '--profile',
+            APP_CLIP_PROFILE,
+            '--profile',
+            WATCH_APP_PROFILE,
+            '--profile',
+            WATCH_WIDGETS_PROFILE,
+          ];
     } else if (extension === '.aab') {
       // An app bundle is signed as Google Play takes one: with an upload
       // key, which omni creates first, as a developer without a JDK
@@ -372,7 +445,15 @@ export const repackage = async ({
       signing = ['--signing-key', keystore];
     }
     await omniBuild(
-      ['repackage', shell, '--config', APP_CONFIG, ...signing, '--out', output],
+      [
+        'repackage',
+        shell,
+        '--config',
+        webApp ? WEB_APP_CONFIG : APP_CONFIG,
+        ...signing,
+        '--out',
+        output,
+      ],
       { event: 'repackaged', out: output },
       { log, env },
     );

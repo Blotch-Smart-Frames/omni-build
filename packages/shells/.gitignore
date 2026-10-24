@@ -1,0 +1,11 @@
+# Gradle
+*/android/.gradle/
+*/android/.kotlin/
+*/android/build/
+*/android/app/build/
+*/android/local.properties
+
+# Xcode and Android Studio, when a shell is opened in them
+xcuserdata/
+.idea/
+*.iml

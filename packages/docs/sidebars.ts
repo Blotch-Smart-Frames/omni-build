@@ -9,6 +9,7 @@ const sidebars: SidebarsConfig = {
     'how-it-works',
     'installation',
     'repackaging',
+    'webview-shell',
     'installing',
     'build-tools',
     'roadmap',

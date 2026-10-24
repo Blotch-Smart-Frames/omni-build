@@ -12,7 +12,8 @@ An npm workspaces and [Turborepo](https://turborepo.com) monorepo, with the Rust
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/cli`            | The `omni` binary, a Rust crate. Its `package.json` is private and only lets turbo run Cargo                                             |
 | `packages/omni-build`     | The `@blotch/omni-build` npm package: a launcher that runs the binary built for the user's OS and CPU, and an API for build tools        |
-| `packages/e2e`            | End-to-end tests: real Swift and Kotlin app shells, repackaged on every OS, run on the iOS Simulator and an Android emulator             |
+| `packages/shells`         | The app shells OmniBuild ships, Swift and Kotlin projects built with Xcode and Gradle in CI: the WebView shell, for web apps             |
+| `packages/e2e`            | End-to-end tests: the shells and a fixture, repackaged on every OS, run on the iOS Simulator and an Android emulator                     |
 | `packages/platform-watch` | Opens an issue when the app shells need a newer Xcode or Android API level, or can't read a vendor's page. Runs daily in CI              |
 | `packages/docs`           | The documentation site and landing page, built with Docusaurus and published to GitHub Pages                                             |
 | `packages/coverage-guard` | Fails the coverage gate wherever 100% would pass over untested code. `npm run test:coverage` runs it after the tests                     |

@@ -117,7 +117,7 @@ describe('run', () => {
       });
       expect(existsSync(stale)).toBe(false);
       expect(output).toEqual([
-        'log: \n▸ Building the Android shell with Gradle',
+        'log: \n▸ Building the Android shells with Gradle',
         `log: ${path.join(outDir, 'Shell.apk')}`,
         `log: ${path.join(outDir, 'Shell.aab')}`,
       ]);
@@ -177,7 +177,7 @@ describe('run', () => {
         ],
       ]);
       expect(output).toEqual([
-        'log: \n▸ Repackaging it with omni, with no toolchain in reach',
+        'log: \n▸ Repackaging them with omni, with no toolchain in reach',
         `log: ${path.join(outDir, 'repackaged-a.apk')}`,
         `log: ${path.join(outDir, 'repackaged-a.aab')}`,
       ]);
@@ -252,6 +252,7 @@ describe('run', () => {
             device: 'device',
             app: apk,
             appId: 'dev.omnibuild.e2e.app',
+            shell: 'OmniBuildShell',
           },
         ],
         [
@@ -261,6 +262,7 @@ describe('run', () => {
             device: 'device',
             app: 'universal.apk',
             appId: 'dev.omnibuild.e2e.app',
+            shell: 'OmniBuildShell',
           },
         ],
       ]);
@@ -278,6 +280,29 @@ describe('run', () => {
         'log: ✓ App-linux.apk reported every expected value.',
         'log: ✓ App-linux.aab reported every expected value.',
       ]);
+    });
+
+    it('tells the platform which shell each app was made from', async () => {
+      const webApp = path.join(packageDir, 'WebViewShell-linux.apk');
+      const { signer: webSigner, ...webReport } = expected('android', webApp);
+      vi.mocked(platform.verify).mockResolvedValue({ signer: webSigner });
+      vi.mocked(platform.runApp).mockResolvedValue(webReport);
+
+      expect(await runWith('test', '--platform', 'android', webApp)).toBe(0);
+
+      expect(platform.verify).toHaveBeenCalledWith(
+        expect.objectContaining({ app: webApp, shell: 'WebViewShell' }),
+      );
+      expect(platform.runApp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          app: webApp,
+          appId: 'dev.omnibuild.e2e.web',
+          shell: 'WebViewShell',
+        }),
+      );
+      expect(output).toContain(
+        'log: ✓ WebViewShell-linux.apk reported every expected value.',
+      );
     });
 
     it("checks what an app's files say when the device can't run it", async () => {

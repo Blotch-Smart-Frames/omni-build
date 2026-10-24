@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The platform's own Material theme, with no AndroidX: the page draws
+         everything, so the theme only paints behind it and the system bars.
+         White, as a page is until it says otherwise. -->
+    <style name="Theme.WebViewShell" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

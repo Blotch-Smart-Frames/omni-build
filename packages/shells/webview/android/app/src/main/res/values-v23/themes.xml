@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- From Android 6.0, a white status bar with dark icons, to match the
+         window. From Android 15 the bars are see-through over the window,
+         and these icons stay dark. -->
+    <style name="Theme.WebViewShell" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">@android:color/white</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

@@ -25,7 +25,7 @@ GITHUB_REPOSITORY=Blotch-Smart-Frames/omni-build npm run check -w @blotch/omni-b
 - **With an issue:** read all of it, comments included (`gh issue view <number> --comments`).
 - **Without one** (the user asked directly, or the watch hasn't run yet): the dry run's `open an issue: ...` line is the issue you're doing. Its readings say what's out and what's required.
 - **Urgency:** a **Required** reason with a date is a store deadline, so do it first. **Released** on its own means there's time.
-- **Read `packages/platform-watch/src/sources.ts`.** Its `SOURCES` list says which files hold the shells' toolchain today. Use those paths rather than any you remember: they move when the release shells arrive.
+- **Read `packages/platform-watch/src/sources.ts`.** Its `SOURCES` list says which files the watch reads the shells' toolchain from. Use those paths rather than any you remember. The shells are OmniBuild's own in `packages/shells` (the WebView shell, which the watch reads) and the E2E fixtures in `packages/e2e/fixtures`, and every one moves together: `GRADLE_PROJECTS` and `XCODE_PROJECTS` in `packages/e2e/src/shell.ts` list them, and its tests fail when their Android levels, Android Gradle plugin or iOS deployment target differ.
 - **Branch from the branch the watch is on** (`master` once it's merged), e.g. `git switch -c platform/xcode-27`.
 
 When looking for other mentions of the old version, leave out `packages/platform-watch` and `.claude`. Their mentions are test data, examples and quotes of the vendors' wording, not the toolchain.
@@ -59,7 +59,7 @@ When looking for other mentions of the old version, leave out `packages/platform
    DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npm run e2e -- --platform ios
    ```
 
-   Fix whatever the new SDK breaks in the Swift shells (`packages/e2e/fixtures/ios`). Without a Mac, CI does this step.
+   Fix whatever the new SDK breaks in the Swift shells (`packages/shells/webview/ios` and `packages/e2e/fixtures/ios`). Without a Mac, CI does this step.
 
 5. **Update other mentions** of the old Xcode that describe the toolchain:
 
@@ -69,9 +69,9 @@ When looking for other mentions of the old version, leave out `packages/platform
 
 ## Android: a new API level
 
-1. **Raise both levels.** In the shells' Gradle file (today `packages/e2e/fixtures/android/app/build.gradle.kts`), set `compileSdk = N` and `targetSdk = N`. Keep the plain `name = N` form, which is what the watch reads. Since API 36, Google names the platform package `android-N.0` (then `N.1`, `N.2`), and `compileSdk = N` resolves to `N.0`.
+1. **Raise both levels in every Android shell.** In each shell's `app/build.gradle.kts` (`packages/shells/webview/android/app/build.gradle.kts`, which the watch reads, and `packages/e2e/fixtures/android/app/build.gradle.kts`), set `compileSdk = N` and `targetSdk = N`. Keep the plain `name = N` form, which is what the watch reads. Since API 36, Google names the platform package `android-N.0` (then `N.1`, `N.2`), and `compileSdk = N` resolves to `N.0`. `npm test -w @blotch/omni-build-e2e` fails while any shell is left behind.
 
-2. **Check that the Android Gradle plugin supports N.** The AGP release notes (developer.android.com/build/releases/gradle-plugin) give the highest API level each version supports, and the Gradle version it needs. If the version in `packages/e2e/fixtures/android/build.gradle.kts` is too old, raise it. If the new AGP needs a newer Gradle, update the wrapper with `./gradlew wrapper --gradle-version <version> --gradle-distribution-sha256-sum <sum>` (checksums at gradle.org/release-checksums). Don't edit `gradle-wrapper.properties` by hand: CI checks the wrapper.
+2. **Check that the Android Gradle plugin supports N.** The AGP release notes (developer.android.com/build/releases/gradle-plugin) give the highest API level each version supports, and the Gradle version it needs. If the version in each shell's top-level `build.gradle.kts` is too old, raise it in all of them. If the new AGP needs a newer Gradle, update each shell's wrapper with `./gradlew wrapper --gradle-version <version> --gradle-distribution-sha256-sum <sum>` (checksums at gradle.org/release-checksums). Don't edit `gradle-wrapper.properties` by hand: CI checks the wrapper.
 
 3. **Check the CI runner has the platform** (AGP downloads it if not, so a miss only costs time):
 
@@ -122,7 +122,7 @@ The dry run is the real test of the change. It reads the live pages and your edi
 
 ## 3. Hand it over
 
-- Commit in the repository's style (see `git log`): `ci: Build the iOS shells with Xcode 27` for a change in the workflow, `test: Compile and target the Android shells against API level 37` for one in the E2E fixtures.
+- Commit in the repository's style (see `git log`): `ci: Build the iOS shells with Xcode 27` for a change in the workflow, `feat: Compile and target the Android shells against API level 37` for one in the shells.
 - Open a PR (ask first if the user hasn't said to). Its body says what changed and why, and what CI doesn't test (a Simulator or emulator left on an older version, a local Xcode that differs from the pin). With an issue, end it with `Fixes #<number>`.
 - **CI passing is what "done" means.** The E2E jobs build the shells with the new toolchain, repackage them on Linux, Windows and macOS, and run them on the Simulator and the emulator.
 - Don't close the issue by hand. The PR closes it on merge. If it doesn't, the watch runs on that push to master and closes it once the files reach the version.

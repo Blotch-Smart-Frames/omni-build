@@ -12,6 +12,11 @@ import type { ApiLevels, SourceReadings, Xcode } from './sources.ts';
 
 const WORKFLOW = '.github/workflows/platform-watch.yml';
 const SOURCES_FILE = 'packages/platform-watch/src/sources.ts';
+/**
+ * The E2E fixture's Gradle file, whose API levels move with the shell the
+ * watch reads.
+ */
+const FIXTURE_GRADLE = 'packages/e2e/fixtures/android/app/build.gradle.kts';
 
 /** One reason for an issue: a line of it, or of a comment on it. */
 export interface Reason {
@@ -103,7 +108,7 @@ const android = (
     reasons,
     why: "Raising `targetSdk` opts an app into that Android release's behaviour changes, so OmniBuild doesn't rewrite it in the manifest: the shells are rebuilt and tested at the new level.",
     todo: [
-      `Raise \`compileSdk\` and \`targetSdk\` in \`${location}\` to ${api}. The Android Gradle plugin may need a newer version to support it.`,
+      `Raise \`compileSdk\` and \`targetSdk\` in \`${location}\` to ${api}, and in every other Android shell's \`app/build.gradle.kts\` (the E2E fixture's, \`${FIXTURE_GRADLE}\`): \`packages/e2e\`'s tests fail until they all match. The Android Gradle plugin may need a newer version to support it.`,
       `Go through the behaviour changes for apps targeting the new level ([Android releases](https://developer.android.com/about/versions)), fix what they break in the Kotlin shells, and update other mentions of API level ${shell.targetSdk} in the repository.`,
       'CI builds the shells against it and runs them on the Android emulator: this is done when CI passes.',
     ],

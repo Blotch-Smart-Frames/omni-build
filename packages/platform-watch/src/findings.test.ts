@@ -81,7 +81,7 @@ describe('findings', () => {
     expect(issueBody(android)).toMatchInlineSnapshot(`
       "<!-- platform-watch:android-api-37 -->
 
-      The Android shells compile against API level 36 and target 36, set in \`packages/e2e/fixtures/android/app/build.gradle.kts\`, and:
+      The Android shells compile against API level 36 and target 36, set in \`packages/shells/webview/android/app/build.gradle.kts\`, and:
 
       - **Released:** API level 37 is stable in [the Android SDK repository](https://dl.google.com/android/repository/repository2-3.xml). Google Play requires apps to target a new level about a year after it ships, each August 31. <!-- platform-watch-reason:released -->
 
@@ -89,7 +89,7 @@ describe('findings', () => {
 
       ## What to do
 
-      1. Raise \`compileSdk\` and \`targetSdk\` in \`packages/e2e/fixtures/android/app/build.gradle.kts\` to 37. The Android Gradle plugin may need a newer version to support it.
+      1. Raise \`compileSdk\` and \`targetSdk\` in \`packages/shells/webview/android/app/build.gradle.kts\` to 37, and in every other Android shell's \`app/build.gradle.kts\` (the E2E fixture's, \`packages/e2e/fixtures/android/app/build.gradle.kts\`): \`packages/e2e\`'s tests fail until they all match. The Android Gradle plugin may need a newer version to support it.
       2. Go through the behaviour changes for apps targeting the new level ([Android releases](https://developer.android.com/about/versions)), fix what they break in the Kotlin shells, and update other mentions of API level 36 in the repository.
       3. CI builds the shells against it and runs them on the Android emulator: this is done when CI passes.
 

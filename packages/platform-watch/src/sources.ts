@@ -179,9 +179,9 @@ export const parseGradleSdk = (gradle: string): ApiLevels => {
  * Everything the watch reads. A `location` starting with `https://` is
  * fetched; anything else is a path from the repository root.
  *
- * The shells' toolchain is read from the E2E fixtures, the only shells there
- * are yet. When the release shells arrive (Phase 1 of #1), their files take
- * these two places.
+ * The Android shells' API levels are read from the WebView shell's Gradle
+ * file. packages/e2e's tests fail unless every other shell's, the E2E
+ * fixture's among them, has the same, so raising it raises them all.
  */
 export const SOURCES = [
   {
@@ -195,7 +195,7 @@ export const SOURCES = [
   {
     id: 'android-shell',
     title: "the Android shells' API levels",
-    location: 'packages/e2e/fixtures/android/app/build.gradle.kts',
+    location: 'packages/shells/webview/android/app/build.gradle.kts',
     looksFor: 'the `compileSdk = N` and `targetSdk = N` lines',
     parse: parseGradleSdk,
   },

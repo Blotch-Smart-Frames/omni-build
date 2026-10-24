@@ -15,10 +15,10 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { Artifacts, Platform } from './run.ts';
-import { type RunOptions, poll, run } from './process.ts';
+import { type RunOptions, type RunResult, poll, run } from './process.ts';
 import { OPEN_URL, omniBuild, toolchainFree } from './repackage.ts';
+import { GRADLE_PROJECTS, SHELLS, type ShellName } from './shell.ts';
 
-const PROJECT = fileURLToPath(new URL('../fixtures/android/', import.meta.url));
 const BUILD_DIR = fileURLToPath(new URL('../build/', import.meta.url));
 /**
  * bundletool turns an app bundle into the APKs a device installs, as Google
@@ -29,8 +29,18 @@ const BUNDLETOOL = {
   version: '1.18.3',
   sha256: 'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29',
 };
-/** The tag the app logs its report under (ShellReport.kt). */
+/** The tag the fixture app logs its report under (ShellReport.kt). */
 const LOG_TAG = 'OmniBuildE2E';
+/**
+ * The tag the WebView shell logs its page's console under, where the web
+ * app's report goes (MainActivity.kt).
+ */
+const WEBVIEW_LOG_TAG = 'OmniBuildWebView';
+/**
+ * The WebView shell's activity, whose class keeps the shell's name under any
+ * app's ID.
+ */
+const WEBVIEW_ACTIVITY = 'dev.omnibuild.webview.MainActivity';
 /**
  * The console port of an emulator the harness boots itself, which fixes its
  * adb serial (emulator-5584). Clear of the 5554 that a first emulator gets.
@@ -297,33 +307,34 @@ const verify: Platform['verify'] = async ({ app, artifactsDir, log }) => {
 };
 
 /**
- * Builds the shell with Gradle as a release APK and app bundle, copies them
- * into `outDir`, and returns the copies' paths.
+ * Builds each shell with Gradle as a release APK and app bundle, copies them
+ * into `outDir` under the shell's name, and returns the copies' paths.
  */
 const build: Platform['build'] = async ({ outDir, log }) => {
-  await run(
-    path.join(PROJECT, 'gradlew'),
-    ['assembleRelease', 'bundleRelease', '--console=plain'],
-    {
-      cwd: PROJECT,
-      env: { ...process.env, ANDROID_HOME: androidSdk() },
-      log,
-    },
-  );
   mkdirSync(outDir, { recursive: true });
-  const outputs = path.join(PROJECT, 'app/build/outputs');
-  const shells = [
-    [path.join(outputs, 'apk/release/app-release.apk'), 'OmniBuildShell.apk'],
-    [
-      path.join(outputs, 'bundle/release/app-release.aab'),
-      'OmniBuildShell.aab',
-    ],
-  ];
-  return shells.map(([built, name]) => {
-    const shell = path.join(outDir, name);
-    copyFileSync(built, shell);
-    return shell;
-  });
+  const shells: string[] = [];
+  for (const shell of SHELLS) {
+    const project = GRADLE_PROJECTS[shell];
+    await run(
+      path.join(project, 'gradlew'),
+      ['assembleRelease', 'bundleRelease', '--console=plain'],
+      {
+        cwd: project,
+        env: { ...process.env, ANDROID_HOME: androidSdk() },
+        log,
+      },
+    );
+    const outputs = path.join(project, 'app/build/outputs');
+    for (const [built, extension] of [
+      [path.join(outputs, 'apk/release/app-release.apk'), '.apk'],
+      [path.join(outputs, 'bundle/release/app-release.aab'), '.aab'],
+    ]) {
+      const copy = path.join(outDir, `${shell}${extension}`);
+      copyFileSync(built, copy);
+      shells.push(copy);
+    }
+  }
+  return shells;
 };
 
 /** The serials of the devices adb sees, booted or not. */
@@ -428,8 +439,9 @@ const waitForDevice: Platform<Started, Device>['waitForDevice'] = async (
 /**
  * Whether omni reaches a device by its adb serial: an emulator's
  * (`emulator-5554`) or a device's on the network (its address and port). A
- * phone on USB has a serial of its own, and adb installs on it until
- * omni speaks USB.
+ * phone on USB has a serial of its own, and adb installs on it: the adb
+ * server the harness reads the phone's log through holds its USB
+ * interface, which omni would have to claim.
  */
 const reachable = (serial: string) =>
   /^emulator-\d+$/.test(serial) || serial.includes(':');
@@ -444,6 +456,86 @@ const crashIn = (logcat: string) => {
   return start === -1 ? '' : `\n${lines.slice(start, start + 20).join('\n')}`;
 };
 
+/** Runs adb on one device. */
+type OnDevice = (args: string[], options?: RunOptions) => Promise<RunResult>;
+
+/**
+ * How the harness launches an app made from each shell, after `am start
+ * -W`. The fixture's through its link, as a browser opens it, which only
+ * the intent filter OmniBuild gave the launcher activity for the app's URL
+ * scheme leads to, named by the application ID too, so that no other app
+ * that took the scheme gets it. The WebView shell's by its activity, under
+ * the app's ID: `am start` won't take a launcher's intent without the
+ * activity's name.
+ */
+const LAUNCHES: Record<ShellName, (appId: string) => string[]> = {
+  OmniBuildShell: (appId) => [
+    '-a',
+    'android.intent.action.VIEW',
+    '-d',
+    OPEN_URL,
+    appId,
+  ],
+  WebViewShell: (appId) => ['-n', `${appId}/${WEBVIEW_ACTIVITY}`],
+};
+
+/**
+ * Where an app made from each shell reports what it found, read from the
+ * device's log: the report, once it's there.
+ */
+const REPORTS: Record<
+  ShellName,
+  (onDevice: OnDevice) => Promise<Record<string, unknown> | undefined>
+> = {
+  // The fixture logs a line of JSON under its own tag.
+  OmniBuildShell: async (onDevice) => {
+    const logged = await onDevice(
+      ['logcat', '-d', '-v', 'raw', '-s', `${LOG_TAG}:I`],
+      { log: undefined },
+    );
+    const line = logged.stdout
+      .split('\n')
+      .find((candidate) => candidate.startsWith('{'));
+    return line ? JSON.parse(line) : undefined;
+  },
+  // The web app's page logs a line of JSON to its console, which the
+  // WebView shell logs under its tag. The ID is that of the app whose
+  // process logged it, from the process's name, which Android gives an
+  // app's main process: the package it was installed as.
+  WebViewShell: async (onDevice) => {
+    const logged = await onDevice(
+      ['logcat', '-d', '-v', 'threadtime', '-s', `${WEBVIEW_LOG_TAG}:I`],
+      { log: undefined },
+    );
+    // "10-24 23:20:25.962  4733  4733 I OmniBuildWebView: {...}": the
+    // date, time, process, thread, priority and tag, then the message.
+    // Android 5.0's adb ends each line with a carriage return too.
+    const reports = logged.stdout
+      .split(/\r?\n/)
+      .map((candidate) =>
+        /^\S+\s+\S+\s+(\d+)\s+\d+\s+\w\s+\S+\s*: (\{.*)$/.exec(candidate),
+      )
+      .filter((match) => match !== null)
+      .reverse();
+    // The newest report from a process that's still running. Android 5.0's
+    // `logcat -c` doesn't always empty the log, which can still hold an
+    // earlier run's report, from a process that went with its app. The
+    // device's shell prints nothing for a process that's gone, rather than
+    // the error, which old versions of adb send to stdout.
+    for (const [, pid, report] of reports) {
+      const name = await onDevice(
+        ['shell', 'cat', `/proc/${pid}/cmdline`, '2>/dev/null'],
+        { log: undefined, allowFailure: true },
+      );
+      const id = name.stdout.split('\0')[0].trim();
+      if (id) {
+        return { ...JSON.parse(report), id };
+      }
+    }
+    return undefined;
+  },
+};
+
 /**
  * Installs the APK on the device, launches it, and returns the report it
  * logs on launch.
@@ -452,10 +544,11 @@ const runApp: Platform<Started, Device>['runApp'] = async ({
   device,
   app,
   appId,
+  shell,
   artifactsDir,
   log,
 }) => {
-  const onDevice = (args: string[], options?: RunOptions) =>
+  const onDevice: OnDevice = (args, options) =>
     adb(['-s', device.serial, ...args], { log, ...options });
 
   // A fresh install, so the device can't run an earlier build, and so a
@@ -473,21 +566,7 @@ const runApp: Platform<Started, Device>['runApp'] = async ({
     await onDevice(['install', app]);
   }
   await onDevice(['logcat', '-c'], { allowFailure: true });
-  // Through the app's link, as a browser opens it, which only the intent
-  // filter OmniBuild gave the launcher activity for the app's URL scheme
-  // leads to. Named by the application ID too, so that no other app that
-  // took the scheme gets it.
-  await onDevice([
-    'shell',
-    'am',
-    'start',
-    '-W',
-    '-a',
-    'android.intent.action.VIEW',
-    '-d',
-    OPEN_URL,
-    appId,
-  ]);
+  await onDevice(['shell', 'am', 'start', '-W', ...LAUNCHES[shell](appId)]);
 
   const saveLogcat = async () => {
     const logcat = await onDevice(['logcat', '-d', '-v', 'time'], {
@@ -498,22 +577,10 @@ const runApp: Platform<Started, Device>['runApp'] = async ({
     return logcat.stdout;
   };
   try {
-    const report = await poll(
-      async () => {
-        const logged = await onDevice(
-          ['logcat', '-d', '-v', 'raw', '-s', `${LOG_TAG}:I`],
-          { log: undefined },
-        );
-        const line = logged.stdout
-          .split('\n')
-          .find((candidate) => candidate.startsWith('{'));
-        return line ? JSON.parse(line) : undefined;
-      },
-      {
-        timeoutMs: 60_000,
-        message: `${appId} didn't log its report within a minute of launching. The device's log is in ${artifactsDir}.`,
-      },
-    );
+    const report = await poll(() => REPORTS[shell](onDevice), {
+      timeoutMs: 60_000,
+      message: `${appId} didn't log its report within a minute of launching. The device's log is in ${artifactsDir}.`,
+    });
     // The report is logged before the first frame; give the view a moment
     // to draw it.
     await sleep(1000);

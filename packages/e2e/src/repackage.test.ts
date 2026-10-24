@@ -167,6 +167,46 @@ describe('expected', () => {
   });
 });
 
+describe('expected, of the web app made from the WebView shell', () => {
+  const page = {
+    id: 'dev.omnibuild.e2e.web',
+    title: 'OmniBuild E2E web app',
+    storage: 'works',
+    message: "A message from the web app's payload\n",
+  };
+
+  it('is what its page finds on Android, served from the asset host', () => {
+    expect(expected('android', 'WebViewShell-linux.apk')).toEqual({
+      ...page,
+      origin: 'https://appassets.androidplatform.net',
+      signer: 'CN=OmniBuild Debug, O=OmniBuild',
+    });
+    expect(expected('android', 'WebViewShell-linux.aab').signer).toBe(
+      'CN=OmniBuild E2E Upload',
+    );
+  });
+
+  it("is what its page finds on the iOS simulator, served from the shell's scheme", () => {
+    expect(expected('ios', 'WebViewShell-linux.zip')).toEqual({
+      ...page,
+      origin: 'app://localhost',
+      signer: 'ad hoc',
+    });
+  });
+
+  it("is what an iOS build for devices' files say, signed with the test key", () => {
+    expect(expected('ios', 'WebViewShell-linux.ipa')).toEqual({
+      id: 'dev.omnibuild.e2e.web',
+      name: 'OmniBuild E2E Web',
+      version: '3.1.0',
+      build: '7',
+      message: "A message from the web app's payload\n",
+      signer: 'OmniBuild E2E',
+      applicationIdentifier: 'OMNIBUILD0.dev.omnibuild.e2e.web',
+    });
+  });
+});
+
 describe('repackage', () => {
   it('runs an Android shell through omni with no toolchain in reach', async () => {
     const shell = path.join('shells', 'OmniBuildShell.apk');
@@ -286,6 +326,36 @@ describe('repackage', () => {
     ]);
     // Deleted, so no stage takes it for an app.
     expect(readdirSync(outDir)).toEqual([]);
+  });
+
+  it("gives the WebView shell the web app's config, and signs its build for devices with the web app's profile alone", async () => {
+    const webApp = fileURLToPath(
+      new URL('../app/webview.json', import.meta.url),
+    );
+    const apk = path.join('shells', 'WebViewShell.apk');
+    const ipa = path.join('shells', 'WebViewShell.ipa');
+
+    const apkApp = await repackage({ shell: apk, outDir, log: 'commands.log' });
+    const ipaApp = await repackage({ shell: ipa, outDir, log: 'commands.log' });
+
+    expect(vi.mocked(run).mock.calls.map(([, args]) => args)).toEqual([
+      ['repackage', apk, '--config', webApp, '--out', apkApp, '--json'],
+      [
+        'repackage',
+        ipa,
+        '--config',
+        webApp,
+        '--signing-key',
+        fileURLToPath(new URL('../app/signing-key.p12', import.meta.url)),
+        '--profile',
+        fileURLToPath(
+          new URL('../app/WebView.mobileprovision', import.meta.url),
+        ),
+        '--out',
+        ipaApp,
+        '--json',
+      ],
+    ]);
   });
 
   it('names an app for an OS it has no name for by its platform', async () => {

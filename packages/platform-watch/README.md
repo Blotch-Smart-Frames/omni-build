@@ -9,13 +9,13 @@ Opens a GitHub issue when the app shells need a newer Xcode or Android API level
 | Source                                                                                                   | For                                                           |
 | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | `DEVELOPER_DIR` in `.github/workflows/ci.yml`                                                            | The Xcode the iOS shells are built with                       |
-| `compileSdk` and `targetSdk` in `packages/e2e/fixtures/android/app/build.gradle.kts`                     | The API levels the Android shells compile against and target  |
+| `compileSdk` and `targetSdk` in `packages/shells/webview/android/app/build.gradle.kts`                   | The API levels the Android shells compile against and target  |
 | [Apple's upcoming requirements](https://developer.apple.com/news/upcoming-requirements/)                 | The Xcode App Store uploads must be built with, and from when |
 | [Apple's releases feed](https://developer.apple.com/news/releases/rss/releases.rss)                      | New Xcode releases, betas and release candidates left out     |
 | [Google Play's target API level page](https://developer.android.com/google/play/requirements/target-sdk) | The API level Play requires apps to target, and from when     |
 | [The Android SDK repository](https://dl.google.com/android/repository/repository2-3.xml)                 | New stable API levels, previews left out                      |
 
-The shells' two files are the E2E fixtures for now, the only shells there are. When the release shells arrive (Phase 1 of [#1](https://github.com/Blotch-Smart-Frames/omni-build/issues/1)), point those sources in `src/sources.ts` at theirs.
+CI builds every iOS shell, OmniBuild's WebView shell and the E2E fixture, with the one Xcode. The Android API levels are read from the WebView shell's Gradle file alone: `packages/e2e`'s tests fail unless every other Android shell, the E2E fixture's among them, has the same, so an update moves them all.
 
 ## The issues it opens
 
