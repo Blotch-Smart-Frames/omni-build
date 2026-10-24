@@ -78,6 +78,24 @@ export interface InstalledEvent {
   message: string;
 }
 
+/**
+ * `tcpip` had the device listen for ADB on the network, where this computer
+ * reached it, until it restarts.
+ */
+export interface ListeningEvent {
+  event: 'listening';
+  /** The device's name, as `--device` took it. */
+  device: string;
+  /** The device's model, as its user knows it, if it says. */
+  model?: string;
+  /**
+   * Where it listens, as `--device` takes it from now on
+   * (`192.168.1.20:5555`).
+   */
+  address: string;
+  message: string;
+}
+
 /** Why the command failed: the last event. */
 export interface ErrorEvent {
   event: 'error';
@@ -91,6 +109,7 @@ export type OmniBuildEvent =
   | AuthorizingEvent
   | RepackagedEvent
   | InstalledEvent
+  | ListeningEvent
   | ErrorEvent;
 
 /** A command that failed, with omni's reason as its message. */

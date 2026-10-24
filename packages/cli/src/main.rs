@@ -49,6 +49,7 @@ struct Cli {
 enum Command {
     Repackage(Repackage),
     Install(Install),
+    Tcpip(Tcpip),
     Key(Key),
 }
 
@@ -101,6 +102,22 @@ struct Install {
     /// emulator running on this computer.
     #[arg(long, short)]
     device: Option<String>,
+}
+
+/// Have an Android phone plugged in by USB listen for ADB on the network, as
+/// `adb tcpip` does, so `install` reaches it there without its cable until
+/// it restarts. The phone and this computer need to be on the same network.
+#[derive(Debug, Args)]
+struct Tcpip {
+    /// The phone: one plugged in by USB, by its serial number, as `adb
+    /// devices` shows it, or a device on the network already, by its address
+    /// and port, to move it to another port. Without it, the one phone
+    /// plugged in.
+    #[arg(long, short)]
+    device: Option<String>,
+    /// The port it listens on.
+    #[arg(long, short, default_value_t = 5555, value_parser = clap::value_parser!(u16).range(1..))]
+    port: u16,
 }
 
 /// Manage signing keys.
@@ -177,6 +194,7 @@ fn run(command: Command, reporter: &Reporter) -> Result<()> {
     match command {
         Command::Repackage(args) => repackage(&args, reporter),
         Command::Install(args) => install(&args, reporter),
+        Command::Tcpip(args) => tcpip(&args, reporter),
         Command::Key(Key { command }) => match command {
             KeyCommand::Create(args) => create_key(&args, reporter),
             KeyCommand::Request(args) => request_key(&args, reporter),
@@ -267,11 +285,7 @@ fn install(args: &Install, reporter: &Reporter) -> Result<()> {
         &adb::emulator_ports(),
         &adb::Usb,
         &key,
-        &|device| {
-            reporter.report(&Event::Authorizing {
-                device: device.to_owned(),
-            });
-        },
+        &authorizing(reporter),
     )?;
     device.install(&app)?;
     reporter.report(&Event::Installed {
@@ -280,6 +294,35 @@ fn install(args: &Install, reporter: &Reporter) -> Result<()> {
         model: device.model().map(str::to_owned),
     });
     Ok(())
+}
+
+fn tcpip(args: &Tcpip, reporter: &Reporter) -> Result<()> {
+    let key = adb_key(reporter)?;
+    let authorizing = authorizing(reporter);
+    let mut device = adb::Device::connect(
+        args.device.as_deref(),
+        &adb::emulator_ports(),
+        &adb::Usb,
+        &key,
+        &authorizing,
+    )?;
+    let address = device.listen(args.port, &key, &authorizing, adb::LISTEN_TIMEOUT)?;
+    reporter.report(&Event::Listening {
+        device: device.serial().to_owned(),
+        model: device.model().map(str::to_owned),
+        address: address.to_string(),
+    });
+    Ok(())
+}
+
+/// Says a device asks its user whether to allow this computer, given the
+/// device's name.
+fn authorizing(reporter: &Reporter) -> impl Fn(&str) + '_ {
+    |device| {
+        reporter.report(&Event::Authorizing {
+            device: device.to_owned(),
+        });
+    }
 }
 
 /// The key OmniBuild proves itself to Android devices with: adb's, which
