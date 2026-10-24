@@ -723,7 +723,7 @@ describe('runApp', () => {
     );
   });
 
-  it('installs on a phone on USB with adb, until omni speaks USB', async () => {
+  it("installs on a phone on USB with adb, whose server holds the phone's USB interface", async () => {
     logging(['{}\n']);
 
     await android.runApp({

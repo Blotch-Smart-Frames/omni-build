@@ -439,8 +439,9 @@ const waitForDevice: Platform<Started, Device>['waitForDevice'] = async (
 /**
  * Whether omni reaches a device by its adb serial: an emulator's
  * (`emulator-5554`) or a device's on the network (its address and port). A
- * phone on USB has a serial of its own, and adb installs on it until
- * omni speaks USB.
+ * phone on USB has a serial of its own, and adb installs on it: the adb
+ * server the harness reads the phone's log through holds its USB
+ * interface, which omni would have to claim.
  */
 const reachable = (serial: string) =>
   /^emulator-\d+$/.test(serial) || serial.includes(':');
