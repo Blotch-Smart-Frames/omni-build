@@ -6,7 +6,8 @@ import { resolveBinary } from './resolve-binary.ts';
 // --json, as esbuild's package runs esbuild, and hands the tool each event
 // the binary reports, typed. The events mirror packages/cli/src/report.rs.
 // Every event has a message, the sentence a person would read, so a tool
-// can show events a newer binary adds before it knows them.
+// can show events a newer binary adds before it knows them. Their values
+// are named in camelCase.
 
 export { resolveBinary };
 
@@ -15,10 +16,11 @@ export interface KeyCreatedEvent {
   event: 'key-created';
   /**
    * What it's for: `debug` signs Android apps when OmniBuild is given no key,
-   * `adb` proves this computer's identity to Android devices, and `upload`,
-   * from `key create`, signs app bundles for Google Play.
+   * `adb` proves this computer's identity to Android devices, `upload`, from
+   * `key create`, signs app bundles for Google Play, and `apple`, from
+   * `provision`, signs iOS apps with the certificate Apple issues for it.
    */
-  key: 'debug' | 'adb' | 'upload';
+  key: 'debug' | 'adb' | 'upload' | 'apple';
   path: string;
   message: string;
 }
@@ -43,6 +45,67 @@ export interface CertificateImportedEvent {
   certificate: string;
   /** When it expires, as a date (`2027-10-22`). */
   expires: string;
+  message: string;
+}
+
+/**
+ * `provision` had Apple issue a certificate for the key in the keystore at
+ * `path`, and added it there.
+ */
+export interface CertificateCreatedEvent {
+  event: 'certificate-created';
+  path: string;
+  /** The certificate's name, as Keychain Access shows it. */
+  certificate: string;
+  /** When it expires, as a date (`2027-10-22`). */
+  expires: string;
+  message: string;
+}
+
+/** `provision` registered an App ID for one of the app's bundles. */
+export interface AppIdRegisteredEvent {
+  event: 'app-id-registered';
+  bundleId: string;
+  message: string;
+}
+
+/**
+ * `provision` turned on a capability for a bundle's App ID, which an
+ * entitlement the bundle claims needs.
+ */
+export interface CapabilityEnabledEvent {
+  event: 'capability-enabled';
+  bundleId: string;
+  /** Its name, as developer.apple.com shows it (`Push Notifications`). */
+  capability: string;
+  message: string;
+}
+
+/** `provision` had Apple make a provisioning profile for one of the app's bundles. */
+export interface ProfileCreatedEvent {
+  event: 'profile-created';
+  bundleId: string;
+  name: string;
+  message: string;
+}
+
+/**
+ * `provision` wrote a provisioning profile for each of the app's bundles,
+ * which allows the certificate of the key in the keystore: sign the app with
+ * `repackage --signing-key <keystore> --profile <out>`.
+ */
+export interface ProvisionedEvent {
+  event: 'provisioned';
+  keystore: string;
+  /** The certificate's name, as Keychain Access shows it. */
+  certificate: string;
+  /** When it expires, as a date (`2027-10-22`). */
+  expires: string;
+  distribution: 'app-store' | 'ad-hoc' | 'development';
+  /** The folder with the profiles, which `--profile` takes. */
+  out: string;
+  /** Each profile's file, in the folder. */
+  profiles: string[];
   message: string;
 }
 
@@ -119,6 +182,11 @@ export type OmniBuildEvent =
   | KeyCreatedEvent
   | KeyRequestedEvent
   | CertificateImportedEvent
+  | CertificateCreatedEvent
+  | AppIdRegisteredEvent
+  | CapabilityEnabledEvent
+  | ProfileCreatedEvent
+  | ProvisionedEvent
   | AuthorizingEvent
   | RepackagedEvent
   | InstalledEvent

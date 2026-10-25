@@ -2,6 +2,7 @@
 
 mod adb;
 mod android;
+mod app_store_connect;
 mod bytes;
 mod config;
 mod icon;
@@ -13,14 +14,16 @@ mod report;
 mod zip;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 
 use adb::AdbKey;
+use app_store_connect::{ApiKey, Client};
 use config::App;
+use ios::{Distribution, Provisioner};
 use key::{SigningKey, debug_key_path, display_name};
 use report::{Event, Format, KeyKind, Platform, Reporter};
 use x509_cert::name::Name;
@@ -31,6 +34,9 @@ const NOT_A_SHELL: &str = "the shell isn't an APK, an AAB or an iOS app";
 /// A keystore's password, from the environment rather than a flag, which
 /// would show it to anyone listing the computer's processes.
 const KEY_PASSWORD: &str = "OMNI_BUILD_KEY_PASSWORD";
+/// Where App Store Connect's API is, if not at Apple: the CLI's tests point
+/// it at one of their own.
+const APP_STORE_CONNECT_URL: &str = "OMNI_BUILD_APP_STORE_CONNECT_URL";
 
 /// Build, sign, install and ship iOS and Android apps with no native toolchain.
 #[derive(Debug, Parser)]
@@ -48,6 +54,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Repackage(Repackage),
+    Provision(Provision),
     Install(Install),
     Tcpip(Tcpip),
     Pair(Pair),
@@ -82,11 +89,67 @@ struct Repackage {
     signing_key: Option<PathBuf>,
     /// A provisioning profile for an iOS build for devices
     /// (`.mobileprovision`), which allows the signing key's certificate and
-    /// the app's ID. Give one for each of the app's extensions too, which
-    /// have IDs of their own, unless a wildcard App ID covers them: each
-    /// takes the profile that fits its ID closest, as Xcode picks them.
+    /// the app's ID, or a folder of them, as `provision` writes. Give one
+    /// for each of the app's extensions too, which have IDs of their own,
+    /// unless a wildcard App ID covers them: each takes the profile that
+    /// fits its ID closest, as Xcode picks them.
     #[arg(long)]
     profile: Vec<PathBuf>,
+}
+
+/// Get what signs an iOS app for devices from App Store Connect, with an
+/// App Store Connect API key, as Xcode's automatic signing does: a
+/// certificate for the signing key, an App ID for the app and each bundle
+/// nested in it, with the capabilities their entitlements need, and a
+/// provisioning profile for each. What the account has already is reused,
+/// and what it lacks is created.
+///
+/// Then sign the app with `repackage --signing-key` and the same keystore,
+/// and `--profile` and the folder of profiles. Repackage the same shell
+/// with the same config: the bundles' IDs and entitlements are what it
+/// gives them.
+#[derive(Debug, Args)]
+struct Provision {
+    /// The app shell, built for devices (an `.ipa`).
+    shell: PathBuf,
+    /// The folder to write the profiles to, one for the app and each bundle
+    /// nested in it, named by its ID.
+    #[arg(long, short)]
+    out: PathBuf,
+    /// The app config, as `repackage` takes it, which gives the app its ID
+    /// and the entitlements it claims.
+    #[arg(long, short)]
+    config: Option<PathBuf>,
+    /// The keystore with the key to sign with: a PKCS #12 keystore, with
+    /// its password in `OMNI_BUILD_KEY_PASSWORD`, such as `key request`
+    /// creates. Apple issues a certificate for the key if the account has
+    /// none for it, and it's added to the keystore. OmniBuild creates the
+    /// keystore if there's none.
+    #[arg(long)]
+    signing_key: PathBuf,
+    /// What the app is provisioned for: the App Store needs a distribution
+    /// certificate, and development and ad hoc profiles list the account's
+    /// devices.
+    #[arg(long, value_enum, default_value_t = Distribution::AppStore)]
+    distribution: Distribution,
+    #[command(flatten)]
+    api_key: ApiKeyArgs,
+}
+
+/// An App Store Connect API key, which an account's Admin creates in App
+/// Store Connect, under Users and Access > Integrations.
+#[derive(Debug, Args)]
+struct ApiKeyArgs {
+    /// The key's file, as App Store Connect gives it: `AuthKey_<key ID>.p8`.
+    #[arg(long = "api-key")]
+    file: PathBuf,
+    /// The key's ID, if its file isn't named by it.
+    #[arg(long = "api-key-id")]
+    id: Option<String>,
+    /// The issuer ID, which App Store Connect shows above a team's keys,
+    /// for a team key. An individual key has none.
+    #[arg(long = "api-issuer")]
+    issuer: Option<String>,
 }
 
 /// Install an APK on an Android device or emulator, over ADB, with no
@@ -213,6 +276,7 @@ fn main() -> ExitCode {
 fn run(command: Command, reporter: &Reporter) -> Result<()> {
     match command {
         Command::Repackage(args) => repackage(&args, reporter),
+        Command::Provision(args) => provision(&args, reporter),
         Command::Install(args) => install(&args, reporter),
         Command::Tcpip(args) => tcpip(&args, reporter),
         Command::Pair(args) => pair(&args, reporter),
@@ -244,12 +308,9 @@ fn repackage(args: &Repackage, reporter: &Reporter) -> Result<()> {
     let profiles = args
         .profile
         .iter()
-        .map(|path| {
-            fs::read(path).with_context(|| {
-                format!("couldn't read the provisioning profile {}", path.display())
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .map(|path| read_profiles(path))
+        .collect::<Result<Vec<_>>>()?
+        .concat();
     let entries = zip::read(&shell).context(NOT_A_SHELL)?;
     let (repackaged, platform, format) = if let Some(bundle) = ios::bundle(&entries) {
         let format = if bundle.starts_with("Payload/") {
@@ -286,6 +347,78 @@ fn repackage(args: &Repackage, reporter: &Reporter) -> Result<()> {
         out: args.out.display().to_string(),
         platform,
         format,
+    });
+    Ok(())
+}
+
+/// The provisioning profiles at `path`: a profile, or a folder of them, as
+/// `provision` writes, each a `.mobileprovision` in it.
+fn read_profiles(path: &Path) -> Result<Vec<Vec<u8>>> {
+    let read = |path: &Path| {
+        fs::read(path)
+            .with_context(|| format!("couldn't read the provisioning profile {}", path.display()))
+    };
+    if !path.is_dir() {
+        return Ok(vec![read(path)?]);
+    }
+    let mut files: Vec<PathBuf> = fs::read_dir(path)
+        .with_context(|| format!("couldn't read the folder {}", path.display()))?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|file| {
+            file.extension()
+                .is_some_and(|extension| extension == "mobileprovision")
+        })
+        .collect();
+    files.sort();
+    files.iter().map(|file| read(file)).collect()
+}
+
+fn provision(args: &Provision, reporter: &Reporter) -> Result<()> {
+    let shell = fs::read(&args.shell)
+        .with_context(|| format!("couldn't read the shell {}", args.shell.display()))?;
+    let app = match &args.config {
+        Some(path) => App::read(path)?,
+        None => App::default(),
+    };
+    let entries = zip::read(&shell).context(NOT_A_SHELL)?;
+    let bundle = ios::bundle(&entries).with_context(|| {
+        format!(
+            "{} isn't an iOS app, which is what provisioning profiles sign",
+            args.shell.display()
+        )
+    })?;
+    let bundles = ios::signed_bundles(&entries, &bundle, &app)?;
+    let ApiKeyArgs { file, id, issuer } = &args.api_key;
+    let key = ApiKey::read(file, id.as_deref(), issuer.as_deref())?;
+    let url = std::env::var(APP_STORE_CONNECT_URL);
+    let url = url.as_deref().unwrap_or(app_store_connect::URL);
+    let provisioned = Provisioner {
+        client: &Client::new(key, url),
+        distribution: args.distribution,
+        report: &|event| reporter.report(&event),
+    }
+    .provision(&bundles, &args.signing_key, &key_password())?;
+    fs::create_dir_all(&args.out)
+        .with_context(|| format!("couldn't create the folder {}", args.out.display()))?;
+    let mut profiles = Vec::new();
+    for (id, profile) in &provisioned.profiles {
+        let path = args.out.join(format!("{id}.mobileprovision"));
+        fs::write(&path, profile).with_context(|| {
+            format!(
+                "couldn't write the provisioning profile to {}",
+                path.display()
+            )
+        })?;
+        profiles.push(path.display().to_string());
+    }
+    reporter.report(&Event::Provisioned {
+        keystore: args.signing_key.display().to_string(),
+        certificate: display_name(&provisioned.key.x509().tbs_certificate.subject),
+        expires: provisioned.key.expires(),
+        distribution: args.distribution,
+        out: args.out.display().to_string(),
+        profiles,
     });
     Ok(())
 }

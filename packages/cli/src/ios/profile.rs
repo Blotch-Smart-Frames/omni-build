@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
+use std::time::SystemTime;
 
 use anyhow::{Context, Result, bail};
 use cms::content_info::ContentInfo;
@@ -51,6 +52,11 @@ pub struct Profile {
     entitlements: Dictionary,
     /// The certificates the app may be signed with, as DER.
     certificates: Vec<Vec<u8>>,
+    /// When Apple stops honouring it.
+    expires: Option<SystemTime>,
+    /// The UDIDs of the devices a development or ad hoc profile installs
+    /// the app on. An App Store profile lists none.
+    devices: Vec<String>,
 }
 
 impl Profile {
@@ -81,12 +87,43 @@ impl Profile {
             .filter_map(Value::as_data)
             .map(<[u8]>::to_vec)
             .collect();
+        let expires = profile
+            .get("ExpirationDate")
+            .and_then(Value::as_date)
+            .map(SystemTime::from);
+        let devices = profile
+            .get("ProvisionedDevices")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_string)
+            .map(str::to_owned)
+            .collect();
         Ok(Self {
             bytes: bytes.to_vec(),
             application_identifier,
             entitlements,
             certificates,
+            expires,
+            devices,
         })
+    }
+
+    /// Whether it allows apps signed with `certificate` (DER).
+    pub fn allows(&self, certificate: &[u8]) -> bool {
+        self.certificates
+            .iter()
+            .any(|allowed| allowed == certificate)
+    }
+
+    /// Whether it has expired by `now`.
+    pub fn has_expired(&self, now: SystemTime) -> bool {
+        self.expires.is_some_and(|expires| expires <= now)
+    }
+
+    /// Whether it lists the device with the UDID `udid`.
+    pub fn lists(&self, udid: &str) -> bool {
+        self.devices.iter().any(|device| device == udid)
     }
 
     /// The App ID, as `TEAM.dev.example.app` or `TEAM.dev.example.*`.
@@ -124,11 +161,7 @@ impl Profile {
     /// app claims one only if it uses it, which `claim` adds.
     pub fn entitlements(&self, bundle_id: &str, certificate: &[u8]) -> Result<Entitlements> {
         let prefix = self.prefix();
-        if !self
-            .certificates
-            .iter()
-            .any(|allowed| allowed == certificate)
-        {
+        if !self.allows(certificate) {
             bail!("it doesn't allow the signing key's certificate (DeveloperCertificates)");
         }
         let mut entitlements = Entitlements::default();
@@ -304,7 +337,7 @@ pub mod tests {
     pub const CLIP_PROFILE: &[u8] = include_bytes!("../../tests/fixtures/clip.mobileprovision");
 
     /// A profile of this property list, unsigned.
-    fn profile_of(plist: &str) -> Vec<u8> {
+    pub fn profile_of(plist: &str) -> Vec<u8> {
         let signed_data = SignedData {
             version: CmsVersion::V1,
             digest_algorithms: SetOfVec::new(),

@@ -60,6 +60,9 @@ lzfse_rust = "0.2.1"
 # Linux, IOKit on macOS and WinUSB on Windows. Pure Rust, unlike libusb's
 # bindings, so every release target builds without a C toolchain.
 nusb = "0.2.8"
+# App Store Connect's API keys are P-256 keys, which sign each token
+# (ES256). The version rustls-rustcrypto has already.
+p256 = { version = "0.13.2", features = ["ecdsa", "pkcs8", "pem"] }
 # PKCS #12's structures and key derivation, and PKCS #8's encryption
 # (PBES2), of the same RustCrypto generation as cms and x509-cert.
 pkcs12 = { version = "0.1.0", features = ["kdf"] }
@@ -87,6 +90,15 @@ serde_json = "1.0.154"
 # whose PKCS #1 padding names SHA-1 by its OID ("oid").
 sha1 = { version = "0.10.7", features = ["oid"] }
 sha2 = "0.10.9"
+# HTTPS for App Store Connect's API, over the same rustls and pure-Rust
+# provider as wireless debugging: ureq without its own provider (ring), and
+# Mozilla's root certificates compiled in, as data, rather than read from
+# each system. It honours HTTPS_PROXY, as CI behind a proxy needs.
+ureq = { version = "3.5.0", default-features = false, features = [
+  "json",
+  "rustls-no-provider",
+  "rustls-webpki-roots",
+] }
 x509-cert = { version = "0.2.5", features = ["builder", "pem"] }
 
 [dev-dependencies]

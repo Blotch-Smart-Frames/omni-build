@@ -106,6 +106,10 @@ cp out/Assets.car packages/cli/tests/fixtures/packed-icons.car
 
 A key with a self-signed certificate, "OmniBuild Test", for a team that doesn't exist (`ABCDE12345`), and a provisioning profile signed with the same key, which allows it and any bundle ID (`ABCDE12345.*`). Made as the E2E tests' are (see `packages/e2e/README.md`), with `OmniBuild Test`, `ABCDE12345` and `ABCDE12345.*`, and written to `identity.pem` and `profile.mobileprovision`. `clip.mobileprovision` is the shell's App Clip's, made the same way as the E2E tests' App Clip profile, for the App ID `ABCDE12345.dev.omnibuild.shell.Clip`, of `ABCDE12345.dev.omnibuild.shell`, named `OmniBuild Test Clip`, with the UUID `7A2B3C4D-5E6F-4071-8283-A4B5C6D7E8F9`.
 
+## `AuthKey_TESTKEY123.p8`
+
+An App Store Connect API key of no account, as App Store Connect gives one: a P-256 private key in PKCS #8 PEM, in a file named by the key's ID. The App Store Connect tests sign tokens with it, and check them with its public key. `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out AuthKey_TESTKEY123.p8`.
+
 ## `keystores/`
 
 PKCS #12 keystores, as each tool writes one, with the password `omnibuild`: the key tests read each, and check what they find. From the identity above (`key.pem` and `cert.pem`, before `cat`):

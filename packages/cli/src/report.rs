@@ -8,11 +8,17 @@ use std::io::{self, Write};
 
 use serde::Serialize;
 
+use crate::ios::Distribution;
 use crate::key::ALIAS;
 
-/// Something OmniBuild did, or something it waits for.
+/// Something OmniBuild did, or something it waits for. Its values are
+/// named as JavaScript names them, for the build tools that read them.
 #[derive(Debug, PartialEq, Serialize)]
-#[serde(tag = "event", rename_all = "kebab-case")]
+#[serde(
+    tag = "event",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum Event {
     /// A key OmniBuild created: one it needed and the user had none of, or
     /// the upload key `key create` makes.
@@ -27,6 +33,41 @@ pub enum Event {
         certificate: String,
         /// When it expires, as a date (`2027-10-22`).
         expires: String,
+    },
+    /// `provision` had Apple issue a certificate for the key in the
+    /// keystore, and added it there.
+    CertificateCreated {
+        path: String,
+        /// The certificate's name, as Keychain Access shows it.
+        certificate: String,
+        /// When it expires, as a date (`2027-10-22`).
+        expires: String,
+    },
+    /// `provision` registered an App ID for one of the app's bundles.
+    AppIdRegistered { bundle_id: String },
+    /// `provision` turned on a capability for a bundle's App ID, which an
+    /// entitlement the bundle claims needs.
+    CapabilityEnabled {
+        bundle_id: String,
+        /// Its name, as developer.apple.com shows it (`Push Notifications`).
+        capability: String,
+    },
+    /// `provision` had Apple make a provisioning profile for one of the
+    /// app's bundles.
+    ProfileCreated { bundle_id: String, name: String },
+    /// `provision` wrote a provisioning profile for each of the app's
+    /// bundles, which allows the certificate of the key in the keystore.
+    Provisioned {
+        keystore: String,
+        /// The certificate's name, as Keychain Access shows it.
+        certificate: String,
+        /// When it expires, as a date (`2027-10-22`).
+        expires: String,
+        distribution: Distribution,
+        /// The folder with the profiles, which `--profile` takes.
+        out: String,
+        /// Each profile's file, in the folder.
+        profiles: Vec<String>,
     },
     /// The device asks its user whether to allow this computer, and
     /// OmniBuild waits for the answer.
@@ -86,6 +127,8 @@ pub enum KeyKind {
     Adb,
     /// Signs app bundles for Google Play.
     Upload,
+    /// Signs iOS apps, with the certificate Apple issues for it.
+    Apple,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -124,6 +167,12 @@ impl Event {
             } => format!(
                 "Created an upload key in {path}, with the alias \"{ALIAS}\". Keep it, and its password, safe: Google Play only takes updates signed with it, unless you ask Google to reset it."
             ),
+            Self::KeyCreated {
+                key: KeyKind::Apple,
+                path,
+            } => format!(
+                "Created a key for an Apple signing certificate in {path}. Keep it, and its password, safe: the certificate Apple issues for it signs nothing without it."
+            ),
             Self::KeyRequested { path, request } => format!(
                 "Created a key for an Apple signing certificate in {path}, and its certificate signing request in {request}. Upload the request at developer.apple.com, under Certificates, then add the certificate Apple issues: omni key import {path} <certificate>"
             ),
@@ -133,6 +182,32 @@ impl Event {
                 expires,
             } => format!(
                 "Added \"{certificate}\", which expires on {expires}, to {path}. Sign iOS apps with it with --signing-key, and a provisioning profile that allows it."
+            ),
+            Self::CertificateCreated {
+                path,
+                certificate,
+                expires,
+            } => format!(
+                "Apple issued \"{certificate}\", which expires on {expires}, for the key in {path}, and OmniBuild added it there"
+            ),
+            Self::AppIdRegistered { bundle_id } => format!("Registered the App ID {bundle_id}"),
+            Self::CapabilityEnabled {
+                bundle_id,
+                capability,
+            } => format!("Turned on {capability} for {bundle_id}"),
+            Self::ProfileCreated { bundle_id, name } => {
+                format!("Created the provisioning profile \"{name}\" for {bundle_id}")
+            }
+            Self::Provisioned {
+                keystore,
+                certificate,
+                expires,
+                distribution,
+                out,
+                ..
+            } => format!(
+                "Wrote {} provisioning profiles for the app to {out}, which allow \"{certificate}\" in {keystore}, until {expires}. Sign the app with --signing-key {keystore} --profile {out}",
+                distribution.name()
             ),
             Self::Authorizing { device } => format!(
                 "{device} asks whether to allow debugging from this computer. Allow it on the device."
@@ -180,6 +255,7 @@ impl Event {
                 ..
             } | Self::KeyRequested { .. }
                 | Self::CertificateImported { .. }
+                | Self::Provisioned { .. }
                 | Self::Repackaged { .. }
                 | Self::Installed { .. }
                 | Self::Listening { .. }
@@ -241,6 +317,7 @@ impl Reporter {
 #[cfg(test)]
 mod tests {
     use super::{Event, Format, KeyKind, Line, Platform, Reporter};
+    use crate::ios::Distribution;
 
     fn repackaged() -> Event {
         Event::Repackaged {
@@ -255,6 +332,70 @@ mod tests {
         Event::Paired {
             address: "192.168.1.20:37099".to_owned(),
             guid: "adb-R5CT1234-a1B2c3".to_owned(),
+        }
+    }
+
+    fn provisioned() -> Event {
+        Event::Provisioned {
+            keystore: "apple.p12".to_owned(),
+            certificate: "Apple Distribution: Jane Doe (ABCDE12345)".to_owned(),
+            expires: "2027-10-22".to_owned(),
+            distribution: Distribution::AppStore,
+            out: "profiles".to_owned(),
+            profiles: vec!["profiles/dev.example.app.mobileprovision".to_owned()],
+        }
+    }
+
+    #[test]
+    fn tells_people_what_provisioning_created() {
+        let people = Reporter::new(false);
+
+        assert_eq!(
+            people.line(&provisioned()),
+            Line::Stdout(
+                "Wrote App Store provisioning profiles for the app to profiles, which allow \"Apple Distribution: Jane Doe (ABCDE12345)\" in apple.p12, until 2027-10-22. Sign the app with --signing-key apple.p12 --profile profiles"
+                    .to_owned()
+            )
+        );
+        let news = [
+            (
+                Event::KeyCreated {
+                    key: KeyKind::Apple,
+                    path: "apple.p12".to_owned(),
+                },
+                "Created a key for an Apple signing certificate in apple.p12. Keep it, and its password, safe: the certificate Apple issues for it signs nothing without it.",
+            ),
+            (
+                Event::CertificateCreated {
+                    path: "apple.p12".to_owned(),
+                    certificate: "Apple Distribution: Jane Doe (ABCDE12345)".to_owned(),
+                    expires: "2027-10-22".to_owned(),
+                },
+                "Apple issued \"Apple Distribution: Jane Doe (ABCDE12345)\", which expires on 2027-10-22, for the key in apple.p12, and OmniBuild added it there",
+            ),
+            (
+                Event::AppIdRegistered {
+                    bundle_id: "dev.example.app".to_owned(),
+                },
+                "Registered the App ID dev.example.app",
+            ),
+            (
+                Event::CapabilityEnabled {
+                    bundle_id: "dev.example.app".to_owned(),
+                    capability: "Push Notifications".to_owned(),
+                },
+                "Turned on Push Notifications for dev.example.app",
+            ),
+            (
+                Event::ProfileCreated {
+                    bundle_id: "dev.example.app".to_owned(),
+                    name: "OmniBuild App Store dev.example.app 1761400000".to_owned(),
+                },
+                "Created the provisioning profile \"OmniBuild App Store dev.example.app 1761400000\" for dev.example.app",
+            ),
+        ];
+        for (event, message) in news {
+            assert_eq!(people.line(&event), Line::Stderr(message.to_owned()));
         }
     }
 
@@ -401,6 +542,21 @@ mod tests {
             tools.line(&paired()),
             Line::Stdout(line) if line.starts_with(
                 r#"{"event":"paired","address":"192.168.1.20:37099","guid":"adb-R5CT1234-a1B2c3","message":"Paired with "#
+            )
+        ));
+        assert!(matches!(
+            tools.line(&provisioned()),
+            Line::Stdout(line) if line.starts_with(
+                r#"{"event":"provisioned","keystore":"apple.p12","certificate":"Apple Distribution: Jane Doe (ABCDE12345)","expires":"2027-10-22","distribution":"app-store","out":"profiles","profiles":["profiles/dev.example.app.mobileprovision"],"message":"Wrote "#
+            )
+        ));
+        assert!(matches!(
+            tools.line(&Event::CapabilityEnabled {
+                bundle_id: "dev.example.app".to_owned(),
+                capability: "Push Notifications".to_owned(),
+            }),
+            Line::Stdout(line) if line.starts_with(
+                r#"{"event":"capability-enabled","bundleId":"dev.example.app","capability":"Push Notifications","message":"#
             )
         ));
         assert_eq!(
