@@ -96,6 +96,19 @@ export interface ListeningEvent {
   message: string;
 }
 
+/** `pair` paired this computer with the device for wireless debugging. */
+export interface PairedEvent {
+  event: 'paired';
+  /** Where the device listened for pairing. */
+  address: string;
+  /**
+   * The device's name for itself, which it advertises its wireless
+   * debugging under on the network (`adb-R5CT1234-a1B2c3`).
+   */
+  guid: string;
+  message: string;
+}
+
 /** Why the command failed: the last event. */
 export interface ErrorEvent {
   event: 'error';
@@ -110,6 +123,7 @@ export type OmniBuildEvent =
   | RepackagedEvent
   | InstalledEvent
   | ListeningEvent
+  | PairedEvent
   | ErrorEvent;
 
 /** A command that failed, with omni's reason as its message. */

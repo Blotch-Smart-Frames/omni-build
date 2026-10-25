@@ -3,11 +3,12 @@
 //! key, and streams to the device's services. AOSP describes it in
 //! `packages/modules/adb/protocol.txt`.
 
-use std::io::{ErrorKind, Read, Write};
+use std::io::{self, ErrorKind, Read, Write};
 
 use anyhow::{Context, Result, anyhow, bail};
 
 use super::key::AdbKey;
+use super::tls;
 
 const CNXN: u32 = u32::from_le_bytes(*b"CNXN");
 const AUTH: u32 = u32::from_le_bytes(*b"AUTH");
@@ -15,8 +16,11 @@ const OPEN: u32 = u32::from_le_bytes(*b"OPEN");
 const OKAY: u32 = u32::from_le_bytes(*b"OKAY");
 const WRTE: u32 = u32::from_le_bytes(*b"WRTE");
 const CLSE: u32 = u32::from_le_bytes(*b"CLSE");
-/// A device's request for TLS, which Android 11's wireless debugging makes.
+/// A device's request for TLS, which Android 11's wireless debugging makes,
+/// and the computer's answer.
 const STLS: u32 = u32::from_le_bytes(*b"STLS");
+/// The version of STLS adb answers with, the only one there is.
+const STLS_VERSION: u32 = 0x0100_0000;
 
 /// The kinds of AUTH message: the device's challenge, the host's answer,
 /// and the host's public key, for the device's user to allow.
@@ -117,12 +121,37 @@ impl<'a> Connection<'a> {
                 (AUTH, AUTH_TOKEN, Auth::KeySent) => {
                     bail!("the device didn't allow OmniBuild's key")
                 }
-                (STLS, ..) => bail!(
-                    "the device asks for an encrypted connection, as wireless debugging does, which OmniBuild can't make yet"
-                ),
+                // Wireless debugging: the device asks for TLS, in which
+                // OmniBuild proves its identity with a certificate for its
+                // key, in place of AUTH.
+                (STLS, ..) => {
+                    send(&mut stream, STLS, STLS_VERSION, 0, &[])?;
+                    return Self::secured(Box::new(tls::connect(stream, key)?));
+                }
                 _ => bail!("the device sent {} in the handshake", name(message.command)),
             };
             send(&mut stream, AUTH, kind, 0, &payload)?;
+        }
+    }
+
+    /// The connection over TLS, once the device sends its CNXN, which it
+    /// does only if it knows OmniBuild's key.
+    fn secured(mut stream: Box<dyn Stream + 'a>) -> Result<Self> {
+        let message = receive(&mut stream).map_err(|error| {
+            // TLS 1.3's handshake is over for the computer before the
+            // device checks its certificate, so the device's refusal is an
+            // alert in place of the CNXN.
+            if alerted(&error) {
+                anyhow!(
+                    "the device doesn't know OmniBuild's key: pair with it first, with omni pair and the code it shows under Developer options > Wireless debugging > Pair device with pairing code"
+                )
+            } else {
+                error
+            }
+        })?;
+        match message.command {
+            CNXN => Self::connected(stream, &message),
+            _ => bail!("the device sent {} in the handshake", name(message.command)),
         }
     }
 
@@ -261,7 +290,8 @@ fn receive(stream: &mut dyn Read) -> Result<Message> {
     })
 }
 
-fn read(stream: &mut dyn Read, buf: &mut [u8]) -> Result<()> {
+/// Fills `buf` from the device, saying why it couldn't.
+pub(super) fn read(stream: &mut dyn Read, buf: &mut [u8]) -> Result<()> {
     stream.read_exact(buf).map_err(|error| match error.kind() {
         ErrorKind::UnexpectedEof => anyhow!("the device closed the connection"),
         // What a socket's read timeout gives.
@@ -270,6 +300,15 @@ fn read(stream: &mut dyn Read, buf: &mut [u8]) -> Result<()> {
         }
         _ => anyhow!(error).context("couldn't read from the device"),
     })
+}
+
+/// Whether reading failed on the other end's TLS alert.
+fn alerted(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<io::Error>()
+        .and_then(io::Error::get_ref)
+        .and_then(|error| error.downcast_ref::<rustls::Error>())
+        .is_some_and(|error| matches!(error, rustls::Error::AlertReceived(_)))
 }
 
 /// A command's name: its four ASCII letters.
@@ -293,13 +332,23 @@ pub mod tests {
 
     use super::{
         AUTH, AUTH_PUBLIC_KEY, AUTH_SIGNATURE, AUTH_TOKEN, CLSE, CNXN, Connection, MAX_PAYLOAD,
-        Message, OKAY, OPEN, STLS, VERSION, WRTE, name, receive, send,
+        Message, OKAY, OPEN, STLS, STLS_VERSION, VERSION, WRTE, name, receive, send,
     };
     use crate::adb::key::AdbKey;
+    use crate::adb::tls::tests::accept;
 
     const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/adb/adbkey");
     static KEY: LazyLock<AdbKey> =
         LazyLock::new(|| AdbKey::at(Path::new(FIXTURE), "omnibuild@test").unwrap().0);
+    /// Another computer's key.
+    static OTHER_KEY: LazyLock<AdbKey> = LazyLock::new(|| {
+        AdbKey::at(
+            &Path::new(FIXTURE).with_file_name("devicekey"),
+            "other@test",
+        )
+        .unwrap()
+        .0
+    });
 
     /// A banner as an emulator of Android 14 sends it, cut short.
     pub const BANNER: &[u8] =
@@ -433,6 +482,41 @@ pub mod tests {
                     // OmniBuild may have hung up already.
                     let _ = write(&mut stream, &response);
                 }
+            }
+            commands
+        })
+    }
+
+    /// A device on `listener` with wireless debugging on, which answers one
+    /// connection's CNXN by asking for TLS, in which it trusts only
+    /// `trusted`, and then answers the CNXN and what follows as `respond`
+    /// says. Returns the commands it received over TLS, by name, once either
+    /// end hangs up.
+    pub fn serve_tls(
+        listener: TcpListener,
+        trusted: &'static AdbKey,
+        mut respond: Box<dyn Respond>,
+    ) -> JoinHandle<Vec<String>> {
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let connect = receive(&mut stream).unwrap();
+            write(&mut stream, &message(STLS, STLS_VERSION, 0, b"")).unwrap();
+            let stls = receive(&mut stream).unwrap();
+            assert_eq!((stls.command, stls.arg0), (STLS, STLS_VERSION));
+            let mut tls = accept(stream, trusted);
+            // Fails, and tells the computer, if the device doesn't trust it.
+            let _ = tls.conn.complete_io(&mut tls.sock);
+            let mut commands = Vec::new();
+            let mut received = Some(connect);
+            while let Some(message) = received {
+                let Some(responses) = respond(&message) else {
+                    break;
+                };
+                for response in responses {
+                    let _ = write(&mut tls, &response);
+                }
+                received = receive(&mut tls).ok();
+                commands.extend(received.iter().map(|message| name(message.command)));
             }
             commands
         })
@@ -626,7 +710,12 @@ pub mod tests {
             refuses(|| vec![token(8)]),
             "the device sent a token of 8 bytes, and ADB's are 20"
         );
-        assert!(refuses(|| vec![message(STLS, 0, 0, b"")]).contains("encrypted connection"));
+        // A device that asks for TLS, then sends ADB's messages where TLS's
+        // should be.
+        assert!(
+            refuses(|| vec![message(STLS, STLS_VERSION, 0, b"")])
+                .starts_with("couldn't make an encrypted connection to the device: ")
+        );
         assert_eq!(
             refuses(|| vec![message(OKAY, 0, 0, b"")]),
             "the device sent OKAY in the handshake"
@@ -771,10 +860,17 @@ pub mod tests {
             connection.run("exec:false", input).err().unwrap()
         };
 
+        let stls = {
+            let mut device = Device::new(always(|| vec![message(STLS, STLS_VERSION, 0, b"")]));
+            device.writes_left = 1;
+            Connection::open(device, &KEY, &unasked).err().unwrap()
+        };
+
         let errors = [
-            // The CNXN and the signature.
+            // The CNXN, the signature and the answer to STLS.
             handshake(0),
             handshake(1),
+            stls,
             // The OPEN, the input and the OKAY for output.
             stream(1, b""),
             stream(2, b"input"),
@@ -867,5 +963,61 @@ pub mod tests {
 
         assert_eq!(format!("{error:#}"), "the device closed the connection");
         assert_eq!(device.join().unwrap(), ["CNXN", "OPEN"]);
+    }
+
+    /// Connects to a device with wireless debugging on, which trusts
+    /// `trusted` and answers as `respond` says. Returns the connection, or
+    /// why it failed, and the commands the device received over TLS.
+    fn over_tls(
+        trusted: &'static AdbKey,
+        respond: Box<dyn Respond>,
+        input: &[u8],
+    ) -> (Result<Vec<u8>, String>, Vec<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let device = serve_tls(listener, trusted, respond);
+
+        let output = Connection::open(TcpStream::connect(address).unwrap(), &KEY, &unasked)
+            .and_then(|mut connection| connection.run("exec:true -S 5", input))
+            .map_err(|error| format!("{error:#}"));
+        (output, device.join().unwrap())
+    }
+
+    #[test]
+    fn talks_to_a_device_over_tls_as_wireless_debugging_has_it() {
+        let respond = exec_device(4096, BANNER, Some(b"Success\n"));
+
+        let (output, commands) = over_tls(&KEY, Box::new(respond), b"input");
+
+        assert_eq!(output.unwrap(), b"Success\n");
+        // The device's CNXN told OmniBuild it's connected, with no AUTH.
+        assert_eq!(commands, ["OPEN", "WRTE", "OKAY"]);
+    }
+
+    #[test]
+    fn says_to_pair_with_a_device_that_doesnt_know_the_key() {
+        let respond = exec_device(4096, BANNER, Some(b"Success\n"));
+
+        let (output, commands) = over_tls(&OTHER_KEY, Box::new(respond), b"input");
+
+        assert_eq!(
+            output.unwrap_err(),
+            "the device doesn't know OmniBuild's key: pair with it first, with omni pair and the code it shows under Developer options > Wireless debugging > Pair device with pairing code"
+        );
+        assert_eq!(commands, Vec::<String>::new());
+    }
+
+    #[test]
+    fn says_why_it_couldnt_connect_over_tls() {
+        let fails = |respond: Box<dyn Respond>| over_tls(&KEY, respond, b"").0.unwrap_err();
+
+        assert_eq!(
+            fails(Box::new(always(|| vec![message(OKAY, 0, 0, b"")]))),
+            "the device sent OKAY in the handshake"
+        );
+        assert_eq!(
+            fails(Box::new(|_: &Message| None)),
+            "the device closed the connection"
+        );
     }
 }

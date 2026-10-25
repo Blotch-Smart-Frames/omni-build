@@ -23,6 +23,9 @@ name = "omni"
 path = "src/main.rs"
 
 [dependencies]
+# Pairing for wireless debugging encrypts what the computer and the device
+# tell each other with AES-128-GCM, under a key HKDF derives from SPAKE2's.
+aes-gcm = "0.10.3"
 anyhow = "1.0.104"
 base64 = "0.23.1"
 # Legacy PKCS #12 keystores, as Keychain Access exports them, encrypt keys
@@ -32,8 +35,13 @@ clap = { version = "4.6.7", features = ["derive"] }
 cms = "0.2.3"
 const-oid = { version = "0.9.6", features = ["db"] }
 crc32fast = "1.5.2"
+# The Edwards curve BoringSSL's SPAKE2 works on, which Android pairs
+# computers with for wireless debugging. The version that x25519-dalek, for
+# the key exchange in rustls-rustcrypto, uses too.
+curve25519-dalek = "4.1.3"
 des = "0.8.1"
 flate2 = "1.1.10"
+hkdf = "0.12.4"
 hmac = "0.12.1"
 # PNG, and WebP for the Android icons Android Studio's templates make, which
 # OmniBuild writes losslessly (image-webp, in pure Rust). Resizing icons is
@@ -63,6 +71,14 @@ rc2 = "0.8.1"
 # rsa, x509-cert, cms and const-oid are RustCrypto crates of one generation,
 # which share der, spki and pkcs8. rsa 0.10 is still a release candidate.
 rsa = { version = "0.9.10", features = ["getrandom", "sha2"] }
+# TLS 1.3 for wireless debugging, with a provider of RustCrypto's crates in
+# place of rustls' own (aws-lc-rs or ring, which have C and assembly), so
+# every release target builds without a C toolchain. TLS 1.3 only, as adbd.
+rustls = { version = "0.23.46", default-features = false, features = ["std"] }
+rustls-rustcrypto = { version = "0.0.2-alpha", default-features = false, features = [
+  "std",
+  "zeroize",
+] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 # SHA-1 has three uses left: in Apple's code signatures, the resource seal

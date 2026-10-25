@@ -10,6 +10,7 @@
     "fixtures/ios/OmniBuildShell.xcodeproj"
   ],
   "words": [
+    "adbd",
     "apks",
     "appclip",
     "appex",
@@ -26,6 +27,7 @@
     "pbxproj",
     "RRGGBB",
     "screencap",
+    "setprop",
     "syskeys",
     "threadtime",
     "UDID",

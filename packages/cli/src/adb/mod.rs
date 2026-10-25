@@ -6,6 +6,9 @@
 
 mod connection;
 mod key;
+mod pairing;
+mod spake2;
+mod tls;
 mod usb;
 
 use std::fmt;
@@ -289,6 +292,18 @@ impl fmt::Display for Device {
     }
 }
 
+/// Pairs this computer with a device for wireless debugging, as `adb pair`
+/// does, so that the device trusts `key` from then on: at `address`, where
+/// the device listens for pairing while it shows `code`. Returns the
+/// device's GUID, its name for itself.
+pub fn pair(address: &str, code: &str, key: &AdbKey) -> Result<String> {
+    TcpStream::connect(address)
+        .map_err(anyhow::Error::from)
+        .and_then(tcp)
+        .and_then(|stream| pairing::pair(stream, key, code))
+        .with_context(|| format!("couldn't pair with {address}"))
+}
+
 /// A TCP connection to a device, set up as adb sets one up.
 fn tcp(stream: TcpStream) -> Result<Box<dyn Stream>> {
     // Without Nagle's algorithm, as adb: each small message would
@@ -426,7 +441,8 @@ mod tests {
     use super::connection::tests::{
         Answer, BANNER, Respond, asking, exec_device, serve, service_device,
     };
-    use super::{AdbKey, Device, TIMEOUT, UsbDevices, emulator_ports, network_address};
+    use super::pairing::tests::{Stray, device};
+    use super::{AdbKey, Device, TIMEOUT, UsbDevices, emulator_ports, network_address, pair};
 
     const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/adb/adbkey");
     static KEY: LazyLock<AdbKey> =
@@ -1093,6 +1109,41 @@ mod tests {
                  3: wlan0    inet not-an-address/24\n"
             ),
             None
+        );
+    }
+
+    #[test]
+    fn pairs_with_a_device_at_an_address() {
+        let (listener, port) = listening();
+        let device = device(listener, "123456", Stray::Not);
+
+        let guid = pair(&format!("127.0.0.1:{port}"), "123456", &KEY).unwrap();
+
+        assert_eq!(guid, "adb-R5CT1234-a1B2c3");
+        assert_eq!(device.join().unwrap().unwrap(), KEY.public_key());
+    }
+
+    #[test]
+    fn says_why_it_couldnt_pair() {
+        let port = closed();
+        let wrong_code = {
+            let (listener, port) = listening();
+            device(listener, "123456", Stray::Not);
+            pair(&format!("127.0.0.1:{port}"), "000000", &KEY)
+                .err()
+                .unwrap()
+        };
+        let refused = pair(&format!("127.0.0.1:{port}"), "123456", &KEY)
+            .err()
+            .unwrap();
+
+        assert!(
+            format!("{wrong_code:#}").contains(": the code isn't the one the device shows"),
+            "{wrong_code:#}"
+        );
+        assert!(
+            format!("{refused:#}").starts_with(&format!("couldn't pair with 127.0.0.1:{port}: ")),
+            "{refused:#}"
         );
     }
 }

@@ -59,7 +59,19 @@ type Started =
 interface Device {
   serial: string;
   started: boolean;
+  /**
+   * Where omni reaches the device's wireless debugging, through a port adb
+   * forwards on this computer (`127.0.0.1:<port>`): on an emulator of
+   * Android 11 or later.
+   */
+  wireless?: string;
 }
+
+/**
+ * The property adbd starts and stops its server for wireless debugging by,
+ * which Settings sets when its user turns wireless debugging on.
+ */
+const WIRELESS_PROPERTY = 'persist.adb.tls_server.enable';
 
 /**
  * The Android SDK: where ANDROID_HOME (or the older ANDROID_SDK_ROOT) says,
@@ -423,7 +435,61 @@ const waitForDevice: Platform<Started, Device>['waitForDevice'] = async (
     },
   );
   console.log(`Device: ${serial}`);
-  return { serial, started: started.started };
+  const wireless = /^emulator-\d+$/.test(serial)
+    ? await wirelessDebugging(serial, log)
+    : undefined;
+  return { serial, started: started.started, ...(wireless && { wireless }) };
+};
+
+/**
+ * Has an emulator of Android 11 or later listen for wireless debugging, so
+ * that omni installs on it over TLS, as on a phone paired with it, and
+ * returns where omni reaches it. adbd's server is started through its own
+ * property, which takes root, with no Wi-Fi network for a user to allow,
+ * which CI's emulators may not have. An emulator's adbd checks no keys
+ * (`ro.adb.secure` is 0), so the harness doesn't pair: the Rust tests check
+ * pairing against a recording of an emulator's.
+ */
+const wirelessDebugging = async (serial: string, log: string) => {
+  const onDevice = (args: string[], options?: RunOptions) =>
+    adb(['-s', serial, ...args], { log, ...options });
+  const property = async (name: string) =>
+    (await onDevice(['shell', 'getprop', name])).stdout.trim();
+  if (Number(await property('ro.build.version.sdk')) < 30) {
+    return undefined;
+  }
+  // Each line of adbd's log that `pattern` matches, until it matches one.
+  const adbdLogs = (pattern: RegExp, message: string) =>
+    poll(
+      async () =>
+        pattern.exec(
+          (await onDevice(['logcat', '-d', '-s', 'adbd'], { log: undefined }))
+            .stdout,
+        )?.[1],
+      { timeoutMs: 30_000, message },
+    );
+  await onDevice(['root']);
+  await onDevice(['wait-for-device']);
+  // From an earlier run: off first, which adbd has to see, so the server
+  // starts again on a port of its own, which its log says.
+  if ((await property(WIRELESS_PROPERTY)) === '1') {
+    await onDevice(['logcat', '-c']);
+    await onDevice(['shell', 'setprop', WIRELESS_PROPERTY, '0']);
+    await adbdLogs(
+      /adb wifi (stopped)/,
+      `${serial} didn't stop wireless debugging within 30 seconds.`,
+    );
+  }
+  await onDevice(['logcat', '-c']);
+  await onDevice(['shell', 'setprop', WIRELESS_PROPERTY, '1']);
+  const port = await adbdLogs(
+    /adb wifi started on port (\d+)/,
+    `${serial} didn't start wireless debugging within 30 seconds.`,
+  );
+  const forwarded = await onDevice(['forward', 'tcp:0', `tcp:${port}`]);
+  const address = `127.0.0.1:${forwarded.stdout.trim()}`;
+  console.log(`Wireless debugging: ${address}`);
+  return address;
 };
 
 /**
@@ -544,12 +610,14 @@ const runApp: Platform<Started, Device>['runApp'] = async ({
   // A fresh install, so the device can't run an earlier build, and so a
   // shell signed with another key replaces one already installed.
   await onDevice(['uninstall', appId], { allowFailure: true });
-  if (reachable(device.serial)) {
+  // Over wireless debugging, where the device has it.
+  const target = device.wireless ?? device.serial;
+  if (reachable(target)) {
     // As a user without the Android SDK installs it: with omni, which
     // gets no PATH and no toolchain variables, as in the repackage stage.
     await omniBuild(
-      ['install', app, '--device', device.serial],
-      { event: 'installed', device: device.serial },
+      ['install', app, '--device', target],
+      { event: 'installed', device: target },
       { log, env: toolchainFree() },
     );
   } else {
@@ -598,9 +666,17 @@ export const android: Platform<Started, Device> = {
   startDevice,
   waitForDevice,
   runApp,
-  // Only an emulator the harness booted; a device that was already there
-  // stays as it was.
+  // Wireless debugging off, as it was, and only an emulator the harness
+  // booted shut down; a device that was already there stays.
   stopDevice: async (device, { log }) => {
+    if ('wireless' in device && device.wireless) {
+      const onDevice = (args: string[]) =>
+        adb(['-s', device.serial, ...args], { log, allowFailure: true });
+      const [, port] = device.wireless.split(':');
+      await onDevice(['forward', '--remove', `tcp:${port}`]);
+      await onDevice(['shell', 'setprop', WIRELESS_PROPERTY, '0']);
+      await onDevice(['unroot']);
+    }
     if (device.started) {
       await adb(['-s', device.serial, 'emu', 'kill'], {
         log,

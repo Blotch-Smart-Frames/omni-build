@@ -571,9 +571,11 @@ describe('waitForDevice', () => {
         artifacts,
       ),
     ).toEqual({ serial: 'emulator-5584', started: true });
-    expect(commands()).toEqual(
-      Array(3).fill('adb -s emulator-5584 shell getprop sys.boot_completed'),
-    );
+    expect(commands()).toEqual([
+      ...Array(3).fill('adb -s emulator-5584 shell getprop sys.boot_completed'),
+      // An Android without wireless debugging, which getprop says is 1.
+      'adb -s emulator-5584 shell getprop ro.build.version.sdk',
+    ]);
     // Polled without a log, which it would bury.
     expect(vi.mocked(run).mock.calls[0][2]).toEqual({ allowFailure: true });
     expect(console.log).toHaveBeenCalledWith('Device: emulator-5584');
@@ -619,6 +621,82 @@ describe('waitForDevice', () => {
     ).rejects.toThrow(
       'No Android device is connected. Boot an emulator, or pass --avd <name> to have the tests boot one (`emulator -list-avds` lists them).',
     );
+  });
+
+  describe('on an emulator of Android 11 or later', () => {
+    /**
+     * An emulator of Android 14 that has booted, whose wireless debugging
+     * is on if `enabled` is 1, and whose adbd logs each of `logs` in turn.
+     */
+    const wirelessEmulator = (enabled: string, ...logs: string[]) => {
+      respond = (_, args) => {
+        if (args.includes('sys.boot_completed')) {
+          return { stdout: '1\n' };
+        }
+        if (args.includes('ro.build.version.sdk')) {
+          return { stdout: '34\n' };
+        }
+        if (args.includes('getprop')) {
+          return { stdout: `${enabled}\n` };
+        }
+        if (args.includes('adbd')) {
+          return { stdout: logs.shift() ?? '' };
+        }
+        // The port adb forwards from.
+        return args[2] === 'forward' ? { stdout: '41235\n' } : undefined;
+      };
+    };
+    const adb = 'adb -s emulator-5584';
+    const started = { started: true, serial: 'emulator-5584' } as const;
+
+    it('has it listen for wireless debugging, as root, and forwards a port to it', async () => {
+      wirelessEmulator(
+        '0',
+        '',
+        '10-25 15:01:08.056  5534  5536 I adbd    : adb wifi started on port 35387\n',
+      );
+
+      expect(await android.waitForDevice(started, artifacts)).toEqual({
+        serial: 'emulator-5584',
+        started: true,
+        wireless: '127.0.0.1:41235',
+      });
+      expect(commands().slice(2)).toEqual([
+        `${adb} root`,
+        `${adb} wait-for-device`,
+        `${adb} shell getprop persist.adb.tls_server.enable`,
+        `${adb} logcat -c`,
+        `${adb} shell setprop persist.adb.tls_server.enable 1`,
+        `${adb} logcat -d -s adbd`,
+        `${adb} logcat -d -s adbd`,
+        `${adb} forward tcp:0 tcp:35387`,
+      ]);
+      expect(console.log).toHaveBeenCalledWith(
+        'Wireless debugging: 127.0.0.1:41235',
+      );
+    });
+
+    it('turns it off first when an earlier run left it on, so it starts on a port its log says', async () => {
+      wirelessEmulator(
+        '1',
+        'I adbd    : adb wifi stopped\n',
+        'I adbd    : adb wifi started on port 40975\n',
+      );
+
+      expect((await android.waitForDevice(started, artifacts)).wireless).toBe(
+        '127.0.0.1:41235',
+      );
+      expect(commands().slice(4)).toEqual([
+        `${adb} shell getprop persist.adb.tls_server.enable`,
+        `${adb} logcat -c`,
+        `${adb} shell setprop persist.adb.tls_server.enable 0`,
+        `${adb} logcat -d -s adbd`,
+        `${adb} logcat -c`,
+        `${adb} shell setprop persist.adb.tls_server.enable 1`,
+        `${adb} logcat -d -s adbd`,
+        `${adb} forward tcp:0 tcp:40975`,
+      ]);
+    });
   });
 
   it('asks which device when several are connected', async () => {
@@ -709,6 +787,21 @@ describe('runApp', () => {
 
     expect(commands()[1]).toBe(
       'omni install app.apk --device 192.168.1.20:5555 --json',
+    );
+  });
+
+  it('installs over wireless debugging where the device has it', async () => {
+    logging(['{}\n']);
+
+    await android.runApp({
+      ...options,
+      device: { ...device, wireless: '127.0.0.1:41235' },
+    });
+
+    expect(omniBuild).toHaveBeenCalledWith(
+      ['install', 'app.apk', '--device', '127.0.0.1:41235'],
+      { event: 'installed', device: '127.0.0.1:41235' },
+      { log: 'commands.log', env: { HOME: '/home/me' } },
     );
   });
 
@@ -852,6 +945,23 @@ describe('stopDevice', () => {
     );
 
     expect(commands()).toEqual(['adb -s emulator-5584 emu kill']);
+  });
+
+  it('turns wireless debugging off first, as it was', async () => {
+    await android.stopDevice(
+      { serial: 'emulator-5584', started: false, wireless: '127.0.0.1:41235' },
+      artifacts,
+    );
+
+    expect(commands()).toEqual([
+      'adb -s emulator-5584 forward --remove tcp:41235',
+      'adb -s emulator-5584 shell setprop persist.adb.tls_server.enable 0',
+      'adb -s emulator-5584 unroot',
+    ]);
+    // An emulator may have gone already.
+    expect(
+      vi.mocked(run).mock.calls.every(([, , options]) => options?.allowFailure),
+    ).toBe(true);
   });
 
   it('leaves a device that was already there as it was', async () => {

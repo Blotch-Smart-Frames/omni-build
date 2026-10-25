@@ -50,6 +50,7 @@ enum Command {
     Repackage(Repackage),
     Install(Install),
     Tcpip(Tcpip),
+    Pair(Pair),
     Key(Key),
 }
 
@@ -98,8 +99,9 @@ struct Install {
     /// The device to install on: a phone plugged in by USB, by its serial
     /// number, as `adb devices` shows it, an emulator, by its name
     /// (`emulator-5554`), or a device on the network, by its address and
-    /// port (`192.168.1.20:5555`). Without it, the one phone plugged in or
-    /// emulator running on this computer.
+    /// port (`192.168.1.20:5555`): with wireless debugging, the IP address
+    /// and port it shows there, once paired with `omni pair`. Without it,
+    /// the one phone plugged in or emulator running on this computer.
     #[arg(long, short)]
     device: Option<String>,
 }
@@ -118,6 +120,24 @@ struct Tcpip {
     /// The port it listens on.
     #[arg(long, short, default_value_t = 5555, value_parser = clap::value_parser!(u16).range(1..))]
     port: u16,
+}
+
+/// Pair this computer with an Android device for wireless debugging, as
+/// `adb pair` does, so `install` reaches it over the network, encrypted,
+/// with no cable.
+///
+/// On the device, under Developer options > Wireless debugging, tap "Pair
+/// device with pairing code": it shows the address and port to pair with,
+/// and the code. The device and this computer need to be on the same
+/// network.
+#[derive(Debug, Args)]
+struct Pair {
+    /// Where the device listens for pairing, as it shows it with the code
+    /// (`192.168.1.20:37099`): not the address and port Wireless debugging
+    /// shows, which `install` connects to.
+    address: String,
+    /// The code the device shows, six digits.
+    code: String,
 }
 
 /// Manage signing keys.
@@ -195,6 +215,7 @@ fn run(command: Command, reporter: &Reporter) -> Result<()> {
         Command::Repackage(args) => repackage(&args, reporter),
         Command::Install(args) => install(&args, reporter),
         Command::Tcpip(args) => tcpip(&args, reporter),
+        Command::Pair(args) => pair(&args, reporter),
         Command::Key(Key { command }) => match command {
             KeyCommand::Create(args) => create_key(&args, reporter),
             KeyCommand::Request(args) => request_key(&args, reporter),
@@ -311,6 +332,16 @@ fn tcpip(args: &Tcpip, reporter: &Reporter) -> Result<()> {
         device: device.serial().to_owned(),
         model: device.model().map(str::to_owned),
         address: address.to_string(),
+    });
+    Ok(())
+}
+
+fn pair(args: &Pair, reporter: &Reporter) -> Result<()> {
+    let key = adb_key(reporter)?;
+    let guid = adb::pair(&args.address, &args.code, &key)?;
+    reporter.report(&Event::Paired {
+        address: args.address.clone(),
+        guid,
     });
     Ok(())
 }
