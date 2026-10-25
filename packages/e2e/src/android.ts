@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import {
   closeSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -17,6 +16,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import type { Artifacts, Platform } from './run.ts';
 import { type RunOptions, type RunResult, poll, run } from './process.ts';
 import { OPEN_URL, omniBuild, toolchainFree } from './repackage.ts';
+import { buildAndroid } from '../../shells/src/android.ts';
 import { GRADLE_PROJECTS, SHELLS, type ShellName } from './shell.ts';
 
 const BUILD_DIR = fileURLToPath(new URL('../build/', import.meta.url));
@@ -307,32 +307,22 @@ const verify: Platform['verify'] = async ({ app, artifactsDir, log }) => {
 };
 
 /**
- * Builds each shell with Gradle as a release APK and app bundle, copies them
- * into `outDir` under the shell's name, and returns the copies' paths.
+ * Builds each shell's release APK and app bundle with Gradle, as the Shell
+ * workflow does in CI (packages/shells), and returns their paths.
  */
 const build: Platform['build'] = async ({ outDir, log }) => {
-  mkdirSync(outDir, { recursive: true });
   const shells: string[] = [];
   for (const shell of SHELLS) {
-    const project = GRADLE_PROJECTS[shell];
-    await run(
-      path.join(project, 'gradlew'),
-      ['assembleRelease', 'bundleRelease', '--console=plain'],
-      {
-        cwd: project,
+    shells.push(
+      ...(await buildAndroid({
+        project: GRADLE_PROJECTS[shell],
+        name: shell,
+        out: outDir,
+        configurations: ['release'],
         env: { ...process.env, ANDROID_HOME: androidSdk() },
         log,
-      },
+      })),
     );
-    const outputs = path.join(project, 'app/build/outputs');
-    for (const [built, extension] of [
-      [path.join(outputs, 'apk/release/app-release.apk'), '.apk'],
-      [path.join(outputs, 'bundle/release/app-release.aab'), '.aab'],
-    ]) {
-      const copy = path.join(outDir, `${shell}${extension}`);
-      copyFileSync(built, copy);
-      shells.push(copy);
-    }
   }
   return shells;
 };

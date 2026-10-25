@@ -59,7 +59,7 @@ describe('findings', () => {
     expect(issueBody(ios)).toMatchInlineSnapshot(`
       "<!-- platform-watch:ios-xcode-27 -->
 
-      The iOS shells are built with Xcode 26.6, set by \`DEVELOPER_DIR\` in \`.github/workflows/ci.yml\`, and:
+      The iOS shells are built with Xcode 26.6, set by \`developer-dir\` in \`.github/workflows/ci.yml\`, and:
 
       - **Released:** Xcode 27.1 is out ([Apple's developer releases feed](https://developer.apple.com/news/releases/rss/releases.rss)). Apple usually requires a new Xcode for App Store uploads the April after it ships. <!-- platform-watch-reason:released -->
 
@@ -67,7 +67,7 @@ describe('findings', () => {
 
       ## What to do
 
-      1. Point \`DEVELOPER_DIR\` in \`.github/workflows/ci.yml\` at Xcode 27, once GitHub's macOS runner image has it ([actions/runner-images](https://github.com/actions/runner-images)).
+      1. Point \`developer-dir\` in \`.github/workflows/ci.yml\` at Xcode 27, once GitHub's macOS runner image has it ([actions/runner-images](https://github.com/actions/runner-images)).
       2. Fix what the new SDK breaks in the Swift shells, and update other mentions of Xcode 26.6 in the repository.
       3. CI builds the shells with it and runs them on the iOS Simulator: this is done when CI passes.
 

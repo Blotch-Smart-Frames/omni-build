@@ -373,13 +373,17 @@ jobs:
 
   # End to end, in the three stages OmniBuild is used in (see packages/e2e):
   #
-  # 1. e2e-shell-*: the real Swift and Kotlin app shells, the fixture in
+  # 1. shell: the real Swift and Kotlin app shells, the fixture in
   #    packages/e2e/fixtures and OmniBuild's WebView shell in packages/shells,
-  #    built with Xcode and Gradle. The only stage with a native toolchain:
-  #    OmniBuild's own CI makes the shells, never its users.
-  # 2. e2e-repackage: each shell through the omni binary from the build
-  #    job, on Linux, Windows and macOS, with no PATH and none of the
-  #    variables that lead to a JDK, the Android SDK or Xcode.
+  #    built with Xcode and Gradle by the Shell workflow, as frameworks build
+  #    theirs, which checks the omni the build job made repackages each
+  #    variant, debug and release. The only stage with a native toolchain:
+  #    OmniBuild's own CI makes the shells, never its users. A release
+  #    publishes the WebView shell's variants as they are here.
+  # 2. e2e-repackage: each shell's release variants through the omni
+  #    binary from the build job, on Linux, Windows and macOS, with no PATH
+  #    and none of the variables that lead to a JDK, the Android SDK or
+  #    Xcode.
   # 3. e2e-ios, e2e-android: every repackaged app installed and launched on
   #    the iOS Simulator and an Android emulator, each checked against the
   #    values it reports. omni installs each Android app, an app
@@ -389,72 +393,37 @@ jobs:
   #
   # The harness uses only Node's built-in modules, and Node runs its TypeScript
   # by stripping the types, so these jobs skip `npm ci`.
-  e2e-shell-ios:
-    runs-on: macos-latest
-    timeout-minutes: 30
-    env:
+  shell:
+    name: shell (${{ matrix.name }})
+    # Its check repackages with the omni the build job made for Linux.
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: OmniBuildShell
+            xcode-project: packages/e2e/fixtures/ios/OmniBuildShell.xcodeproj
+            gradle-project: packages/e2e/fixtures/android
+          - name: WebViewShell
+            xcode-project: packages/shells/webview/ios/WebViewShell.xcodeproj
+            gradle-project: packages/shells/webview/android
+    uses: ./.github/workflows/shell.yml
+    with:
+      name: ${{ matrix.name }}
+      xcode-project: ${{ matrix.xcode-project }}
+      gradle-project: ${{ matrix.gradle-project }}
       # The Xcode the shells are built with, one of those on the runner image
       # (github.com/actions/runner-images). Pinned rather than the image's
       # default, so a new Xcode, and with it a new SDK in every shell, is a
       # change of its own. The platform watch reads this line to tell when
       # Apple requires or releases a newer one.
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          # Nothing to cache without `npm ci`. setup-node would otherwise
-          # restore npm's cache because of package.json's packageManager field.
-          package-manager-cache: false
-      - run: node packages/e2e/src/cli.ts build --platform ios --out e2e/shells
-      - uses: actions/upload-artifact@v7
-        with:
-          name: e2e-shell-ios
-          path: e2e/shells
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@v7
-        if: failure()
-        with:
-          name: e2e-logs-shell-ios
-          path: packages/e2e/artifacts
-          retention-days: 7
-
-  e2e-shell-android:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-      # The JDK the shells are developed with; AGP 9 needs 17 or later.
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: 21
-      # Caches Gradle's downloads (AGP and its dependencies), saving only on
-      # master, and checks that the committed gradle-wrapper.jar is Gradle's.
-      - uses: gradle/actions/setup-gradle@v6
-      - run: node packages/e2e/src/cli.ts build --platform android --out e2e/shells
-      - uses: actions/upload-artifact@v7
-        with:
-          name: e2e-shell-android
-          path: e2e/shells
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@v7
-        if: failure()
-        with:
-          name: e2e-logs-shell-android
-          path: packages/e2e/artifacts
-          retention-days: 7
+      developer-dir: /Applications/Xcode_26.6.app/Contents/Developer
+      omni-artifact: omni-build-x86_64-unknown-linux-musl
+      retention-days: 7
 
   e2e-repackage:
     name: e2e-repackage (${{ matrix.os }})
-    needs: [build, e2e-shell-ios, e2e-shell-android]
+    needs: [build, shell]
     strategy:
       fail-fast: false
       matrix:
@@ -492,11 +461,14 @@ jobs:
         run: chmod +x "$OMNI_BUILD_BINARY"
       - uses: actions/download-artifact@v8
         with:
-          pattern: e2e-shell-*
+          name: shell-OmniBuildShell
           path: e2e/shells
-          merge-multiple: true
-      - run: node packages/e2e/src/cli.ts repackage --platform ios --shell e2e/shells/OmniBuildShell.zip --shell e2e/shells/OmniBuildShell.ipa --shell e2e/shells/WebViewShell.zip --shell e2e/shells/WebViewShell.ipa --out e2e/repackaged
-      - run: node packages/e2e/src/cli.ts repackage --platform android --shell e2e/shells/OmniBuildShell.apk --shell e2e/shells/OmniBuildShell.aab --shell e2e/shells/WebViewShell.apk --shell e2e/shells/WebViewShell.aab --out e2e/repackaged
+      - uses: actions/download-artifact@v8
+        with:
+          name: shell-WebViewShell
+          path: e2e/shells
+      - run: node packages/e2e/src/cli.ts repackage --platform ios --shell e2e/shells/OmniBuildShell-release-simulator.zip --shell e2e/shells/OmniBuildShell-release.ipa --shell e2e/shells/WebViewShell-release-simulator.zip --shell e2e/shells/WebViewShell-release.ipa --out e2e/repackaged
+      - run: node packages/e2e/src/cli.ts repackage --platform android --shell e2e/shells/OmniBuildShell-release.apk --shell e2e/shells/OmniBuildShell-release.aab --shell e2e/shells/WebViewShell-release.apk --shell e2e/shells/WebViewShell-release.aab --out e2e/repackaged
       - uses: actions/upload-artifact@v7
         with:
           name: e2e-repackaged-${{ matrix.os }}
@@ -630,8 +602,7 @@ jobs:
       - install
       - homebrew
       - crate
-      - e2e-shell-ios
-      - e2e-shell-android
+      - shell
       - e2e-repackage
       - e2e-ios
       - e2e-android

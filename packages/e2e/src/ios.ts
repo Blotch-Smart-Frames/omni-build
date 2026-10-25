@@ -1,7 +1,6 @@
 import {
   copyFileSync,
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -15,6 +14,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { Artifacts, Platform } from './run.ts';
 import { type RunOptions, poll, run } from './process.ts';
+import { buildIos } from '../../shells/src/ios.ts';
 import { SHELLS, type ShellName, XCODE_PROJECTS } from './shell.ts';
 
 /** The simulator the tests create and reuse, so a developer's own stay untouched. */
@@ -46,87 +46,23 @@ interface SimctlList {
 }
 
 /**
- * Where each SDK's builds run: anywhere, on a simulator or a device. The
- * destination alone picks the SDK, so that each target builds for its own
- * platform: the watch app for watchOS, where `-sdk iphoneos` would build it
- * for iOS.
- */
-const DESTINATIONS = {
-  iphonesimulator: 'generic/platform=iOS Simulator',
-  iphoneos: 'generic/platform=iOS',
-};
-
-/**
- * Builds a shell with Xcode for one SDK, and returns the .app's path. Each
- * shell's scheme, and its .app, are named after it.
- */
-const xcodebuild = async (
-  shell: ShellName,
-  sdk: keyof typeof DESTINATIONS,
-  { buildDir, log }: { buildDir: string; log: string },
-  settings: string[] = [],
-) => {
-  const derivedData = path.join(buildDir, 'ios');
-  await run(
-    'xcodebuild',
-    [
-      'build',
-      '-project',
-      XCODE_PROJECTS[shell],
-      '-scheme',
-      shell,
-      '-configuration',
-      'Release',
-      '-destination',
-      DESTINATIONS[sdk],
-      '-derivedDataPath',
-      derivedData,
-      ...settings,
-    ],
-    { log },
-  );
-  return path.join(
-    derivedData,
-    `Build/Products/Release-${sdk}`,
-    `${shell}.app`,
-  );
-};
-
-/**
- * Builds each shell with Xcode for the simulator and for devices, zips each
- * into `outDir`, and returns their paths: the simulator's a zipped .app,
- * and the devices' an .ipa, a zip of a Payload folder with the .app.
+ * Builds each shell's release variants with Xcode, as the Shell workflow
+ * does in CI (packages/shells): an app for the simulator, zipped, and one for
+ * devices, an .ipa, unsigned. Returns their paths.
  */
 const build: Platform['build'] = async ({ buildDir, outDir, log }) => {
-  mkdirSync(outDir, { recursive: true });
   const shells: string[] = [];
   for (const shell of SHELLS) {
-    const simulator = await xcodebuild(shell, 'iphonesimulator', {
-      buildDir,
-      log,
-    });
-    // Unsigned, as CI has no certificate Apple issued, but with room for a
-    // signature, which the linker reserves when asked: omni replaces
-    // a signature, and never adds one.
-    const device = await xcodebuild(shell, 'iphoneos', { buildDir, log }, [
-      'CODE_SIGNING_ALLOWED=NO',
-      'OTHER_LDFLAGS=-Wl,-adhoc_codesign',
-    ]);
-
-    // A .app is a folder, and its executable's mode wouldn't survive a
-    // workflow artifact or a Windows file system on the way to the
-    // repackage stage. So the shells travel as zips, which ditto writes
-    // with every file's mode.
-    const zip = path.join(outDir, `${shell}.zip`);
-    const ipa = path.join(outDir, `${shell}.ipa`);
-    rmSync(zip, { force: true });
-    rmSync(ipa, { force: true });
-    await run('ditto', ['-c', '-k', '--keepParent', simulator, zip], { log });
-    const payload = path.join(buildDir, 'ios-ipa', 'Payload');
-    rmSync(payload, { recursive: true, force: true });
-    await run('ditto', [device, path.join(payload, `${shell}.app`)], { log });
-    await run('ditto', ['-c', '-k', '--keepParent', payload, ipa], { log });
-    shells.push(zip, ipa);
+    shells.push(
+      ...(await buildIos({
+        project: XCODE_PROJECTS[shell],
+        name: shell,
+        out: outDir,
+        work: path.join(buildDir, 'ios', shell),
+        configurations: ['release'],
+        log,
+      })),
+    );
   }
   return shells;
 };

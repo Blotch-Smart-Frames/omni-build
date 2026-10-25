@@ -6,8 +6,9 @@ import { fileURLToPath } from 'node:url';
  * project: the fixture (`fixtures/`), which reports every value OmniBuild
  * rewrites, and OmniBuild's WebView shell (`packages/shells/webview`), which
  * runs a web app from its payload. The name is each one's files' (the build
- * stage writes `WebViewShell.apk`, the repackage stage
- * `WebViewShell-linux.apk`) and, on iOS, its scheme, .app and process.
+ * stage writes `WebViewShell-release.apk`, the repackage stage
+ * `WebViewShell-release-linux.apk`) and, on iOS, its scheme, .app and
+ * process.
  */
 export const SHELLS = ['OmniBuildShell', 'WebViewShell'] as const;
 export type ShellName = (typeof SHELLS)[number];

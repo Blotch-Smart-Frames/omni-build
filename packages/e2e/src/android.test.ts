@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import { type Hash, createHash } from 'node:crypto';
 import {
   closeSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -14,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { buildAndroid } from '../../shells/src/android.ts';
 import { android, appLinkHosts } from './android.ts';
 import { type RunResult, run } from './process.ts';
 import { omniBuild } from './repackage.ts';
@@ -22,7 +22,6 @@ import { omniBuild } from './repackage.ts';
 // the JDK, Gradle and the emulator are all stand-ins.
 vi.mock('node:fs', () => ({
   closeSync: vi.fn(),
-  copyFileSync: vi.fn(),
   existsSync: vi.fn(),
   mkdirSync: vi.fn(),
   openSync: vi.fn(() => 7),
@@ -37,6 +36,13 @@ vi.mock('node:timers/promises', () => ({ setTimeout: vi.fn(async () => {}) }));
 vi.mock('./process.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./process.ts')>()),
   run: vi.fn(),
+}));
+// Gradle runs in packages/shells, whose tests check how.
+vi.mock('../../shells/src/android.ts', () => ({
+  buildAndroid: vi.fn(async ({ name }: { name: string }) => [
+    `out/${name}-release.apk`,
+    `out/${name}-release.aab`,
+  ]),
 }));
 // omniBuild() runs the binary through the run() above, as the real one
 // does, but leaves checking its result to repackage.test.ts.
@@ -117,49 +123,32 @@ afterEach(() => {
 });
 
 describe('build', () => {
-  it("builds each shell's release APK and app bundle with Gradle, and copies them out under its name", async () => {
+  it("builds each shell's release APK and app bundle with Gradle, with the Android SDK", async () => {
     const shells = await android.build({
       ...artifacts,
       buildDir: 'build',
       outDir: 'out',
     });
 
-    const gradle = (project: string) => [
-      path.join(project, 'gradlew'),
-      ['assembleRelease', 'bundleRelease', '--console=plain'],
+    const building = (project: string, name: string) => [
       {
-        cwd: project,
+        project,
+        name,
+        out: 'out',
+        configurations: ['release'],
         env: expect.objectContaining({ ANDROID_HOME: '/sdk' }),
         log: 'commands.log',
       },
     ];
-    expect(vi.mocked(run).mock.calls).toEqual([
-      gradle(FIXTURE),
-      gradle(WEBVIEW_SHELL),
-    ]);
-    expect(mkdirSync).toHaveBeenCalledWith('out', { recursive: true });
-    const copies = (project: string, shell: string) => {
-      const outputs = path.join(project, 'app/build/outputs');
-      return [
-        [
-          path.join(outputs, 'apk/release/app-release.apk'),
-          path.join('out', `${shell}.apk`),
-        ],
-        [
-          path.join(outputs, 'bundle/release/app-release.aab'),
-          path.join('out', `${shell}.aab`),
-        ],
-      ];
-    };
-    expect(vi.mocked(copyFileSync).mock.calls).toEqual([
-      ...copies(FIXTURE, 'OmniBuildShell'),
-      ...copies(WEBVIEW_SHELL, 'WebViewShell'),
+    expect(vi.mocked(buildAndroid).mock.calls).toEqual([
+      building(FIXTURE, 'OmniBuildShell'),
+      building(WEBVIEW_SHELL, 'WebViewShell'),
     ]);
     expect(shells).toEqual([
-      path.join('out', 'OmniBuildShell.apk'),
-      path.join('out', 'OmniBuildShell.aab'),
-      path.join('out', 'WebViewShell.apk'),
-      path.join('out', 'WebViewShell.aab'),
+      'out/OmniBuildShell-release.apk',
+      'out/OmniBuildShell-release.aab',
+      'out/WebViewShell-release.apk',
+      'out/WebViewShell-release.aab',
     ]);
   });
 });
@@ -167,7 +156,7 @@ describe('build', () => {
 describe('the Android SDK', () => {
   const sdkGradleGets = async () => {
     await android.build({ ...artifacts, buildDir: 'build', outDir: 'out' });
-    return vi.mocked(run).mock.calls[0][2].env?.ANDROID_HOME;
+    return vi.mocked(buildAndroid).mock.calls[0][0].env?.ANDROID_HOME;
   };
 
   it('is where ANDROID_SDK_ROOT says, without ANDROID_HOME', async () => {

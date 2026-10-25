@@ -12,6 +12,7 @@ const sidebars: SidebarsConfig = {
     'webview-shell',
     'installing',
     'build-tools',
+    'shells',
     'roadmap',
     'contributing',
   ],

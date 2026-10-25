@@ -208,16 +208,17 @@ describe('parseAndroidSdk', () => {
 });
 
 describe('parseXcodePin', () => {
-  it('reads the Xcode DEVELOPER_DIR selects', () => {
+  it('reads the Xcode the Shell workflow gets', () => {
     const workflow = `
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer`;
+    uses: ./.github/workflows/shell.yml
+    with:
+      developer-dir: /Applications/Xcode_26.6.app/Contents/Developer`;
 
     expect(parseXcodePin(workflow)).toEqual({ major: 26, version: '26.6' });
   });
 
   it('accepts the same Xcode in several jobs', () => {
-    const line = 'DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer';
+    const line = 'developer-dir: /Applications/Xcode_27.app/Contents/Developer';
 
     expect(parseXcodePin(`${line}\n${line}`)).toEqual({
       major: 27,
@@ -227,14 +228,14 @@ describe('parseXcodePin', () => {
 
   it('throws when there is no pin', () => {
     expect(() => parseXcodePin('runs-on: macos-latest')).toThrow(
-      'expected one "DEVELOPER_DIR: /Applications/Xcode_N.app/..." line, found 0 versions',
+      'expected one "developer-dir: /Applications/Xcode_N.app/..." line, found 0 versions',
     );
   });
 
   it('throws when jobs pin different versions', () => {
     const workflow = `
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer`;
+      developer-dir: /Applications/Xcode_26.6.app/Contents/Developer
+      developer-dir: /Applications/Xcode_27.app/Contents/Developer`;
 
     expect(() => parseXcodePin(workflow)).toThrow('found 2 versions');
   });

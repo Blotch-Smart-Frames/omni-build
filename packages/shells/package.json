@@ -2,9 +2,20 @@
   "name": "@blotch/omni-build-shells",
   "version": "0.0.1",
   "private": true,
-  "description": "The app shells OmniBuild ships: Swift and Kotlin projects, built with Xcode and Gradle in CI, which omni repackages into apps",
+  "description": "The app shells OmniBuild ships, Swift and Kotlin projects, and the tool that builds any shell's variants with Xcode and Gradle and checks omni repackages each one",
   "license": "MIT",
+  "type": "module",
   "scripts": {
-    "cspell": "cspell --no-progress ."
+    "shells": "node src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "cspell": "cspell --no-progress .",
+    "typecheck": "tsc"
+  },
+  "engines": {
+    "node": ">=22.18"
   }
 }

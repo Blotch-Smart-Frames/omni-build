@@ -5,9 +5,9 @@ description: OmniBuild's own app shell, which turns a web app, a folder with an 
 
 # The WebView shell
 
-:::warning[Phase 1]
+:::warning[From the release after 0.0.1]
 
-The shell is built and tested in OmniBuild's CI, and will be published with each release once the shell release pipeline lands. Until then, build it from the [repository](https://github.com/Blotch-Smart-Frames/omni-build/tree/master/packages/shells/webview) with Xcode and Gradle, as below.
+Each GitHub release of OmniBuild has the shell from the release after 0.0.1. Until then, build it from the [repository](https://github.com/Blotch-Smart-Frames/omni-build/tree/master/packages/shells/webview), as below.
 
 :::
 
@@ -25,14 +25,33 @@ The WebView shell is an app shell OmniBuild ships: a native app that shows a web
 ```
 
 ```sh
-omni repackage WebViewShell.apk --config app.json --out tides.apk
-omni repackage WebViewShell.aab --config app.json --out tides.aab --signing-key upload.p12
-omni repackage WebViewShell.zip --config app.json --out tides.zip   # for the Simulator
-omni repackage WebViewShell.ipa --config app.json --out tides.ipa \
+omni repackage WebViewShell-release.apk --config app.json --out tides.apk
+omni repackage WebViewShell-release.aab --config app.json --out tides.aab --signing-key upload.p12
+omni repackage WebViewShell-release-simulator.zip --config app.json --out tides.zip
+omni repackage WebViewShell-release.ipa --config app.json --out tides.ipa \
   --signing-key key.pem --profile tides.mobileprovision
 ```
 
 Everything in [Repackaging an app](./repackaging.md) applies: the app's ID, name, version, icon, permissions, links, orientation and the rest. Nothing about your app is in the shell's Swift or Kotlin code.
+
+## Getting it
+
+Each [GitHub release](https://github.com/Blotch-Smart-Frames/omni-build/releases) of OmniBuild has the shell, debug and release, as the [Shell workflow](./shells.md) built it and CI ran it:
+
+| File                                                                     | For                                                     |
+| ------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `WebViewShell-release.apk`, `WebViewShell-debug.apk`                     | Android phones and emulators                            |
+| `WebViewShell-release.aab`, `WebViewShell-debug.aab`                     | Google Play, which takes the release one                |
+| `WebViewShell-release-simulator.zip`, `WebViewShell-debug-simulator.zip` | The iOS Simulator                                       |
+| `WebViewShell-release.ipa`, `WebViewShell-debug.ipa`                     | iPhones, and the App Store, which takes the release one |
+| `WebViewShell.json`                                                      | Each file's SHA-256                                     |
+
+Take the shell from the release your omni is, which `omni --version` says, as CI checked that omni repackages it. Each file has an attestation of where it came from:
+
+```sh
+gh release download v1.2.3 --repo Blotch-Smart-Frames/omni-build --pattern 'WebViewShell-release.*'
+gh attestation verify WebViewShell-release.apk --repo Blotch-Smart-Frames/omni-build
+```
 
 ## The payload
 
@@ -71,7 +90,7 @@ The messages are public in the log, as they are to anyone with a web inspector, 
 
 ## Debug and release builds
 
-A debug build of the shell can be inspected: Chrome's `chrome://inspect` for a debuggable Android build, and Safari's Web Inspector for an iOS build from Xcode's Debug configuration. A release build can't, which is what goes to the stores.
+A debug build of the shell (`WebViewShell-debug.*`) can be inspected: with Chrome's `chrome://inspect` on Android, and Safari's Web Inspector on iOS. A release build can't, which is what goes to the stores.
 
 ## Layout
 
@@ -86,16 +105,11 @@ Not yet: on Android, the page's requests for the camera, microphone and location
 
 ## Building it
 
-The shell is two native projects, which OmniBuild's CI builds as its users never have to:
+The shell is two native projects, which OmniBuild's CI builds as its users never have to. To build it yourself, with Xcode and Gradle, as the Shell workflow does:
 
 ```sh
-cd packages/shells/webview/android
-./gradlew assembleRelease bundleRelease   # app/build/outputs/apk/release/app-release.apk and bundle/release/app-release.aab
-
-cd packages/shells/webview/ios
-xcodebuild build -scheme WebViewShell -configuration Release -destination 'generic/platform=iOS Simulator'
-xcodebuild build -scheme WebViewShell -configuration Release -destination 'generic/platform=iOS' \
-  CODE_SIGNING_ALLOWED=NO OTHER_LDFLAGS=-Wl,-adhoc_codesign   # unsigned, with room for OmniBuild's signature
+npm run shells -w @blotch/omni-build-shells -- build --platform android --project webview/android --name WebViewShell --out out
+npm run shells -w @blotch/omni-build-shells -- build --platform ios --project webview/ios/WebViewShell.xcodeproj --name WebViewShell --out out
 ```
 
-A zipped `.app` is the Simulator shell (`ditto -c -k --keepParent WebViewShell.app WebViewShell.zip`), and a zip of a `Payload` folder with the `.app` the shell for devices (`WebViewShell.ipa`). `npm run e2e` builds both platforms' shells, repackages them, and runs them, as the [contributing guide](./contributing.md) says.
+`npm run e2e` builds both platforms' shells, repackages them, and runs them, as the [contributing guide](./contributing.md) says.

@@ -1,7 +1,6 @@
 import {
   copyFileSync,
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -14,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { buildIos } from '../../shells/src/ios.ts';
 import { ios } from './ios.ts';
 import { type RunResult, run } from './process.ts';
 
@@ -22,7 +22,6 @@ import { type RunResult, run } from './process.ts';
 vi.mock('node:fs', () => ({
   copyFileSync: vi.fn(),
   existsSync: vi.fn(),
-  mkdirSync: vi.fn(),
   mkdtempSync: vi.fn(() => '/tmp/omni-build-e2e-1'),
   readFileSync: vi.fn(),
   readdirSync: vi.fn(),
@@ -38,6 +37,14 @@ vi.mock('node:timers/promises', () => ({ setTimeout: vi.fn(async () => {}) }));
 vi.mock('./process.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./process.ts')>()),
   run: vi.fn(),
+}));
+
+// Xcode runs in packages/shells, whose tests check how.
+vi.mock('../../shells/src/ios.ts', () => ({
+  buildIos: vi.fn(async ({ name }: { name: string }) => [
+    `out/${name}-release-simulator.zip`,
+    `out/${name}-release.ipa`,
+  ]),
 }));
 
 const PROJECTS = {
@@ -112,60 +119,32 @@ afterEach(() => {
 });
 
 describe('build', () => {
-  it('builds each shell for the simulator and for devices with Xcode, and zips each under its name', async () => {
+  it("builds each shell's release apps with Xcode, in derived data of its own", async () => {
     const shells = await ios.build({
       ...artifacts,
       buildDir: 'build',
       outDir: 'out',
     });
 
-    const derivedData = path.join('build', 'ios');
-    const payload = path.join('build', 'ios-ipa', 'Payload');
-    /** The commands that build one shell, and its zip and .ipa. */
-    const building = (shell: keyof typeof PROJECTS) => {
-      const xcodebuild = `xcodebuild build -project ${PROJECTS[shell]} -scheme ${shell} -configuration Release`;
-      const simulator = path.join(
-        derivedData,
-        'Build/Products/Release-iphonesimulator',
-        `${shell}.app`,
-      );
-      const device = path.join(
-        derivedData,
-        'Build/Products/Release-iphoneos',
-        `${shell}.app`,
-      );
-      const zip = path.join('out', `${shell}.zip`);
-      const ipa = path.join('out', `${shell}.ipa`);
-      return {
-        commands: [
-          `${xcodebuild} -destination generic/platform=iOS Simulator -derivedDataPath ${derivedData}`,
-          `${xcodebuild} -destination generic/platform=iOS -derivedDataPath ${derivedData} CODE_SIGNING_ALLOWED=NO OTHER_LDFLAGS=-Wl,-adhoc_codesign`,
-          `ditto -c -k --keepParent ${simulator} ${zip}`,
-          `ditto ${device} ${path.join(payload, `${shell}.app`)}`,
-          `ditto -c -k --keepParent ${payload} ${ipa}`,
-        ],
-        zip,
-        ipa,
-      };
-    };
-    const fixture = building('OmniBuildShell');
-    const webView = building('WebViewShell');
-    expect(commands()).toEqual([...fixture.commands, ...webView.commands]);
-    expect(mkdirSync).toHaveBeenCalledWith('out', { recursive: true });
-    expect(rmSync).toHaveBeenCalledWith(fixture.zip, { force: true });
-    expect(rmSync).toHaveBeenCalledWith(webView.ipa, { force: true });
-    // Emptied for each shell, so one's .ipa holds no other's app.
-    expect(
-      vi.mocked(rmSync).mock.calls.filter(([file]) => file === payload),
-    ).toEqual([
-      [payload, { recursive: true, force: true }],
-      [payload, { recursive: true, force: true }],
+    const building = (shell: keyof typeof PROJECTS) => [
+      {
+        project: PROJECTS[shell],
+        name: shell,
+        out: 'out',
+        work: path.join('build', 'ios', shell),
+        configurations: ['release'],
+        log: 'commands.log',
+      },
+    ];
+    expect(vi.mocked(buildIos).mock.calls).toEqual([
+      building('OmniBuildShell'),
+      building('WebViewShell'),
     ]);
     expect(shells).toEqual([
-      fixture.zip,
-      fixture.ipa,
-      webView.zip,
-      webView.ipa,
+      'out/OmniBuildShell-release-simulator.zip',
+      'out/OmniBuildShell-release.ipa',
+      'out/WebViewShell-release-simulator.zip',
+      'out/WebViewShell-release.ipa',
     ]);
   });
 });
