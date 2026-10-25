@@ -12,7 +12,7 @@ import { HELP, type RunOptions, run } from './run.ts';
 const root = mkdtempSync(path.join(tmpdir(), 'platform-watch-'));
 for (const [file, content] of Object.entries({
   '.github/workflows/ci.yml':
-    'DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer\n',
+    'developer-dir: /Applications/Xcode_26.6.app/Contents/Developer\n',
   'packages/shells/webview/android/app/build.gradle.kts':
     'compileSdk = 36\ntargetSdk = 36\n',
 })) {

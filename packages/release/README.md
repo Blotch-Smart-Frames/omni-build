@@ -9,12 +9,13 @@ Makes what a release publishes (the npm packages, an archive per platform for th
 
 npm installs an optional dependency only on a machine its `os` and `cpu` match, so each machine gets its own binary and no other, as with esbuild, rspack and oxlint. The platform packages aren't in the repository: npm refuses to install a workspace whose `os` or `cpu` doesn't match the machine, and can't lock a dependency that isn't published. So `pack` makes them, and writes the launcher's `optionalDependencies`, at the version every package shares.
 
-| Download                          | What it holds                                                                                                                                                                                        |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `omni-build-<Rust target>.zip`    | For Windows: a folder of the same name with `omni.exe` and the licence                                                                                                                               |
-| `omni-build-<Rust target>.tar.gz` | For macOS and Linux: the same, with `omni`, executable                                                                                                                                               |
-| `SHA256SUMS`                      | Each archive's SHA-256, as `sha256sum` writes them                                                                                                                                                   |
-| `omni-build.rb`                   | Not on the release: the formula in the tap, [`Blotch-Smart-Frames/homebrew-tap`](https://github.com/Blotch-Smart-Frames/homebrew-tap), which installs the macOS and Linux archives by their SHA-256s |
+| Download                              | What it holds                                                                                                                                                                                        |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `omni-build-<Rust target>.zip`        | For Windows: a folder of the same name with `omni.exe` and the licence                                                                                                                               |
+| `omni-build-<Rust target>.tar.gz`     | For macOS and Linux: the same, with `omni`, executable                                                                                                                                               |
+| `SHA256SUMS`                          | Each archive's SHA-256, as `sha256sum` writes them                                                                                                                                                   |
+| `WebViewShell-*`, `WebViewShell.json` | The WebView shell's variants and their manifest, as CI's Shell workflow built and checked them (`packages/shells`)                                                                                   |
+| `omni-build.rb`                       | Not on the release: the formula in the tap, [`Blotch-Smart-Frames/homebrew-tap`](https://github.com/Blotch-Smart-Frames/homebrew-tap), which installs the macOS and Linux archives by their SHA-256s |
 
 The archives' names have no version, so `releases/latest/download/<archive>` always gets the newest, and cargo-binstall finds them by the template in `packages/cli/Cargo.toml`, which `archives.test.ts` checks against them.
 
@@ -51,7 +52,7 @@ The tool uses only Node's built-in modules, and Node runs its TypeScript as it i
 A release is a tag. `.github/workflows/release.yml` publishes what CI made and installed for the tagged commit to every channel, once a maintainer approves it in the `npm` environment:
 
 1. **npm:** the packages, with `publish`. npm trusts the workflow, in the `npm` environment, to publish them (trusted publishing): it trades GitHub's OIDC token for one that may, and adds their provenance.
-2. **GitHub:** a release for the tag, with notes listing the pull requests merged since the last, and the archives and `SHA256SUMS`, each archive with an attestation of where it came from. A version such as `1.0.0-beta.1` is marked a prerelease, as npm tags it `next`.
+2. **GitHub:** a release for the tag, with notes listing the pull requests merged since the last, the archives and `SHA256SUMS`, and the WebView shell's variants and manifest, each archive and variant with an attestation of where it came from. A version such as `1.0.0-beta.1` is marked a prerelease, as npm tags it `next`.
 3. **crates.io:** the crate, with `cargo publish`. crates.io trusts the workflow in the `crates-io` environment, as npm does in `npm`.
 4. **Homebrew:** the formula, pushed to the tap once the GitHub release has the archives it downloads, with a deploy key only the `homebrew` environment holds.
 

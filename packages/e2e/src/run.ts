@@ -86,10 +86,11 @@ Each command is one stage. CI runs each on different machines; with no
 command, all three run here in turn.
 
 Commands:
-  build      Build the shells with Xcode or Gradle (an Android APK and app
-             bundle, an iOS app for the simulator and one for devices, of
-             each shell): the only stage that uses them. Writes them to --out
-             (default: build/shells/<platform>).
+  build      Build the shells with Xcode or Gradle (a release Android APK
+             and app bundle, or iOS app for the simulator and one for
+             devices, of each shell), as CI's Shell workflow does
+             (packages/shells): the only stage that uses them. Writes them
+             to --out (default: build/shells/<platform>).
   repackage  Run each shell (--shell) through omni, which gets no
              PATH and no toolchain variables. Writes to --out (default:
              build/repackaged/<platform>).

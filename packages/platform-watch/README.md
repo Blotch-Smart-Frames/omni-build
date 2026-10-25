@@ -8,7 +8,7 @@ Opens a GitHub issue when the app shells need a newer Xcode or Android API level
 
 | Source                                                                                                   | For                                                           |
 | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `DEVELOPER_DIR` in `.github/workflows/ci.yml`                                                            | The Xcode the iOS shells are built with                       |
+| `developer-dir` in `.github/workflows/ci.yml`                                                            | The Xcode the iOS shells are built with                       |
 | `compileSdk` and `targetSdk` in `packages/shells/webview/android/app/build.gradle.kts`                   | The API levels the Android shells compile against and target  |
 | [Apple's upcoming requirements](https://developer.apple.com/news/upcoming-requirements/)                 | The Xcode App Store uploads must be built with, and from when |
 | [Apple's releases feed](https://developer.apple.com/news/releases/rss/releases.rss)                      | New Xcode releases, betas and release candidates left out     |

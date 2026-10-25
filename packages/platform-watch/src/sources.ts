@@ -140,20 +140,20 @@ export const parseAndroidSdk = (xml: string): { api: number } => {
 };
 
 /**
- * The Xcode the iOS shells are built with: the one `DEVELOPER_DIR` selects
- * from those on GitHub's macOS runner.
+ * The Xcode the iOS shells are built with: the one CI gives the Shell
+ * workflow as its `developer-dir`, from those on GitHub's macOS runner.
  */
 export const parseXcodePin = (workflow: string): Xcode => {
   const versions = new Set(
     [
       ...workflow.matchAll(
-        /DEVELOPER_DIR: \/Applications\/Xcode_(\d+(?:\.\d+)*)\.app\b/g,
+        /developer-dir: \/Applications\/Xcode_(\d+(?:\.\d+)*)\.app\b/g,
       ),
     ].map(([, version]) => version),
   );
   if (versions.size !== 1) {
     throw new Error(
-      `expected one "DEVELOPER_DIR: /Applications/Xcode_N.app/..." line, found ${versions.size} versions`,
+      `expected one "developer-dir: /Applications/Xcode_N.app/..." line, found ${versions.size} versions`,
     );
   }
   const [version] = versions;
@@ -189,7 +189,7 @@ export const SOURCES = [
     title: "the iOS shells' Xcode version",
     location: '.github/workflows/ci.yml',
     looksFor:
-      'the Xcode the iOS shells are built with, in a `DEVELOPER_DIR: /Applications/Xcode_N.app/Contents/Developer` line',
+      'the Xcode the iOS shells are built with, in a `developer-dir: /Applications/Xcode_N.app/Contents/Developer` line',
     parse: parseXcodePin,
   },
   {

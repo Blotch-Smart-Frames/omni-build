@@ -1,0 +1,8 @@
+paths:
+  .github/workflows/shell.yml:
+    ignore:
+      # The job context's workflow identity, which GitHub added on 3
+      # September 2026 for a reusable workflow to check out its own source
+      # (docs.github.com/en/actions/reference/workflows-and-actions/contexts),
+      # is newer than actionlint 1.7.12. Drop this once actionlint knows it.
+      - 'property "workflow_(repository|sha)" is not defined in object type'

@@ -82,11 +82,11 @@ const ios = (
   return {
     key: `ios-xcode-${major}`,
     title: `Build the iOS shells with Xcode ${major}`,
-    context: `The iOS shells are built with Xcode ${shell.version}, set by \`DEVELOPER_DIR\` in \`${location}\`, and:`,
+    context: `The iOS shells are built with Xcode ${shell.version}, set by \`developer-dir\` in \`${location}\`, and:`,
     reasons,
     why: "OmniBuild keeps the `DT*` keys Xcode writes into each shell's `Info.plist` (`DTXcode`, `DTSDKName`, ...), because App Store validation reads them. Meeting a new minimum means rebuilding the shells with the new Xcode; rewriting the keys would misreport the SDK they were built with.",
     todo: [
-      `Point \`DEVELOPER_DIR\` in \`${location}\` at Xcode ${major}, once GitHub's macOS runner image has it ([actions/runner-images](https://github.com/actions/runner-images)).`,
+      `Point \`developer-dir\` in \`${location}\` at Xcode ${major}, once GitHub's macOS runner image has it ([actions/runner-images](https://github.com/actions/runner-images)).`,
       `Fix what the new SDK breaks in the Swift shells, and update other mentions of Xcode ${shell.version} in the repository.`,
       'CI builds the shells with it and runs them on the iOS Simulator: this is done when CI passes.',
     ],

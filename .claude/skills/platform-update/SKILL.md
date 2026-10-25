@@ -1,6 +1,6 @@
 ---
 name: platform-update
-description: Do the update a platform-watch issue asks for. Move the app shells to a new Xcode (the DEVELOPER_DIR pin in CI) or a new Android API level (compileSdk and targetSdk), prove it with the E2E jobs, and open a PR that closes the issue. Or fix the platform watch when it can't download or parse Apple's or Google's pages. Use whenever the user mentions a platform-watch issue or label, asks to bump, upgrade or move to a new Xcode, iOS SDK, compileSdk, targetSdk or Android API level, brings up an App Store or Google Play SDK or target API deadline, or says the watch is broken or can't read a page, even if they don't name this skill.
+description: Do the update a platform-watch issue asks for. Move the app shells to a new Xcode (the developer-dir pin in CI) or a new Android API level (compileSdk and targetSdk), prove it with the E2E jobs, and open a PR that closes the issue. Or fix the platform watch when it can't download or parse Apple's or Google's pages. Use whenever the user mentions a platform-watch issue or label, asks to bump, upgrade or move to a new Xcode, iOS SDK, compileSdk, targetSdk or Android API level, brings up an App Store or Google Play SDK or target API deadline, or says the watch is broken or can't read a page, even if they don't name this skill.
 ---
 
 # Platform update
@@ -42,12 +42,12 @@ When looking for other mentions of the old version, leave out `packages/platform
    The first command shows each image's `runs-on` labels and any **preview** or **beta** badge. The second lists that image's Xcodes, each with its folder and its aliases.
 
    - **Generally available** (no preview or beta badge)? Use it.
-   - **Preview or beta only?** Stop. `e2e-shell-ios` is part of the "CI passed" gate, so a queued or unstable runner would block every PR. See [Stopping](#stopping).
+   - **Preview or beta only?** Stop. The `shell` jobs are part of the "CI passed" gate, so a queued or unstable runner would block every PR. See [Stopping](#stopping).
 
-2. **Pin it.** In `.github/workflows/ci.yml`, job `e2e-shell-ios`:
-   - Set `runs-on` to the image's label if it isn't `macos-latest`.
-   - Set `DEVELOPER_DIR: /Applications/Xcode_<major.minor>.app/Contents/Developer`, using the `Xcode_<major.minor>.app` alias from the aliases column. Don't copy the folder name: it can say `_Release_Candidate` or `_beta_2`, and the watch only reads the plain form. The alias also stays put when GitHub swaps in a patch release.
-   - Keep one `DEVELOPER_DIR` version in the file, or the watch can't read it.
+2. **Pin it.** In `.github/workflows/ci.yml`, job `shell`, which passes both to the Shell workflow (`.github/workflows/shell.yml`):
+   - Set `macos-runner` to the image's label if it isn't `macos-latest`.
+   - Set `developer-dir: /Applications/Xcode_<major.minor>.app/Contents/Developer`, using the `Xcode_<major.minor>.app` alias from the aliases column. Don't copy the folder name: it can say `_Release_Candidate` or `_beta_2`, and the watch only reads the plain form. The alias also stays put when GitHub swaps in a patch release.
+   - Keep one `developer-dir` version in the file, or the watch can't read it.
 
    Pick a release, not a beta or RC. Judge that by the build number against Apple's releases feed (an item titled "Xcode 27.1 (27A9275)"), not by the folder name.
 

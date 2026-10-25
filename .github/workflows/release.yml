@@ -3,12 +3,13 @@ name: Release
 # Releases OmniBuild when a version tag is pushed: `v` and the version every
 # package.json and Cargo.toml has, on a commit of master. It publishes to
 # every channel users install from: the npm packages, a GitHub release with
-# an archive per platform, the crate on crates.io, and the formula in the
-# Homebrew tap. The npm packages and the archives are what CI made for that
-# commit and installed on all six OSes and CPUs (the npm-pack, archives,
-# install and homebrew jobs in ci.yml), so a release is never a build CI
-# hasn't passed. The crate is built from source by whoever installs it, as
-# CI's crate job built it.
+# an archive per platform and the WebView shell, the crate on crates.io, and
+# the formula in the Homebrew tap. The npm packages and the archives are what
+# CI made for that commit and installed on all six OSes and CPUs (the
+# npm-pack, archives, install and homebrew jobs in ci.yml), and the shell's
+# variants what it built, repackaged and ran (the shell and e2e jobs), so a
+# release is never a build CI hasn't passed. The crate is built from source
+# by whoever installs it, as CI's crate job built it.
 #
 # A maintainer approves each release once, in the npm environment, before
 # the npm packages are published; every other channel waits for them.
@@ -102,9 +103,11 @@ jobs:
       # The release tool uses only Node's built-in modules, so no `npm ci`.
       - run: node packages/release/src/cli.ts publish --packages npm-packages --tag "$GITHUB_REF_NAME"
 
-  # The GitHub release for the tag, with CI's archives and SHA256SUMS, and an
-  # attestation of where each archive came from. Its notes list the pull
-  # requests merged since the last release. A version with a prerelease part,
+  # The GitHub release for the tag, with CI's archives and SHA256SUMS, the
+  # WebView shell's variants and their manifest, WebViewShell.json, as CI's
+  # Shell workflow built and checked them, and an attestation of where each
+  # file came from. Its notes list the pull requests merged since the last
+  # release. A version with a prerelease part,
   # such as 1.0.0-beta.1, is marked a prerelease, so the latest release, and
   # releases/latest/download/<archive>, stay at the newest stable one. Run
   # again, it replaces the archives rather than failing.
@@ -127,9 +130,17 @@ jobs:
           path: release-archives
           run-id: ${{ needs.wait-for-ci.outputs.run }}
           github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: shell-WebViewShell
+          path: shells
+          run-id: ${{ needs.wait-for-ci.outputs.run }}
+          github-token: ${{ github.token }}
       - uses: actions/attest@v4
         with:
-          subject-path: release-archives/omni-build-*
+          subject-path: |
+            release-archives/omni-build-*
+            shells/WebViewShell-*
       - name: Create the release, or update it
         env:
           GH_TOKEN: ${{ github.token }}
@@ -142,7 +153,7 @@ jobs:
             fi
             gh release create "$GITHUB_REF_NAME" --verify-tag --title "OmniBuild ${GITHUB_REF_NAME#v}" --generate-notes "${flags[@]}"
           fi
-          gh release upload "$GITHUB_REF_NAME" release-archives/* --clobber
+          gh release upload "$GITHUB_REF_NAME" release-archives/* shells/* --clobber
 
   # The crate, for `cargo install omni-build`, published from the tagged
   # source. crates.io trades GitHub's OIDC token for a token that may publish
