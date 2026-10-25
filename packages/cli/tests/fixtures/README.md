@@ -123,3 +123,7 @@ And with keys of their own, from a JDK's keytool: `keytool.p12` (`keytool -genke
 ## `adb/`
 
 A key pair as adb makes one, `adbkey` (PKCS #8) and `adbkey.pub` (Android's own format, in base64, then who the key belongs to): `adb keygen adbkey`, with the name of the user and computer that made it at the end of `adbkey.pub` replaced by `omnibuild@test`. The ADB tests check that OmniBuild writes the public key as adb did, byte for byte, and connect with the private key.
+
+`devicekey` is a key of a made-up device's own, which the made-up devices in the TLS and pairing tests make their certificates with, as a device makes its own: `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out devicekey`.
+
+`peer-info` is what an Android 14 emulator sent OmniBuild when the two paired: its peer info, encrypted with the key pairing gave them, which the pairing tests decrypt to the emulator's GUID, as a check of OmniBuild's SPAKE2 against BoringSSL's. The test has the rest of that pairing: the code, the TLS connection's keying material, and the two SPAKE2 messages, from OmniBuild's random bytes fixed as 64 sevens (`Spake2::with_random`). To record another, have `pair` print those, and the device's peer info, and pair with an emulator through a port `adb forward` forwards to the one its **Pair device with pairing code** shows.

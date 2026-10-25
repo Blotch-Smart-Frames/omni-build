@@ -7,7 +7,18 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::Arc;
 use std::thread::JoinHandle;
+
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes128Gcm, Nonce};
+use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+use curve25519_dalek::scalar::Scalar;
+use hkdf::Hkdf;
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::{ServerConfig, ServerConnection, StreamOwned};
+use sha2::{Digest, Sha256, Sha512};
 
 const SHELL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/shell.apk");
 const SHELL_AAB: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/shell.aab");
@@ -1002,4 +1013,162 @@ fn tcpip_reports_what_went_wrong() {
     let output = omni_build(&["tcpip", "--port", "0"]);
     assert_eq!(output.status.code(), Some(2));
     assert!(stderr(&output).contains("--port"), "{}", stderr(&output));
+}
+
+/// A device that pairs once for wireless debugging while it shows the code
+/// 123456, as Android does, in its own words: over TLS, it runs SPAKE2's
+/// server side, as BoringSSL has it, then sends its name,
+/// adb-R5CT1234-a1B2c3, encrypted with the key that gives. It asks for no
+/// certificate, which Android does but checks nothing of. Returns its
+/// port, and the public key the computer sent.
+fn pairing_device() -> (u16, JoinHandle<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let device = std::thread::spawn(move || {
+        let config = ServerConfig::builder_with_provider(Arc::new(rustls_rustcrypto::provider()))
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from_pem_file(IDENTITY).unwrap()],
+                PrivateKeyDer::from_pem_file(IDENTITY).unwrap(),
+            )
+            .unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        let mut tls = StreamOwned::new(ServerConnection::new(Arc::new(config)).unwrap(), stream);
+        tls.conn.complete_io(&mut tls.sock).unwrap();
+        let exported = tls
+            .conn
+            .export_keying_material([0; 64], b"adb-label\0", None)
+            .unwrap();
+
+        // SPAKE2: each party's point masked with the password's hash times
+        // a point of its own, M for the computer and N for the device.
+        let point = |seed: &str| {
+            let point = CompressedEdwardsY(Sha256::digest(seed).into())
+                .decompress()
+                .unwrap();
+            point.mul_by_cofactor() * Scalar::from(8u8).invert()
+        };
+        let m = point("edwards25519 point generation seed (M)");
+        let n = point("edwards25519 point generation seed (N)");
+        let password_hash = Sha512::digest([&b"123456"[..], &exported].concat());
+        let password = Scalar::from_bytes_mod_order_wide(&password_hash.into());
+        let secret = Scalar::from_bytes_mod_order_wide(&[9; 64]);
+        let ours = (EdwardsPoint::mul_base(&(secret * Scalar::from(8u8))) + n * password)
+            .compress()
+            .to_bytes();
+        let theirs: [u8; 32] = read_pairing_packet(&mut tls).try_into().unwrap();
+        write_pairing_packet(&mut tls, 0, &ours);
+        let shared = ((CompressedEdwardsY(theirs).decompress().unwrap() - m * password)
+            .mul_by_cofactor()
+            * secret)
+            .compress();
+        let mut key = Sha512::new();
+        for part in [
+            &b"adb pair client\0"[..],
+            b"adb pair server\0",
+            &theirs,
+            &ours,
+            shared.as_bytes(),
+            &password_hash,
+        ] {
+            key.update((part.len() as u64).to_le_bytes());
+            key.update(part);
+        }
+        let mut aes_key = [0; 16];
+        Hkdf::<Sha256>::new(None, &key.finalize())
+            .expand(b"adb pairing_auth aes-128-gcm key", &mut aes_key)
+            .unwrap();
+        let cipher = Aes128Gcm::new(&aes_key.into());
+
+        let mut info = vec![0; 8192];
+        info[0] = 1;
+        info[1..20].copy_from_slice(b"adb-R5CT1234-a1B2c3");
+        let info = cipher.encrypt(&Nonce::default(), info.as_slice()).unwrap();
+        let theirs = read_pairing_packet(&mut tls);
+        write_pairing_packet(&mut tls, 1, &info);
+        let info = cipher
+            .decrypt(&Nonce::default(), theirs.as_slice())
+            .unwrap();
+        let key = info[1..].split(|&byte| byte == 0).next().unwrap();
+        String::from_utf8(key.to_vec()).unwrap()
+    });
+    (port, device)
+}
+
+/// The payload of the computer's next pairing packet.
+fn read_pairing_packet(tls: &mut StreamOwned<ServerConnection, TcpStream>) -> Vec<u8> {
+    let mut header = [0; 6];
+    tls.read_exact(&mut header).unwrap();
+    let mut payload = vec![0; u32::from_be_bytes(header[2..].try_into().unwrap()) as usize];
+    tls.read_exact(&mut payload).unwrap();
+    payload
+}
+
+/// Sends a pairing packet of `kind`: its version, 1, its kind, its
+/// payload's length, and its payload.
+fn write_pairing_packet(
+    tls: &mut StreamOwned<ServerConnection, TcpStream>,
+    kind: u8,
+    payload: &[u8],
+) {
+    let len = u32::try_from(payload.len()).unwrap().to_be_bytes();
+    tls.write_all(&[&[1, kind], &len[..], payload].concat())
+        .unwrap();
+}
+
+#[test]
+fn pairs_with_a_device_for_wireless_debugging() {
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir(home.path().join(".android")).unwrap();
+    fs::copy(ADB_KEY, home.path().join(".android/adbkey")).unwrap();
+    let (port, device) = pairing_device();
+    let address = format!("127.0.0.1:{port}");
+
+    let output = omni_build_at_home(home.path(), &["pair", &address, "123456", "--json"]);
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        events(&output),
+        [serde_json::json!({
+            "event": "paired",
+            "address": address,
+            "guid": "adb-R5CT1234-a1B2c3",
+            "message": format!("Paired with the device at {address} (adb-R5CT1234-a1B2c3). Install on it with --device and the IP address and port it shows under Wireless debugging"),
+        })]
+    );
+    // adb's public key, and then who it belongs to, which the device lists
+    // the computer by.
+    let public_key = fs::read_to_string(format!("{ADB_KEY}.pub")).unwrap();
+    let sent = device.join().unwrap();
+    assert_eq!(sent.split(' ').next(), public_key.split(' ').next());
+}
+
+#[test]
+fn pair_reports_what_went_wrong() {
+    let nothing_there = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let unreadable = tempfile::tempdir().unwrap();
+    // A folder where the key should be.
+    fs::create_dir_all(unreadable.path().join(".android/adbkey")).unwrap();
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir(home.path().join(".android")).unwrap();
+    fs::copy(ADB_KEY, home.path().join(".android/adbkey")).unwrap();
+    let cases = [
+        (
+            home.path(),
+            format!("error: couldn't pair with {nothing_there}: "),
+        ),
+        (unreadable.path(), "error: couldn't read ".to_owned()),
+    ];
+
+    for (home, message) in cases {
+        let output = omni_build_at_home(home, &["pair", &nothing_there.to_string(), "123456"]);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(stderr(&output).starts_with(&message), "{}", stderr(&output));
+    }
 }

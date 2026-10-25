@@ -44,6 +44,7 @@ Every event has an `event`, its name, and a `message`, the sentence OmniBuild sh
 | `repackaged`           | `repackage` wrote the app                                                                    | `shell`, `out`, `platform` (`android` or `ios`), `format` (`apk`, `aab`, `ipa`, or `app` for a zipped `.app`)                    |
 | `installed`            | `install` installed the app                                                                  | `app`, `device`, and `model`, the device's model, when it says                                                                   |
 | `listening`            | `tcpip` had the device listen for ADB on the network, where this computer reached it         | `device`, `model`, when it says, and `address`, which `--device` takes from then on                                              |
+| `paired`               | `pair` paired this computer with the device for wireless debugging                           | `address`, where it listened for pairing, and `guid`, its name for itself, such as `adb-R5CT1234-a1B2c3`                         |
 | `error`                | The command failed: the last event                                                           | Its message is the reason                                                                                                        |
 
 Paths are as the arguments gave them, and a key OmniBuild creates in the home folder has its full path.

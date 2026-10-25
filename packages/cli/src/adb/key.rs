@@ -5,16 +5,27 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use rsa::pkcs1::DecodeRsaPrivateKey;
+use rsa::pkcs1v15;
 use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, LineEnding};
 use rsa::rand_core::OsRng;
+use rsa::signature::Keypair;
 use rsa::traits::PublicKeyParts;
 use rsa::{BigUint, Pkcs1v15Sign, RsaPrivateKey};
 use sha1::Sha1;
+use sha2::Sha256;
+use x509_cert::builder::{Builder, CertificateBuilder, Profile};
+use x509_cert::der::Encode;
+use x509_cert::name::Name;
+use x509_cert::serial_number::SerialNumber;
+use x509_cert::spki::SubjectPublicKeyInfoOwned;
+use x509_cert::time::Validity;
 
 use crate::key;
 
@@ -22,6 +33,11 @@ use crate::key;
 /// (`android_pubkey.h`) has room for 2048-bit moduli only.
 const BITS: usize = 2048;
 const WORDS: usize = BITS / 32;
+/// The name adb gives the certificate it makes for its key, as subject and
+/// issuer both.
+const CERTIFICATE_NAME: &str = "CN=Adb,O=Android,C=US";
+/// How long adb's certificate lasts: ten years.
+const CERTIFICATE_VALIDITY: Duration = Duration::from_hours(10 * 365 * 24);
 
 /// An RSA key, and its public half as a device takes it.
 pub struct AdbKey {
@@ -87,6 +103,43 @@ impl AdbKey {
         self.key
             .sign_with_rng(&mut OsRng, Pkcs1v15Sign::new::<Sha1>(), token)
             .ok()
+    }
+
+    /// A certificate for the key, as DER, which proves this computer's
+    /// identity in wireless debugging's TLS. Made as adb makes its own
+    /// (`x509_generator.cpp`): self-signed, under adb's name. Devices look
+    /// only at the public key in it, which they check they trust.
+    pub fn certificate(&self) -> Vec<u8> {
+        let signer = pkcs1v15::SigningKey::<Sha256>::new(self.key.clone());
+        let name = Name::from_str(CERTIFICATE_NAME).expect("adb's name parses");
+        CertificateBuilder::new(
+            // An end entity whose key makes digital signatures, as TLS has
+            // it sign the handshake.
+            Profile::Leaf {
+                issuer: name.clone(),
+                enable_key_agreement: false,
+                enable_key_encipherment: false,
+            },
+            SerialNumber::from(1u32),
+            Validity::from_now(CERTIFICATE_VALIDITY).expect("the validity fits a certificate"),
+            name,
+            SubjectPublicKeyInfoOwned::from_key(signer.verifying_key())
+                .expect("an RSA public key encodes"),
+            &signer,
+        )
+        .and_then(Builder::build::<pkcs1v15::Signature>)
+        .expect("a self-signed certificate with valid fields builds")
+        .to_der()
+        .expect("a certificate encodes")
+    }
+
+    /// The private key as PKCS #8 DER, which TLS signs with.
+    pub fn private_key(&self) -> Vec<u8> {
+        self.key
+            .to_pkcs8_der()
+            .expect("an RSA key encodes")
+            .as_bytes()
+            .to_vec()
     }
 }
 
@@ -172,10 +225,13 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use rsa::pkcs1::EncodeRsaPrivateKey;
-    use rsa::pkcs8::LineEnding;
+    use rsa::pkcs8::{DecodePrivateKey, EncodePublicKey, LineEnding};
     use rsa::rand_core::OsRng;
     use rsa::{Pkcs1v15Sign, RsaPrivateKey};
     use sha1::Sha1;
+    use sha2::{Digest, Sha256};
+    use x509_cert::Certificate;
+    use x509_cert::der::{Decode, Encode};
 
     use super::{AdbKey, key_path, owner};
 
@@ -209,6 +265,43 @@ mod tests {
             .verify(Pkcs1v15Sign::new::<Sha1>(), &token, &signature)
             .unwrap();
         assert_eq!(key.sign(&[7; 19]), None);
+    }
+
+    #[test]
+    fn makes_a_certificate_for_the_key_as_adb_does() {
+        let (key, _) = AdbKey::at(&fixture("adbkey"), "omnibuild@test").unwrap();
+
+        let certificate = Certificate::from_der(&key.certificate()).unwrap();
+
+        let tbs = &certificate.tbs_certificate;
+        assert_eq!(tbs.subject.to_string(), "CN=Adb,O=Android,C=US");
+        assert_eq!(tbs.issuer, tbs.subject);
+        assert_eq!(tbs.serial_number.as_bytes(), [1]);
+        let lifetime = tbs
+            .validity
+            .not_after
+            .to_unix_duration()
+            .checked_sub(tbs.validity.not_before.to_unix_duration())
+            .unwrap();
+        assert_eq!(lifetime.as_secs(), 10 * 365 * 24 * 60 * 60);
+        // The key's public half, and signed with it.
+        let public_key = key.key.to_public_key();
+        assert_eq!(
+            tbs.subject_public_key_info.to_der().unwrap(),
+            public_key.to_public_key_der().unwrap().as_bytes()
+        );
+        public_key
+            .verify(
+                Pkcs1v15Sign::new::<Sha256>(),
+                &Sha256::digest(tbs.to_der().unwrap()),
+                certificate.signature.raw_bytes(),
+            )
+            .unwrap();
+        // And the private key, for TLS to sign with.
+        assert_eq!(
+            RsaPrivateKey::from_pkcs8_der(&key.private_key()).unwrap(),
+            key.key
+        );
     }
 
     #[test]

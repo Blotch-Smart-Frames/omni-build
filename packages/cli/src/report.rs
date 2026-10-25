@@ -59,6 +59,14 @@ pub enum Event {
         /// (`192.168.1.20:5555`).
         address: String,
     },
+    /// `pair` paired this computer with the device for wireless debugging.
+    Paired {
+        /// Where the device listened for pairing.
+        address: String,
+        /// The device's name for itself, which it advertises its wireless
+        /// debugging under on the network (`adb-R5CT1234-a1B2c3`).
+        guid: String,
+    },
     /// Why the command failed. It's the last event, and OmniBuild exits
     /// with 1. The reason is the event's message, so it has no field of
     /// its own.
@@ -153,6 +161,11 @@ impl Event {
                     None => device.clone(),
                 }
             ),
+            // The address and port to install at are on the device's
+            // screen, where it shows wireless debugging is on.
+            Self::Paired { address, guid } => format!(
+                "Paired with the device at {address} ({guid}). Install on it with --device and the IP address and port it shows under Wireless debugging"
+            ),
             Self::Error { message } => message.clone(),
         }
     }
@@ -170,6 +183,7 @@ impl Event {
                 | Self::Repackaged { .. }
                 | Self::Installed { .. }
                 | Self::Listening { .. }
+                | Self::Paired { .. }
         )
     }
 }
@@ -237,6 +251,13 @@ mod tests {
         }
     }
 
+    fn paired() -> Event {
+        Event::Paired {
+            address: "192.168.1.20:37099".to_owned(),
+            guid: "adb-R5CT1234-a1B2c3".to_owned(),
+        }
+    }
+
     #[test]
     fn tells_people_results_on_stdout_and_the_rest_on_stderr() {
         let people = Reporter::new(false);
@@ -274,6 +295,13 @@ mod tests {
                 ))
             );
         }
+        assert_eq!(
+            people.line(&paired()),
+            Line::Stdout(
+                "Paired with the device at 192.168.1.20:37099 (adb-R5CT1234-a1B2c3). Install on it with --device and the IP address and port it shows under Wireless debugging"
+                    .to_owned()
+            )
+        );
         assert!(matches!(
             people.line(&key(KeyKind::Upload)),
             Line::Stdout(line) if line.starts_with("Created an upload key in key.p12, with the alias \"upload\".")
@@ -367,6 +395,12 @@ mod tests {
             }),
             Line::Stdout(line) if line.starts_with(
                 r#"{"event":"listening","device":"R5CT1234","model":"Pixel 8","address":"192.168.1.20:5555","message":"Pixel 8 (R5CT1234) listens for ADB at "#
+            )
+        ));
+        assert!(matches!(
+            tools.line(&paired()),
+            Line::Stdout(line) if line.starts_with(
+                r#"{"event":"paired","address":"192.168.1.20:37099","guid":"adb-R5CT1234-a1B2c3","message":"Paired with "#
             )
         ));
         assert_eq!(
