@@ -1,17 +1,26 @@
 name: Release
 
-# Publishes the npm packages when a version tag is pushed: `v` and the
-# version every package.json and Cargo.toml has, on a commit of master. What
-# it publishes is what CI packed for that commit and installed on all six
-# OSes and CPUs (the npm-pack and npm-install jobs in ci.yml), so a release
-# is never a build CI hasn't passed.
+# Releases OmniBuild when a version tag is pushed: `v` and the version every
+# package.json and Cargo.toml has, on a commit of master. It publishes to
+# every channel users install from: the npm packages, a GitHub release with
+# an archive per platform, the crate on crates.io, and the formula in the
+# Homebrew tap. The npm packages and the archives are what CI made for that
+# commit and installed on all six OSes and CPUs (the npm-pack, archives,
+# install and homebrew jobs in ci.yml), so a release is never a build CI
+# hasn't passed. The crate is built from source by whoever installs it, as
+# CI's crate job built it.
 #
-# No npm token is stored anywhere. npm trusts this workflow, by its file
-# name, and only in the npm environment, to publish each package (trusted
-# publishing): it trades GitHub's OIDC token for one that may, and adds
-# provenance. The environment asks a maintainer to approve each release
-# before the publish job runs. Renaming this file or the environment means
-# changing each package's trusted publisher on npm.
+# A maintainer approves each release once, in the npm environment, before
+# the npm packages are published; every other channel waits for them.
+#
+# No npm or crates.io token is stored anywhere. Each trusts this workflow,
+# by its file name, and only in its environment (npm, crates-io), to publish
+# (trusted publishing): it trades GitHub's OIDC token for one that may. npm
+# adds provenance to each package, and the GitHub release has an attestation
+# of each archive's, which `gh attestation verify` checks. Renaming this file
+# or an environment means changing the trusted publisher on npm or crates.io.
+# The tap is pushed to with a deploy key that only the homebrew environment
+# holds (the steps are in packages/release/README.md).
 
 on:
   push:
@@ -92,3 +101,121 @@ jobs:
           package-manager-cache: false
       # The release tool uses only Node's built-in modules, so no `npm ci`.
       - run: node packages/release/src/cli.ts publish --packages npm-packages --tag "$GITHUB_REF_NAME"
+
+  # The GitHub release for the tag, with CI's archives and SHA256SUMS, and an
+  # attestation of where each archive came from. Its notes list the pull
+  # requests merged since the last release. A version with a prerelease part,
+  # such as 1.0.0-beta.1, is marked a prerelease, so the latest release, and
+  # releases/latest/download/<archive>, stay at the newest stable one. Run
+  # again, it replaces the archives rather than failing.
+  github:
+    needs: [wait-for-ci, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # To create the release and upload to it.
+      contents: write
+      # To download the archives from CI's run.
+      actions: read
+      # The OIDC token and the permission an attestation needs.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-archives
+          path: release-archives
+          run-id: ${{ needs.wait-for-ci.outputs.run }}
+          github-token: ${{ github.token }}
+      - uses: actions/attest@v4
+        with:
+          subject-path: release-archives/omni-build-*
+      - name: Create the release, or update it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            flags=()
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "OmniBuild ${GITHUB_REF_NAME#v}" --generate-notes "${flags[@]}"
+          fi
+          gh release upload "$GITHUB_REF_NAME" release-archives/* --clobber
+
+  # The crate, for `cargo install omni-build`, published from the tagged
+  # source. crates.io trades GitHub's OIDC token for a token that may publish
+  # it, and only to this workflow in the crates-io environment, which needs
+  # no approval of its own: the npm packages' approval comes first. A version
+  # crates.io already has is left as it is, so a release can be run again.
+  crates-io:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - name: Check crates.io doesn't have the version
+        id: published
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          status=$(curl --silent --output /dev/null --write-out '%{http_code}' --user-agent "omni-build release ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY)" "https://crates.io/api/v1/crates/omni-build/$version")
+          if [ "$status" = 200 ]; then
+            echo "omni-build $version is on crates.io already."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: rust-lang/crates-io-auth-action@v1
+        if: steps.published.outputs.skip != 'true'
+        id: auth
+      - if: steps.published.outputs.skip != 'true'
+        run: cargo publish --locked --package omni-build
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  # The formula in the tap, Blotch-Smart-Frames/homebrew-tap, for `brew
+  # install blotch-smart-frames/tap/omni-build`, pointing at the GitHub
+  # release's archives by their SHA-256s, written as CI's homebrew job tested
+  # it. After the release, whose archives it downloads. Pushed with a deploy
+  # key that may write to the tap alone, kept in the homebrew environment.
+  homebrew:
+    needs: [wait-for-ci, github]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: homebrew
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: Blotch-Smart-Frames/homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          path: tap
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-archives
+          path: release-archives
+          run-id: ${{ needs.wait-for-ci.outputs.run }}
+          github-token: ${{ github.token }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      # The release tool uses only Node's built-in modules, so no `npm ci`.
+      - run: node packages/release/src/cli.ts formula --archives release-archives --out tap/Formula/omni-build.rb
+      - name: Push the formula to the tap
+        working-directory: tap
+        run: |
+          git add Formula/omni-build.rb
+          if git diff --cached --quiet; then
+            echo "The tap has this formula already."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit --message "omni-build ${GITHUB_REF_NAME#v}"
+          git push

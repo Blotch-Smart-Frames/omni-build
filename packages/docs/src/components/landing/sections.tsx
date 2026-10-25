@@ -214,7 +214,8 @@ const Install = () => (
       <code>npm install --save-dev @blotch/omni-build</code>
     </div>
     <p className={styles.copy}>
-      Cargo, Homebrew and downloads from GitHub releases come later.
+      Cargo, Homebrew and downloads from GitHub releases start with the release
+      after 0.0.1.
     </p>
   </Window>
 );
@@ -230,7 +231,7 @@ const Roadmap = () => (
     status={
       <>
         <span>Android first: every Android format is public.</span>
-        <Link to="/docs/roadmap">Phases, risks and open decisions</Link>
+        <Link to="/docs/roadmap">Phases, risks and decisions</Link>
       </>
     }
   >

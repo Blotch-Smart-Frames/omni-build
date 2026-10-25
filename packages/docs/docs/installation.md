@@ -5,13 +5,13 @@ description: How to install the omni binary, and the platforms it's built for.
 
 # Installation
 
-:::warning[npm only, for now]
+:::warning[From the release after 0.0.1]
 
-OmniBuild is on npm. Cargo, Homebrew and GitHub releases come later: until then, a machine without Node builds the binary from the [repository](https://github.com/Blotch-Smart-Frames/omni-build) with `cargo build --release`.
+0.0.1 is on npm alone. Cargo, Homebrew and the GitHub releases start with the next release. Until then, a machine without Node builds the binary from the [repository](https://github.com/Blotch-Smart-Frames/omni-build) with `cargo build --release`.
 
 :::
 
-OmniBuild is one native binary, written in Rust, with no runtime and no dependencies. The same binary reaches every audience.
+OmniBuild is one native binary, written in Rust, with no runtime and no dependencies. Every channel below installs the same binary, which a release publishes to all of them at once, from one version tag.
 
 ## npm
 
@@ -24,13 +24,42 @@ The `@blotch/omni-build` package is a small launcher. npm installs the binary fo
 
 To use a binary from somewhere else, such as one you built yourself, set `OMNI_BUILD_BINARY` to its path.
 
-## Without Node
+## Homebrew
 
-Still to come:
+On macOS and Linux:
 
-- **Cargo:** `cargo install omni-build`
-- **Homebrew**
-- **GitHub releases:** a plain download per platform
+```sh
+brew install blotch-smart-frames/tap/omni-build
+```
+
+The formula, in [Blotch's tap](https://github.com/Blotch-Smart-Frames/homebrew-tap), installs the binary from the GitHub release, pinned by its SHA-256. CI installs it with Homebrew on macOS and Linux for every pull request, and audits it as Homebrew audits its own formulae.
+
+## Cargo
+
+```sh
+cargo install omni-build --locked
+```
+
+Cargo builds `omni` from the crate's source, which takes a few minutes and needs [Rust](https://rustup.rs). [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) downloads the binary from the GitHub release instead:
+
+```sh
+cargo binstall omni-build
+```
+
+## GitHub releases
+
+Each [release](https://github.com/Blotch-Smart-Frames/omni-build/releases) has an archive per platform: `omni-build-<Rust target>.tar.gz`, or `.zip` for Windows, holding a folder of the same name with `omni` and the licence. The latest release's are always at the same address, so a script or a CI image can download one by its name:
+
+```sh
+curl -fsSL https://github.com/Blotch-Smart-Frames/omni-build/releases/latest/download/omni-build-x86_64-unknown-linux-musl.tar.gz | tar -xz
+./omni-build-x86_64-unknown-linux-musl/omni --help
+```
+
+`SHA256SUMS`, beside them, has each archive's SHA-256: `sha256sum --check --ignore-missing SHA256SUMS` checks a download. Each archive also has an attestation of the release workflow run that published it, which the GitHub CLI checks:
+
+```sh
+gh attestation verify omni-build-x86_64-unknown-linux-musl.tar.gz --repo Blotch-Smart-Frames/omni-build
+```
 
 ## Platforms
 
@@ -40,4 +69,4 @@ Still to come:
 | Linux   | ARM64, x64           | `@blotch/omni-build-linux-arm64`, `@blotch/omni-build-linux-x64`   | `aarch64-unknown-linux-musl`, `x86_64-unknown-linux-musl` |
 | Windows | ARM64, x64           | `@blotch/omni-build-win32-arm64`, `@blotch/omni-build-win32-x64`   | `aarch64-pc-windows-msvc`, `x86_64-pc-windows-msvc`       |
 
-The Linux binaries are linked statically against musl, so one package per CPU runs on glibc and musl distributions alike. CI builds and runs each of the six on a runner of that OS and CPU for every pull request.
+The Linux binaries are linked statically against musl, so one package and one archive per CPU run on glibc and musl distributions alike. CI builds and runs each of the six on a runner of that OS and CPU for every pull request, and installs it there from its npm package and from its archive.

@@ -2,7 +2,7 @@
   "name": "@blotch/omni-build-release",
   "version": "0.0.1",
   "private": true,
-  "description": "Packs OmniBuild's npm packages, the launcher and one per platform, and checks that npm installs the right binary from them",
+  "description": "Packs OmniBuild's npm packages and the GitHub release's archives, checks that npm and a download install the right binary, and writes the Homebrew formula",
   "license": "MIT",
   "type": "module",
   "scripts": {

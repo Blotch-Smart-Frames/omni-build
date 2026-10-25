@@ -1,6 +1,6 @@
 ---
 title: Roadmap
-description: OmniBuild's phases, the risks the plan names, and the decisions still open.
+description: OmniBuild's phases, the risks the plan names, and the decisions it has made.
 ---
 
 # Roadmap
@@ -33,6 +33,9 @@ The repository already gates every pull request on what OmniBuild will need:
 - **Going unmaintained**, as xbuild did. Apple and Google change SDK minimums, privacy manifests, signing rules or device protocols every year. The scope stays at packaging, signing, installing and uploading, and CI runs against the newest platform images.
 - **Bugs in the signer** would produce binaries that install but fail store checks. Every output is checked with the vendors' own tools in CI (`apksigner verify`, `bundletool validate`, `codesign --verify`), never on users' machines.
 
-## Decisions needed
+## Decisions
 
-- **Signing identities:** whether OmniBuild may create Apple certificates and profiles with the user's API key.
+- **Signing identities:** both ways, so users can choose. OmniBuild makes the key and its signing request for developer.apple.com, with no API key (`omni key request`), and in Phase 2 creates certificates and profiles through the App Store Connect API, with the user's own key, behind a command of its own.
+- **Wireless debugging:** `omni tcpip` first, which switches a phone plugged in by USB to ADB over the network. Then pairing and TLS, through rustls with a pure-Rust crypto provider.
+- **Native modules:** prebuilt binaries in npm packages by default, and a hosted build for native code without them, eventually as a paid service.
+- **Dependencies:** fine, as long as none makes OmniBuild depend on a platform. Nothing may need a Mac, or any other OS, to build or run it.
