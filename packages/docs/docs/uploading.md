@@ -64,7 +64,7 @@ A bundle has to be an AAB: Google Play takes no APKs for new apps. To try an app
 - It reserves room for the `.ipa`, for that version and build, and sends it to Apple's storage, in the parts App Store Connect asks for.
 - It commits the upload, and waits while App Store Connect checks the app, which takes a few minutes. That's where App Store Connect refuses an app it won't take, and warns of what the app should fix before it's released.
 
-Once App Store Connect has taken the app, Apple processes it for TestFlight, which takes a few minutes more, and TestFlight then offers it to the app's internal testers. TestFlight holds a build back until App Store Connect knows whether it uses encryption, so say in the app config, with `ios.usesNonExemptEncryption`, and each build does.
+Once App Store Connect has taken the app, Apple processes it for TestFlight, which takes a few minutes more, and TestFlight then offers it to the app's internal testers. TestFlight holds a build back until App Store Connect knows whether it uses encryption: say so in the app config's `ios.usesNonExemptEncryption`, and every build says it.
 
 ### Before the first upload
 
@@ -79,5 +79,5 @@ OmniBuild signs a token with the key for each request, as it does for `provision
 OmniBuild gives App Store Connect's reasons, each with its number, as Transporter does. The ones you'll meet first:
 
 - **App Store Connect has no app** by the app's bundle ID: create it, or check the app config's `id`.
-- **The build number has been used** (90189), or **the version is closed** for new builds (90062, 90186), as it is once a later version has been approved: give the app config a higher `build`, or a higher `version`.
+- **The build number has been used** (90189), or **the version is closed** for new builds (90062, 90186), as it is once Apple has approved it or a later one: give the app config a higher `build`, or a higher `version`.
 - **A purpose string is missing** (90683): the shell uses an API that iOS asks its user to allow, without saying why. Give it in `ios.usageDescriptions`.
