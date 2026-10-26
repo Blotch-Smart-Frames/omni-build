@@ -128,7 +128,7 @@ describe('build', () => {
       ...artifacts,
       buildDir: 'build',
       outDir: 'out',
-      moduleDir: 'module',
+      modulesDir: 'modules',
     });
 
     const building = (shell: keyof typeof PROJECTS) => [
@@ -151,18 +151,24 @@ describe('build', () => {
       'out/WebViewShell-release-simulator.zip',
       'out/WebViewShell-release.ipa',
     ]);
-    expect(buildIosModule).toHaveBeenCalledWith({
-      project: fileURLToPath(
-        new URL(
-          '../fixtures/module/ios/OmniBuildModule.xcodeproj',
-          import.meta.url,
+    const module = (folder: string, name: string) => [
+      {
+        project: fileURLToPath(
+          new URL(
+            `../fixtures/${folder}/ios/${name}.xcodeproj`,
+            import.meta.url,
+          ),
         ),
-      ),
-      name: 'OmniBuildModule',
-      out: 'module',
-      work: path.join('build', 'ios', 'OmniBuildModule'),
-      log: 'commands.log',
-    });
+        name,
+        out: path.join('modules', name),
+        work: path.join('build', 'ios', name),
+        log: 'commands.log',
+      },
+    ];
+    expect(vi.mocked(buildIosModule).mock.calls).toEqual([
+      module('module', 'OmniBuildModule'),
+      module('web-module', 'OmniBuildWebModule'),
+    ]);
   });
 });
 
@@ -833,12 +839,13 @@ describe("verify, for the WebView shell's build for devices", () => {
       'Payload',
       'WebViewShell.app',
     );
-    const info: Record<string, string> = {
+    const info: Record<string, string | string[]> = {
       CFBundleIdentifier: 'dev.omnibuild.e2e.web',
       CFBundleDisplayName: 'OmniBuild E2E Web',
       CFBundleName: 'WebViewShell',
       CFBundleShortVersionString: '3.1.0',
       CFBundleVersion: '7',
+      OmniBuildModules: ['Echo'],
     };
     respond = (program, args) => {
       if (program === 'plutil') {
@@ -861,6 +868,7 @@ describe("verify, for the WebView shell's build for devices", () => {
       app: 'WebViewShell-linux.ipa',
     });
     delete info.CFBundleDisplayName;
+    delete info.OmniBuildModules;
     const nameless = await ios.verify({
       ...artifacts,
       shell: 'WebViewShell',
@@ -875,6 +883,8 @@ describe("verify, for the WebView shell's build for devices", () => {
         version: '3.1.0',
         build: '7',
         message: 'the message',
+        // The native modules Info.plist lists for the shell.
+        modules: 'Echo',
         applicationIdentifier: 'TEAM.dev.omnibuild.e2e.web',
       },
     });
@@ -882,8 +892,12 @@ describe("verify, for the WebView shell's build for devices", () => {
       path.join(bundle, 'message.txt'),
       'utf8',
     );
-    // Without a display name, the bundle's name is what iOS shows.
-    expect(nameless.report?.name).toBe('WebViewShell');
+    // Without a display name, the bundle's name is what iOS shows, and
+    // without modules, it lists none.
+    expect(nameless.report).toMatchObject({
+      name: 'WebViewShell',
+      modules: '',
+    });
   });
 });
 

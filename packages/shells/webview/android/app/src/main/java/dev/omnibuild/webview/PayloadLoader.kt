@@ -6,6 +6,7 @@ import android.webkit.MimeTypeMap
 import android.webkit.WebResourceResponse
 import java.io.ByteArrayInputStream
 import java.io.FileNotFoundException
+import java.io.InputStream
 
 /**
  * Serves the payload, the APK's assets/, at `https://<host>/assets/`, as
@@ -14,8 +15,16 @@ import java.io.FileNotFoundException
  * secure origin, `https://appassets.androidplatform.net`, where file:// URLs
  * have none: fetch, ES modules, localStorage and the APIs browsers keep for
  * secure contexts work as on the web.
+ *
+ * Each HTML page gets `script` first, before its own scripts run: Android
+ * has no way to run a script at the start of a page without AndroidX, which
+ * the shell does without, so the page carries it, as Capacitor's does.
  */
-class PayloadLoader(private val assets: AssetManager, private val host: String) {
+class PayloadLoader(
+    private val assets: AssetManager,
+    private val host: String,
+    private val script: String,
+) {
     /**
      * The response for a request the page makes, or null for one that isn't
      * for the payload, which the WebView loads from the network as usual.
@@ -40,11 +49,25 @@ class PayloadLoader(private val assets: AssetManager, private val host: String) 
                 200,
                 "OK",
                 mapOf("Cache-Control" to "no-cache"),
-                assets.open(file),
+                if (type == "text/html") withScript(assets.open(file)) else assets.open(file),
             )
         } catch (_: FileNotFoundException) {
             notFound()
         }
+    }
+
+    /**
+     * The page with `script` in a script element of its own: at the start of
+     * its head, or, if it has no head tag, after its doctype, where a browser
+     * starts the head it makes for it. Never before the doctype, which has
+     * to come first, or the page renders in quirks mode. A payload's pages
+     * are UTF-8, as the shell serves them.
+     */
+    private fun withScript(page: InputStream): InputStream {
+        val html = page.use { it.readBytes().toString(Charsets.UTF_8) }
+        val at = (HEAD.find(html) ?: DOCTYPE.find(html))?.range?.last?.plus(1) ?: 0
+        val injected = html.substring(0, at) + "<script>$script</script>" + html.substring(at)
+        return ByteArrayInputStream(injected.toByteArray(Charsets.UTF_8))
     }
 
     /**
@@ -62,6 +85,10 @@ class PayloadLoader(private val assets: AssetManager, private val host: String) 
 
     private companion object {
         const val PREFIX = "/assets/"
+
+        /** A page's head's start tag, and its doctype, in any case. */
+        val HEAD = Regex("<head(\\s[^>]*)?>", RegexOption.IGNORE_CASE)
+        val DOCTYPE = Regex("^\\s*<!doctype[^>]*>", RegexOption.IGNORE_CASE)
 
         /**
          * The web's own types for the files a web app is made of. Browsers

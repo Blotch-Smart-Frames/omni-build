@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { type RunOptions, run } from './process.ts';
-import { MODULE, SHELL, shellOf } from './shell.ts';
+import { MODULES, SHELL, type ShellName, shellOf } from './shell.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 /**
@@ -37,12 +37,12 @@ const APP: {
   };
 } = JSON.parse(readFileSync(APP_CONFIG, 'utf8'));
 /**
- * The native module the app depends on (`app/package.json`), as its own
- * package.json says what it adds to an app.
+ * The native module the fixture's app depends on (`app/package.json`), as
+ * its own package.json says what it adds to an app.
  */
 const NATIVE_MODULE: {
   omniBuild: { android: { permissions: string[] } };
-} = JSON.parse(readFileSync(MODULE.packageJson, 'utf8'));
+} = JSON.parse(readFileSync(MODULES.OmniBuildShell.packageJson, 'utf8'));
 /**
  * What the module says when the shell registers it (fixtures/module): its
  * framework's bundle ID on the Simulator, its class's name on Android, and
@@ -54,6 +54,19 @@ const MODULE_REPORTS = {
   devices: 'OmniBuildModule',
   android: 'OmniBuildModule in dev.omnibuild.module.OmniBuildModule',
 };
+/**
+ * What the web app's native module, `Echo` (fixtures/web-module), answers
+ * the page's `echo`: what the page gave it, and the bundle its code is in on
+ * iOS, its framework's, or its class's name and the app's ID on Android,
+ * which only the Context the shell made it with knows. Then how a method it
+ * hasn't fails.
+ */
+const ECHOED = { text: 'hello' };
+const ECHO_FROM = {
+  ios: 'dev.omnibuild.webmodule',
+  android: 'dev.omnibuild.webmodule.Echo in dev.omnibuild.e2e.web',
+};
+const ECHO_ERROR = 'Echo has no method shout';
 /** The colour of every pixel of the app's icon, `app/icon.png`. */
 const APP_ICON = '#E8590C';
 /**
@@ -265,6 +278,7 @@ const expectedWebApp = (
       version: WEB_APP.version,
       build: String(WEB_APP.build),
       message,
+      modules: 'Echo',
       signer: SIGNER,
       applicationIdentifier: `${TEAM}.${WEB_APP.id}`,
     };
@@ -277,6 +291,9 @@ const expectedWebApp = (
     origin: WEB_ORIGINS[platform],
     storage: 'works',
     message,
+    modules: 'Echo',
+    module: JSON.stringify({ echo: ECHOED, from: ECHO_FROM[platform] }),
+    moduleError: ECHO_ERROR,
     signer: platform === 'android' ? androidSigner(app) : 'ad hoc',
   };
 };
@@ -408,25 +425,28 @@ export const expected = (
 };
 
 /**
- * Installs the native module's binaries, as the Module workflow writes
- * them (`ios/`, `android/`), for the app, beside its package.json, as npm
- * would install the module's package: its package.json, and the binaries
- * it names.
+ * Installs the native module the shell's app gets, from its binaries in
+ * `modules`, in a folder of its name, as the Module workflow writes them
+ * (`ios/`, `android/`), as npm would install the module's package: its
+ * package.json, and the binaries it names, in the node_modules beside the
+ * apps' configs, where each app's package.json finds it.
  */
-export const installModule = (module: string) => {
-  if (!existsSync(module)) {
+export const installModule = (shell: ShellName, modules: string) => {
+  const module = MODULES[shell];
+  const binaries = path.join(modules, module.name);
+  if (!existsSync(binaries)) {
     throw new Error(
-      `There's no native module in ${module}: run the build stage first, or give --module the folder the Module workflow wrote.`,
+      `There's no native module in ${binaries}: run the build stage first, or give --modules the folder with the Module workflow's ${module.name}.`,
     );
   }
   const installed = path.join(
     path.dirname(APP_CONFIG),
     'node_modules',
-    MODULE.packageName,
+    module.packageName,
   );
   rmSync(installed, { recursive: true, force: true });
-  cpSync(module, installed, { recursive: true });
-  copyFileSync(MODULE.packageJson, path.join(installed, 'package.json'));
+  cpSync(binaries, installed, { recursive: true });
+  copyFileSync(module.packageJson, path.join(installed, 'package.json'));
 };
 
 /**
@@ -437,13 +457,13 @@ export const installModule = (module: string) => {
 export const repackage = async ({
   shell,
   outDir,
-  module,
+  modules,
   log,
 }: {
   shell: string;
   outDir: string;
-  /** The native module the fixture's app gets (see installModule()). */
-  module: string;
+  /** The native modules' binaries (see installModule()). */
+  modules: string;
   log: string;
 }) => {
   mkdirSync(outDir, { recursive: true });
@@ -456,9 +476,7 @@ export const repackage = async ({
   );
   const env = { ...toolchainFree(), OMNI_BUILD_KEY_PASSWORD: KEY_PASSWORD };
   const webApp = shellOf(shell) === 'WebViewShell';
-  if (!webApp) {
-    installModule(module);
-  }
+  installModule(shellOf(shell), modules);
   // A hidden folder, which no stage takes for an app.
   const keys = mkdtempSync(path.join(outDir, '.keys-'));
   try {

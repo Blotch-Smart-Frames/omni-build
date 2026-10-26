@@ -114,8 +114,8 @@ describe('run', () => {
         ...artifactsOf('build'),
         buildDir: path.join(packageDir, 'build'),
         outDir,
-        // The native module, beside the shells.
-        moduleDir: path.join(packageDir, 'build', 'module'),
+        // The native modules, beside the shells.
+        modulesDir: path.join(packageDir, 'build', 'modules'),
       });
       expect(existsSync(stale)).toBe(false);
       expect(output).toEqual([
@@ -162,15 +162,15 @@ describe('run', () => {
       ).toBe(0);
 
       const outDir = path.join(packageDir, 'build', 'repackaged', 'android');
-      // With the native module the build stage wrote.
-      const module = path.join(packageDir, 'build', 'module');
+      // With the native modules the build stage wrote.
+      const modules = path.join(packageDir, 'build', 'modules');
       expect(repackage.mock.calls).toEqual([
         [
           {
             ...artifactsOf('repackage'),
             shell: path.join(packageDir, 'a.apk'),
             outDir,
-            module,
+            modules,
           },
         ],
         [
@@ -178,7 +178,7 @@ describe('run', () => {
             ...artifactsOf('repackage'),
             shell: path.join(packageDir, 'a.aab'),
             outDir,
-            module,
+            modules,
           },
         ],
       ]);
@@ -200,15 +200,15 @@ describe('run', () => {
         'android',
         '--out',
         path.join(packageDir, 'out'),
-        '--module',
-        path.join(packageDir, 'module'),
+        '--modules',
+        path.join(packageDir, 'modules'),
       );
 
       expect(repackage).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
           shell: path.join(shells, 'Shell.apk'),
           outDir: path.join(packageDir, 'out'),
-          module: path.join(packageDir, 'module'),
+          modules: path.join(packageDir, 'modules'),
         }),
       );
     });

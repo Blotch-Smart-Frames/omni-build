@@ -15,6 +15,7 @@ struct PayloadWebView: UIViewRepresentable {
             forURLScheme: PayloadSchemeHandler.scheme
         )
         ConsoleHandler.install(in: configuration.userContentController)
+        NativeModules.install(in: configuration.userContentController)
         // Media plays in the page, as on the web, rather than going full
         // screen as an iPhone otherwise makes it.
         configuration.allowsInlineMediaPlayback = true

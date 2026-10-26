@@ -3,7 +3,7 @@
   "version": "0.2",
   "import": ["../../cspell.json"],
   // The Gradle wrappers and the Xcode projects, as Gradle and Xcode generate
-  // them: the shell's and the native module's.
+  // them: the shell's and the native modules'.
   "ignorePaths": [
     "fixtures/android/gradlew",
     "fixtures/android/gradlew.bat",
@@ -12,7 +12,11 @@
     "fixtures/module/android/gradlew",
     "fixtures/module/android/gradlew.bat",
     "fixtures/module/android/gradle/wrapper",
-    "fixtures/module/ios/OmniBuildModule.xcodeproj"
+    "fixtures/module/ios/OmniBuildModule.xcodeproj",
+    "fixtures/web-module/android/gradlew",
+    "fixtures/web-module/android/gradlew.bat",
+    "fixtures/web-module/android/gradle/wrapper",
+    "fixtures/web-module/ios/OmniBuildWebModule.xcodeproj"
   ],
   "words": [
     "adbd",
@@ -26,6 +30,7 @@
     "Dfile",
     "getprop",
     "getpwuid",
+    "JSONTokener",
     "jvmargs",
     "lproj",
     "NSURL",
@@ -39,6 +44,7 @@
     "Unretained",
     "usernotifications",
     "watchkitapp",
+    "webmodule",
     "widgetkit",
     "xcodeproj",
     "xcuserdata"

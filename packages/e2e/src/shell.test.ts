@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   GRADLE_PROJECTS,
-  MODULE,
+  MODULES,
   SHELL,
   SHELLS,
   XCODE_PROJECTS,
@@ -83,34 +83,46 @@ describe('the shells', () => {
     );
   });
 
-  // A module's binaries are built against the shell's runtime, and the
-  // fixture's for the fixture's.
-  it.each([
-    [
-      'compileSdk',
-      /^\s*compileSdk = (\d+)$/gm,
-      'app/build.gradle.kts',
-      'module/build.gradle.kts',
-    ],
-    [
-      'minSdk',
-      /^\s*minSdk = (\d+)$/gm,
-      'app/build.gradle.kts',
-      'module/build.gradle.kts',
-    ],
-    [
-      'the Android Gradle plugin',
-      /id\("com\.android\.(?:application|library)"\) version "([^"]+)"/g,
-      'build.gradle.kts',
-      'build.gradle.kts',
-    ],
-  ])(
-    'and the native module build for Android with the same %s',
-    (_, pattern, shellFile, moduleFile) => {
+  // A module's binaries are built against its shell's runtime: each
+  // module's against its shell's.
+  it.each(
+    SHELLS.flatMap((shell) =>
+      (
+        [
+          [
+            'compileSdk',
+            /^\s*compileSdk = (\d+)$/gm,
+            'app/build.gradle.kts',
+            'module/build.gradle.kts',
+          ],
+          [
+            'minSdk',
+            /^\s*minSdk = (\d+)$/gm,
+            'app/build.gradle.kts',
+            'module/build.gradle.kts',
+          ],
+          [
+            'the Android Gradle plugin',
+            /id\("com\.android\.(?:application|library)"\) version "([^"]+)"/g,
+            'build.gradle.kts',
+            'build.gradle.kts',
+          ],
+        ] as const
+      ).map(([setting, pattern, shellFile, moduleFile]) => ({
+        shell,
+        setting,
+        pattern,
+        shellFile,
+        moduleFile,
+      })),
+    ),
+  )(
+    "and $shell's native module build for Android with the same $setting",
+    ({ shell, pattern, shellFile, moduleFile }) => {
       const values = settings(
         {
-          shell: path.join(GRADLE_PROJECTS.OmniBuildShell, shellFile),
-          module: path.join(MODULE.gradleProject, moduleFile),
+          shell: path.join(GRADLE_PROJECTS[shell], shellFile),
+          module: path.join(MODULES[shell].gradleProject, moduleFile),
         },
         pattern,
       );
@@ -127,7 +139,10 @@ describe('the shells', () => {
           shell,
           path.join(XCODE_PROJECTS[shell], 'project.pbxproj'),
         ]),
-        [MODULE.name, path.join(MODULE.xcodeProject, 'project.pbxproj')],
+        ...SHELLS.map((shell) => [
+          MODULES[shell].name,
+          path.join(MODULES[shell].xcodeProject, 'project.pbxproj'),
+        ]),
       ]),
       /IPHONEOS_DEPLOYMENT_TARGET = ([\d.]+);/g,
     );

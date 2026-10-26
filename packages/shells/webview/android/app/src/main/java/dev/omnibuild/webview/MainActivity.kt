@@ -49,7 +49,6 @@ class MainActivity : Activity() {
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             WebView.setWebContentsDebuggingEnabled(true)
         }
-        val payload = PayloadLoader(assets, HOST)
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -57,9 +56,13 @@ class MainActivity : Activity() {
             // no need to read files or content providers directly.
             settings.allowFileAccess = false
             settings.allowContentAccess = false
-            webViewClient = ShellClient(payload)
             webChromeClient = ShellChromeClient()
         }
+        // The native modules OmniBuild added, which the payload's pages call
+        // through window.omniBuild, the script PayloadLoader puts in each.
+        val modules = NativeModules(this, webView)
+        webView.addJavascriptInterface(modules.bridge, NativeModules.INTERFACE)
+        webView.webViewClient = ShellClient(PayloadLoader(assets, HOST, modules.script))
         keepClearOfSystemBars(webView)
         setContentView(webView)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

@@ -88,6 +88,58 @@ What the page logs to its console goes to the system's log, with no web inspecto
 
 The messages are public in the log, as they are to anyone with a web inspector, so don't log what the device's owner mustn't see.
 
+## Native modules
+
+A web app reaches native code through the [native modules](./native-modules.md) among its npm dependencies, which `omni repackage` adds to the app when the app config's `packageJson` names its `package.json`. The shell's runtime is `webview@1`, and a module built for it is one the page calls:
+
+```js
+omniBuild.modules; // ['Haptics'], the app's native modules
+const result = await omniBuild.call('Haptics', 'impact', { style: 'heavy' });
+```
+
+`window.omniBuild` is there before the page's own scripts run, on every page of the payload. `call` takes a module, by its class's own name, a method, and an argument, anything JSON takes, and resolves with the module's answer, or rejects with an `Error` of the module's reason, or one that says the app has no such module. Only the payload's own pages reach native code: a frame from elsewhere in them, such as an embedded video, can't, on iOS because the shell checks where each call comes from, and on Android because each call carries a token the shell gives the payload's pages alone.
+
+### Writing a module for the WebView shell
+
+A module's class has a method the shell calls for each of the page's calls, with the method's name and the argument as JSON. It answers once, with JSON or with why it failed, on any thread.
+
+On iOS, a class with an Objective-C name, which the shell finds by that name, made with no arguments, and calls on the main thread:
+
+```swift
+@objc(Haptics)
+public final class Haptics: NSObject {
+    @objc public func call(_ method: String, argument: String, reply: @escaping (String?, String?) -> Void) {
+        guard method == "impact" else { return reply(nil, "Haptics has no method \(method)") }
+        UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+        reply("true", nil)
+    }
+}
+```
+
+On Android, a class the shell makes with the activity, if it takes a `Context`, or with nothing, and calls on the main thread:
+
+```kotlin
+class Haptics(private val context: Context) {
+    fun call(method: String, argument: String, reply: ValueCallback<String>, fail: ValueCallback<String>) {
+        if (method != "impact") return fail.onReceiveValue("Haptics has no method $method")
+        context.getSystemService(Vibrator::class.java).vibrate(VibrationEffect.createOneShot(50, 255))
+        reply.onReceiveValue("true")
+    }
+}
+```
+
+Its `package.json` names the runtime and the class, which the page calls by its own name, without its package: `Haptics` for `com.example.haptics.Haptics`.
+
+```json
+"omniBuild": {
+  "runtime": "webview@1",
+  "ios": { "frameworks": ["ios/Haptics.xcframework"], "modules": ["Haptics"] },
+  "android": { "dex": ["android/classes.dex"], "modules": ["com.example.haptics.Haptics"], "permissions": ["VIBRATE"] }
+}
+```
+
+The [Module workflow](./native-modules.md#building-one) builds both with the Xcode and the Android Gradle plugin the shell is built with, and the end-to-end tests run such a module, `Echo`, which the test web app calls on the iOS Simulator and Android 5.0 and 14.
+
 ## Debug and release builds
 
 A debug build of the shell (`WebViewShell-debug.*`) can be inspected: with Chrome's `chrome://inspect` on Android, and Safari's Web Inspector on iOS. A release build can't, which is what goes to the stores.

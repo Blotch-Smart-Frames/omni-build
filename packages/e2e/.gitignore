@@ -13,6 +13,11 @@
 /fixtures/module/android/build/
 /fixtures/module/android/module/build/
 /fixtures/module/android/local.properties
+/fixtures/web-module/android/.gradle/
+/fixtures/web-module/android/.kotlin/
+/fixtures/web-module/android/build/
+/fixtures/web-module/android/module/build/
+/fixtures/web-module/android/local.properties
 
 # Xcode and Android Studio, when a fixture is opened in them
 xcuserdata/

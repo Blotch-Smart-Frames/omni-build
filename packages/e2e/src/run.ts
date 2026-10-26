@@ -37,13 +37,14 @@ export interface Platform<Started = unknown, Device = unknown> {
   toolchain: string;
   /**
    * Builds every shell into `outDir`, and returns their paths, and the
-   * native module the fixture's apps get into `moduleDir`.
+   * native module each shell's app gets into a folder of its own in
+   * `modulesDir`.
    */
   build(
     options: Artifacts & {
       buildDir: string;
       outDir: string;
-      moduleDir: string;
+      modulesDir: string;
     },
   ): Promise<string[]>;
   /**
@@ -98,12 +99,12 @@ Commands:
              devices, of each shell), as CI's Shell workflow does
              (packages/shells): the only stage that uses them. Writes them
              to --out (default: build/shells/<platform>), and the native
-             module the fixture's apps get, as CI's Module workflow builds
-             it, to build/module.
+             module each shell's app gets, as CI's Module workflow builds
+             them, to build/modules/<module>.
   repackage  Run each shell (--shell) through omni, which gets no
-             PATH and no toolchain variables, the fixture with the native
-             module (--module) installed for the app as npm would install
-             it. Writes to --out (default: build/repackaged/<platform>).
+             PATH and no toolchain variables, with its app's native module
+             (--modules) installed for it as npm would install it. Writes to
+             --out (default: build/repackaged/<platform>).
   test [app...]
              Install and launch each app (default: every file in
              build/repackaged/<platform>), and check what it reports.
@@ -112,9 +113,10 @@ Options:
   --platform <ios|android>  Required.
   --shell <file>            repackage: a shell, as often as there are
                             shells. Default: the ones build wrote.
-  --module <dir>            repackage: the native module's binaries, as
-                            the Module workflow writes them (ios/,
-                            android/). Default: the ones build wrote.
+  --modules <dir>           repackage: the native modules' binaries, each
+                            in a folder of its module's name, as the
+                            Module workflow writes them (ios/, android/).
+                            Default: the ones build wrote.
   --out <dir>               build, repackage: where to write.
   --avd <name>              test, Android: boot this emulator unless it's
                             already running (\`emulator -list-avds\` lists
@@ -156,7 +158,7 @@ export const run = async (
     options: {
       platform: { type: 'string' },
       shell: { type: 'string', multiple: true },
-      module: { type: 'string' },
+      modules: { type: 'string' },
       out: { type: 'string' },
       avd: { type: 'string' },
       'artifacts-dir': { type: 'string' },
@@ -188,7 +190,7 @@ export const run = async (
     platformId,
   );
   const shellsDir = path.join(buildDir, 'shells', platformId);
-  const moduleDir = path.join(buildDir, 'module');
+  const modulesDir = path.join(buildDir, 'modules');
   const repackagedDir = path.join(buildDir, 'repackaged', platformId);
 
   /**
@@ -208,7 +210,7 @@ export const run = async (
       ...artifactsFor('build'),
       buildDir,
       outDir,
-      moduleDir,
+      modulesDir,
     });
     shells.forEach((shell) => console.log(shell));
     return shells;
@@ -217,7 +219,7 @@ export const run = async (
   const repackageStage = async (
     shells: string[],
     outDir: string,
-    module: string,
+    modules: string,
   ) => {
     step('Repackaging them with omni, with no toolchain in reach');
     const artifacts = artifactsFor('repackage');
@@ -227,7 +229,7 @@ export const run = async (
         ...artifacts,
         shell,
         outDir,
-        module,
+        modules,
       });
       console.log(app);
       apps.push(app);
@@ -342,7 +344,7 @@ export const run = async (
             ? values.shell.map((shell) => path.resolve(shell))
             : filesFrom(shellsDir, 'build'),
           path.resolve(values.out ?? repackagedDir),
-          values.module ? path.resolve(values.module) : moduleDir,
+          values.modules ? path.resolve(values.modules) : modulesDir,
         );
         break;
       case 'test': {
@@ -361,7 +363,7 @@ export const run = async (
           apps = await repackageStage(
             await buildStage(shellsDir),
             repackagedDir,
-            moduleDir,
+            modulesDir,
           );
         } catch (error) {
           // The device started booting first; don't leave it running for a

@@ -1,0 +1,17 @@
+{
+  "name": "omnibuild-e2e-web-module",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The native module the E2E tests add to the web app made from the WebView shell, which its page calls as Echo: this package.json, with the binaries the Module workflow builds from ios/ and android/ beside it",
+  "omniBuild": {
+    "runtime": "webview@1",
+    "ios": {
+      "frameworks": ["ios/OmniBuildWebModule.xcframework"],
+      "modules": ["Echo"]
+    },
+    "android": {
+      "dex": ["android/classes.dex"],
+      "modules": ["dev.omnibuild.webmodule.Echo"]
+    }
+  }
+}
