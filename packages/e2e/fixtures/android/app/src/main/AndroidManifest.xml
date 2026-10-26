@@ -33,6 +33,13 @@
             android:name=".ShellProvider"
             android:authorities="${applicationId}.provider"
             android:exported="false" />
+        <!-- The runtime the shell registers native modules of, which a
+             module has to be built for: OmniBuild refuses one built for
+             another, and adds the rest to the app's code, listing them in
+             dev.omnibuild.modules for ShellReport.modules() to register. -->
+        <meta-data
+            android:name="dev.omnibuild.runtime"
+            android:value="omnibuild-e2e@1" />
     </application>
 
 </manifest>

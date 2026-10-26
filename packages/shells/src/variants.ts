@@ -53,11 +53,7 @@ export const variants = (
   platform: Platform,
   configurations: readonly Configuration[] = CONFIGURATIONS,
 ): Variant[] => {
-  if (!NAME.test(name)) {
-    throw new Error(
-      `'${name}' can't name a shell's files: use letters, digits, '.', '_' and '-', starting with a letter or digit.`,
-    );
-  }
+  checkName(name, 'shell');
   return configurations.flatMap((configuration) =>
     FORMATS[platform].map((format) => ({
       file: `${name}-${configuration}${ENDINGS[format]}`,
@@ -66,6 +62,18 @@ export const variants = (
       configuration,
     })),
   );
+};
+
+/**
+ * Throws if `name` can't name the files of a `what`, a shell or a native
+ * module.
+ */
+export const checkName = (name: string, what: string) => {
+  if (!NAME.test(name)) {
+    throw new Error(
+      `'${name}' can't name a ${what}'s files: use letters, digits, '.', '_' and '-', starting with a letter or digit.`,
+    );
+  }
 };
 
 /** `debug` as Xcode and Gradle name it: `Debug`. */

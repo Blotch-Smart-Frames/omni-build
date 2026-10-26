@@ -1,0 +1,19 @@
+{
+  "name": "omnibuild-e2e-module",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The native module the E2E tests add to the fixture's apps, as npm would install it: this package.json, with the binaries the Module workflow builds from ios/ and android/ beside it",
+  "omniBuild": {
+    "runtime": "omnibuild-e2e@1",
+    "ios": {
+      "frameworks": ["ios/OmniBuildModule.xcframework"],
+      "modules": ["OmniBuildModule"]
+    },
+    "android": {
+      "dex": ["android/classes.dex"],
+      "jniLibs": "android/jni",
+      "modules": ["dev.omnibuild.module.OmniBuildModule"],
+      "permissions": ["ACCESS_NETWORK_STATE"]
+    }
+  }
+}

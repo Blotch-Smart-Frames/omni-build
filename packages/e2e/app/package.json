@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "The E2E app's dependencies, which app.json's packageJson names: the native module in fixtures/module, which the repackage stage installs in node_modules beside this file, as npm would",
+  "dependencies": {
+    "omnibuild-e2e-module": "1.0.0"
+  }
+}

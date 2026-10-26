@@ -50,6 +50,10 @@ struct ShellReport: Encodable {
     /// The bundle ID of the watch app's widgets, in its own PlugIns/,
     /// which watchOS requires under the watch app's.
     let watchWidgetsId: String?
+    /// What the native modules OmniBuild added say, once the shell has
+    /// registered them, which their code only does if each framework
+    /// loaded and its class was found.
+    let modules: String?
 
 
     init(bundle: Bundle) {
@@ -85,6 +89,7 @@ struct ShellReport: Encodable {
         watchWidgetsId = watchApp?.builtInPlugInsURL.flatMap {
             Self.bundleId(in: $0, kind: "appex")
         }
+        modules = ShellModules.reports(of: bundle)
         version = info["CFBundleShortVersionString"] as? String
         build = info["CFBundleVersion"] as? String
         payload = bundle.url(forResource: "payload", withExtension: "txt")

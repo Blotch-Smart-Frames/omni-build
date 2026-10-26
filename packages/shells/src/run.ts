@@ -5,12 +5,15 @@ import { parseArgs } from 'node:util';
 import { buildAndroid as buildAndroidShell } from './android.ts';
 import { check as checkShells } from './check.ts';
 import { buildIos as buildIosShell } from './ios.ts';
+import { buildAndroidModule as buildAndroidModuleBinaries } from './module-android.ts';
+import { buildIosModule as buildIosModuleBinaries } from './module-ios.ts';
 
 export const HELP = `Usage: npm run shells -w @blotch/omni-build-shells -- <command> [options]
 
 Builds an app shell's variants with Xcode or Gradle, and checks that omni
 repackages each one, as the Shell workflow (.github/workflows/shell.yml)
-does in CI.
+does in CI, and builds a native module's binaries, as the Module workflow
+(.github/workflows/module.yml) does.
 
 Commands:
   build  Build the shell, debug and release: on iOS an app for the
@@ -34,6 +37,20 @@ Commands:
                            both. Required.
          --name <name>     The shell's name. Required.
          --omni <file>     The omni binary. Default: omni, on the PATH.
+  module Build a native module's binaries, as its package.json's
+         omniBuild names them: on iOS its framework for devices and the
+         Simulator, as <out>/ios/<name>.xcframework, and on Android its
+         library's classes as DEX, without the libraries it uses
+         (<out>/android/classes.dex), and its native libraries
+         (<out>/android/jni/<abi>/).
+         --platform <ios|android>
+                           Required.
+         --project <path>  The Xcode project (.xcodeproj), whose scheme
+                           <name> builds <name>.framework, or the Gradle
+                           project's folder. Required.
+         --name <name>     iOS: the framework, and its scheme. Required.
+         --library <name>  Android: the library module. Required.
+         --out <dir>       Where to write them. Required.
 
 Options:
   --help  Show this.`;
@@ -42,6 +59,8 @@ export interface RunOptions {
   buildIos?: typeof buildIosShell;
   buildAndroid?: typeof buildAndroidShell;
   check?: typeof checkShells;
+  buildIosModule?: typeof buildIosModuleBinaries;
+  buildAndroidModule?: typeof buildAndroidModuleBinaries;
 }
 
 export interface RunResult {
@@ -61,6 +80,8 @@ export const run = async (
     buildIos = buildIosShell,
     buildAndroid = buildAndroidShell,
     check = checkShells,
+    buildIosModule = buildIosModuleBinaries,
+    buildAndroidModule = buildAndroidModuleBinaries,
   }: RunOptions = {},
 ): Promise<RunResult> => {
   let values;
@@ -73,6 +94,7 @@ export const run = async (
         platform: { type: 'string' },
         project: { type: 'string' },
         name: { type: 'string' },
+        library: { type: 'string' },
         out: { type: 'string' },
         shells: { type: 'string' },
         omni: { type: 'string', default: 'omni' },
@@ -117,6 +139,26 @@ export const run = async (
         return usage('check needs --shells and --name');
       }
       await check({ shells, name, omni });
+    } else if (command === 'module') {
+      const { platform, project, name, library, out } = values;
+      // Derived data and an unpacked AAR, kept between runs in the
+      // temporary folder, as a shell's are.
+      const work = (what: string) =>
+        path.join(os.tmpdir(), 'omni-build-modules', what);
+      if (platform === 'ios' && project && name && out) {
+        await buildIosModule({ project, name, out, work: work(name) });
+      } else if (platform === 'android' && project && library && out) {
+        await buildAndroidModule({
+          project,
+          library,
+          out,
+          work: work(library),
+        });
+      } else {
+        return usage(
+          'module needs --platform ios, --project, --name and --out, or --platform android, --project, --library and --out',
+        );
+      }
     } else {
       return usage(command ? `Unknown command '${command}'` : 'Name a command');
     }

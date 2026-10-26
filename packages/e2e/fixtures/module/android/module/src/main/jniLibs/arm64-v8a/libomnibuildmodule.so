@@ -1,0 +1,1 @@
+A stand-in for the module's native library built for arm64-v8a. The app never loads it.

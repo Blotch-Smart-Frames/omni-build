@@ -1,0 +1,53 @@
+// The init script the shells tool (module-android.ts) builds a native
+// module's Android code with, so that a module's own Gradle project needs
+// nothing added to it. It gives each Android library project a task,
+// omniBuildModule, which builds the library's release AAR, unpacks its
+// classes and native libraries into the folder the omniBuildModuleOut
+// property names, and prints what d8 needs to compile the classes into DEX,
+// one `omni-build-<what>: <value>` line each:
+//
+// - d8: d8, in the Android SDK's build tools of the version the Android
+//   Gradle plugin builds with
+// - min-sdk: the oldest Android the library runs on, which d8 compiles for
+// - lib: the Android SDK's classes, which every device has
+// - classpath: the libraries the library compiles against, such as Kotlin's
+//   standard library, which d8 reads but leaves out of the DEX: the app has
+//   them already, and Android loads only one of a class
+allprojects {
+    pluginManager.withPlugin('com.android.library') {
+        def android = extensions.getByName('android')
+        def components = extensions.getByName('androidComponents')
+        components.onVariants(components.selector().withBuildType('release')) { variant ->
+            def classpath = variant.compileClasspath
+            def bootClasspath = components.sdkComponents.bootClasspath
+            def sdk = components.sdkComponents.sdkDirectory
+            def buildTools = android.buildToolsVersion
+            def minSdk = variant.minSdk.apiLevel
+            def aars = layout.buildDirectory.dir('outputs/aar')
+            def out = providers.gradleProperty('omniBuildModuleOut')
+            tasks.register('omniBuildModule') {
+                dependsOn('assembleRelease')
+                // So that Gradle builds what's on the classpath, such as the
+                // library's R class, first.
+                inputs.files(classpath)
+                doLast {
+                    def aar = aars.get().asFile.listFiles().find { it.name.endsWith('-release.aar') }
+                    def folder = new File(out.get())
+                    new java.util.zip.ZipFile(aar).withCloseable { zip ->
+                        zip.entries().findAll {
+                            !it.directory && (it.name == 'classes.jar' || it.name.startsWith('jni/'))
+                        }.each { entry ->
+                            def file = new File(folder, entry.name)
+                            file.parentFile.mkdirs()
+                            file.bytes = zip.getInputStream(entry).bytes
+                        }
+                    }
+                    println("omni-build-d8: ${new File(sdk.get().asFile, "build-tools/${buildTools}/d8")}")
+                    println("omni-build-min-sdk: ${minSdk}")
+                    bootClasspath.get().each { println("omni-build-lib: ${it.asFile}") }
+                    classpath.files.each { println("omni-build-classpath: ${it}") }
+                }
+            }
+        }
+    }
+}
