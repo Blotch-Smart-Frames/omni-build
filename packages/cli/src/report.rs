@@ -69,6 +69,20 @@ pub enum Event {
         /// Each profile's file, in the folder.
         profiles: Vec<String>,
     },
+    /// `upload` uploaded the app to its store.
+    Uploaded {
+        app: String,
+        /// The app's ID.
+        id: String,
+        /// Its version, as people see it, if it has one as text.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+        /// Its build number: an Android app's version code.
+        build: String,
+        /// Which store, and what became of the app there.
+        #[serde(flatten)]
+        store: Store,
+    },
     /// The device asks its user whether to allow this computer, and
     /// OmniBuild waits for the answer.
     Authorizing { device: String },
@@ -142,6 +156,39 @@ pub enum Platform {
     Ios,
 }
 
+/// The store `upload` uploaded an app to, and what became of it there.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "store", rename_all = "kebab-case")]
+pub enum Store {
+    /// Released to one of the app's tracks on Google Play.
+    GooglePlay {
+        /// The track, as `--track` took it.
+        track: String,
+        /// Whether the release is a draft, to roll out in the Play Console.
+        draft: bool,
+    },
+}
+
+impl Store {
+    /// The sentence a person reads for `app`, the app `id`, with its
+    /// version and build, uploaded here.
+    fn uploaded(&self, app: &str, id: &str, version: Option<&str>, build: &str) -> String {
+        let release = match version {
+            Some(version) => format!("{id} {version} ({build})"),
+            None => format!("{id} ({build})"),
+        };
+        match self {
+            Self::GooglePlay { track, draft: true } => format!(
+                "Uploaded {app}, {release}, to Google Play, as a draft release on its {track} track: roll it out in the Play Console"
+            ),
+            Self::GooglePlay {
+                track,
+                draft: false,
+            } => format!("Released {app}, {release}, to Google Play's {track} track"),
+        }
+    }
+}
+
 /// The kind of file an app is in.
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -213,6 +260,13 @@ impl Event {
                 "Wrote {} provisioning profiles for the app to {out}, which allow \"{certificate}\" in {keystore}, until {expires}. Sign the app with --signing-key {keystore} --profile {out}",
                 distribution.name()
             ),
+            Self::Uploaded {
+                app,
+                id,
+                version,
+                build,
+                store,
+            } => store.uploaded(app, id, version.as_deref(), build),
             Self::Authorizing { device } => format!(
                 "{device} asks whether to allow debugging from this computer. Allow it on the device."
             ),
@@ -263,6 +317,7 @@ impl Event {
             } | Self::KeyRequested { .. }
                 | Self::CertificateImported { .. }
                 | Self::Provisioned { .. }
+                | Self::Uploaded { .. }
                 | Self::Repackaged { .. }
                 | Self::Installed { .. }
                 | Self::Listening { .. }
@@ -323,7 +378,7 @@ impl Reporter {
 
 #[cfg(test)]
 mod tests {
-    use super::{Event, Format, KeyKind, Line, Platform, Reporter};
+    use super::{Event, Format, KeyKind, Line, Platform, Reporter, Store};
     use crate::ios::Distribution;
 
     fn repackaged() -> Event {
@@ -404,6 +459,58 @@ mod tests {
         for (event, message) in news {
             assert_eq!(people.line(&event), Line::Stderr(message.to_owned()));
         }
+    }
+
+    fn uploaded(version: Option<&str>, draft: bool) -> Event {
+        Event::Uploaded {
+            app: "app.aab".to_owned(),
+            id: "dev.example.app".to_owned(),
+            version: version.map(str::to_owned),
+            build: "42".to_owned(),
+            store: Store::GooglePlay {
+                track: "internal".to_owned(),
+                draft,
+            },
+        }
+    }
+
+    #[test]
+    fn tells_people_what_it_uploaded() {
+        let people = Reporter::new(false);
+
+        assert_eq!(
+            people.line(&uploaded(Some("1.2.0"), false)),
+            Line::Stdout(
+                "Released app.aab, dev.example.app 1.2.0 (42), to Google Play's internal track"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            people.line(&uploaded(None, true)),
+            Line::Stdout(
+                "Uploaded app.aab, dev.example.app (42), to Google Play, as a draft release on its internal track: roll it out in the Play Console"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn tells_build_tools_what_it_uploaded() {
+        let tools = Reporter::new(true);
+
+        assert!(matches!(
+            tools.line(&uploaded(Some("1.2.0"), false)),
+            Line::Stdout(line) if line.starts_with(
+                r#"{"event":"uploaded","app":"app.aab","id":"dev.example.app","version":"1.2.0","build":"42","store":"google-play","track":"internal","draft":false,"message":"Released "#
+            )
+        ));
+        // A version the app doesn't have as text is left out.
+        assert!(matches!(
+            tools.line(&uploaded(None, true)),
+            Line::Stdout(line) if line.starts_with(
+                r#"{"event":"uploaded","app":"app.aab","id":"dev.example.app","build":"42","store":"google-play","track":"internal","draft":true,"message":"Uploaded "#
+            )
+        ));
     }
 
     #[test]

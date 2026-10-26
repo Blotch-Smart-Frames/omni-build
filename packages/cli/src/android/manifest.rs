@@ -574,6 +574,30 @@ fn meta_data_value(manifest: &dyn Document, name: &str) -> Option<usize> {
         .position(|attribute| attribute.node == node && attribute.resource_id == Some(VALUE))
 }
 
+/// What an app is, as its manifest says.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Identity {
+    /// Its ID: the manifest's package.
+    pub id: String,
+    /// Its version, as people see it (`android:versionName`), if the
+    /// manifest has one as text rather than a resource's.
+    pub version: Option<String>,
+}
+
+/// What the app whose manifest it is is.
+pub fn identity(manifest: &dyn Document) -> Result<Identity> {
+    let version = find(manifest, "manifest", VERSION_NAME).and_then(|index| {
+        match &manifest.attributes()[index].value {
+            Value::String(version) => Some(version.clone()),
+            _ => None,
+        }
+    });
+    Ok(Identity {
+        id: package(manifest)?,
+        version,
+    })
+}
+
 /// The manifest's package.
 fn package(manifest: &dyn Document) -> Result<String> {
     manifest
@@ -589,7 +613,7 @@ fn package(manifest: &dyn Document) -> Result<String> {
             }
             _ => None,
         })
-        .context("it has no package to change")
+        .context("it has no package")
 }
 
 /// The index of the android: attribute with this resource ID on the first
@@ -703,8 +727,9 @@ mod tests {
 
     use super::{
         AUTHORITIES, AUTO_VERIFY, BACKUP_AGENT, Changes, Document, EXTRACT_NATIVE_LIBS, Element,
-        HOST, NAME, PERMISSION, SCHEME, SCREEN_ORIENTATION, TARGET_ACTIVITY, VALUE, VERSION_CODE,
-        Value as Typed, add_permissions, meta_data, rewrite, set_meta_data,
+        HOST, Identity, NAME, PERMISSION, SCHEME, SCREEN_ORIENTATION, TARGET_ACTIVITY, VALUE,
+        VERSION_CODE, VERSION_NAME, Value as Typed, add_permissions, identity, meta_data, rewrite,
+        set_meta_data,
     };
     use crate::android::binary_xml::BinaryXml;
     use crate::android::binary_xml::tests::{
@@ -1395,8 +1420,44 @@ mod tests {
             errors,
             [
                 "it has no launcher activity to turn the app's screen in",
-                "it has no package to change"
+                "it has no package"
             ]
+        );
+    }
+
+    #[test]
+    fn reads_what_the_app_is() {
+        fn read(elements: &[crate::android::binary_xml::tests::Element]) -> Result<Identity> {
+            identity(&BinaryXml::parse(&binary_xml(elements)).unwrap())
+        }
+        let package = || ("package", None, Str("dev.example.app"));
+        // A version from a resource, which differs from one configuration
+        // to another.
+        let resource = || ("versionName", Some(VERSION_NAME), Ref(0x7f0d_0001));
+
+        assert_eq!(
+            identity(&BinaryXml::parse(&shell_manifest()).unwrap()).unwrap(),
+            Identity {
+                id: "dev.omnibuild.shell".to_owned(),
+                version: Some("1.0.0".to_owned()),
+            }
+        );
+        assert_eq!(
+            read(&[("manifest", vec![package(), resource()])]).unwrap(),
+            Identity {
+                id: "dev.example.app".to_owned(),
+                version: None,
+            }
+        );
+        assert_eq!(
+            read(&[("manifest", vec![package()])]).unwrap().version,
+            None
+        );
+        assert_eq!(
+            read(&[("manifest", vec![resource()])])
+                .unwrap_err()
+                .to_string(),
+            "it has no package"
         );
     }
 
@@ -1577,10 +1638,7 @@ mod tests {
         let not_added = rewritten(&no_namespace, &with_permissions(None, &["CAMERA"]));
         let unnamed = rewritten(&no_package, &with_permissions(None, &["CAMERA"]));
 
-        assert_eq!(
-            unnamed.unwrap_err().to_string(),
-            "it has no package to change"
-        );
+        assert_eq!(unnamed.unwrap_err().to_string(), "it has no package");
 
         assert_eq!(
             bad_name.unwrap_err().to_string(),
@@ -1667,7 +1725,7 @@ mod tests {
         for (app, message) in [
             (
                 app(Some("dev.example.app"), None, None),
-                "it has no package to change",
+                "it has no package",
             ),
             (
                 app(None, Some("2.0"), None),
