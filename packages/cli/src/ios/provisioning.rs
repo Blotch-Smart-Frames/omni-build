@@ -620,8 +620,9 @@ mod tests {
 
     use super::{CAPABILITIES, Distribution, Provisioned, Provisioner};
     use crate::app_store_connect::Client;
-    use crate::app_store_connect::tests::{Request, api_key, serve};
+    use crate::app_store_connect::tests::api_key;
     use crate::config::Entitlement;
+    use crate::http::tests::{Request, serve};
     use crate::ios::Signed;
     use crate::ios::profile::Profile;
     use crate::ios::profile::tests::profile_of;

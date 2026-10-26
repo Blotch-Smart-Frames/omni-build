@@ -31,6 +31,8 @@ use proto_xml::ProtoXml;
 use protobuf::Wire;
 use resources::{ResourceTable, Resources};
 
+pub use manifest::Identity;
+
 /// Where a package keeps what OmniBuild rewrites. An APK keeps it at its
 /// root, compiled for a device; an AAB keeps it in its base module, in
 /// protobuf, for bundletool to compile for each device.
@@ -156,6 +158,26 @@ pub fn repackage(
     Ok(signing::sign(&zip::write(&entries), key))
 }
 
+/// What the app in `entries`, of `layout`, is, as its manifest says.
+pub fn identity(entries: &[Entry], layout: &Layout) -> Result<Identity> {
+    let context = || format!("couldn't read the app's {}", layout.manifest);
+    let manifest = entries
+        .iter()
+        .find(|entry| entry.name == layout.manifest)
+        .with_context(|| format!("the app has no {}", layout.manifest))?;
+    let document = parse_manifest(&manifest.contents()?, layout).with_context(context)?;
+    manifest::identity(document.as_ref()).with_context(context)
+}
+
+/// The manifest `contents`, in the layout's format.
+fn parse_manifest(contents: &[u8], layout: &Layout) -> Result<Box<dyn Document>> {
+    Ok(if layout.bundle {
+        Box::new(ProtoXml::parse(contents)?)
+    } else {
+        Box::new(BinaryXml::parse(contents)?)
+    })
+}
+
 /// Rewrites the manifest for the app, and its native modules: the ones
 /// with something for Android.
 fn rewrite_manifest(
@@ -165,11 +187,7 @@ fn rewrite_manifest(
     modules: &[(&Module, &crate::modules::Android)],
 ) -> Result<(Vec<u8>, Changes)> {
     let context = || format!("couldn't rewrite the shell's {}", layout.manifest);
-    let mut document: Box<dyn Document> = if layout.bundle {
-        Box::new(ProtoXml::parse(contents).with_context(context)?)
-    } else {
-        Box::new(BinaryXml::parse(contents).with_context(context)?)
-    };
+    let mut document = parse_manifest(contents, layout).with_context(context)?;
     let changes = manifest::rewrite(document.as_mut(), app).with_context(context)?;
     if !modules.is_empty() {
         modules::check(document.as_ref(), modules)?;
@@ -366,8 +384,8 @@ mod tests {
     use super::chunk::chunks;
     use super::protobuf::{self, Field, Wire};
     use super::{
-        ProtoResources, ProtoXml, ResourceTable, Resources, SigningKey, is_jar_signature, layout,
-        read_resources,
+        Identity, ProtoResources, ProtoXml, ResourceTable, Resources, SigningKey, identity,
+        is_jar_signature, layout, read_resources,
     };
     use crate::android::binary_xml::BinaryXml;
     use crate::android::binary_xml::tests::{
@@ -405,6 +423,69 @@ mod tests {
         assert_eq!(manifest(SHELL), "AndroidManifest.xml");
         assert_eq!(manifest(SHELL_AAB), "base/manifest/AndroidManifest.xml");
         assert!(layout(&[entry("classes.dex", Method::Deflated, b"dex")]).is_none());
+    }
+
+    #[test]
+    fn reads_what_the_app_is() {
+        let read = |app: &[u8]| {
+            let entries = zip::read(app).unwrap();
+            identity(&entries, layout(&entries).unwrap()).unwrap()
+        };
+        let app = App {
+            id: Some("dev.example.app".to_owned()),
+            version: Some("2.5.0".to_owned()),
+            ..App::default()
+        };
+
+        assert_eq!(
+            read(&repackage(SHELL_AAB, &app, &KEY).unwrap()),
+            Identity {
+                id: "dev.example.app".to_owned(),
+                version: Some("2.5.0".to_owned()),
+            }
+        );
+        assert_eq!(read(SHELL).id, "dev.omnibuild.shell");
+    }
+
+    #[test]
+    fn says_why_it_cant_read_what_the_app_is() {
+        let manifest = "base/manifest/AndroidManifest.xml";
+        let entries = zip::read(SHELL_AAB).unwrap();
+        let layout = layout(&entries).unwrap();
+        let with_manifest = |manifest: Option<Entry>| {
+            let mut entries: Vec<Entry> = entries
+                .iter()
+                .filter(|entry| entry.name != layout.manifest)
+                .cloned()
+                .collect();
+            entries.extend(manifest);
+            identity(&entries, layout).unwrap_err()
+        };
+        let mut corrupt = entry(manifest, Method::Deflated, b"data");
+        corrupt.data = vec![0xff; 8];
+
+        assert_eq!(
+            with_manifest(None).to_string(),
+            "the app has no base/manifest/AndroidManifest.xml"
+        );
+        assert_eq!(
+            with_manifest(Some(corrupt)).to_string(),
+            "base/manifest/AndroidManifest.xml is corrupt"
+        );
+        assert!(
+            format!(
+                "{:#}",
+                with_manifest(Some(entry(manifest, Method::Stored, &[0xff; 8])))
+            )
+            .starts_with("couldn't read the app's base/manifest/AndroidManifest.xml: ")
+        );
+        assert_eq!(
+            format!(
+                "{:#}",
+                with_manifest(Some(entry(manifest, Method::Stored, b"")))
+            ),
+            "couldn't read the app's base/manifest/AndroidManifest.xml: it has no package"
+        );
     }
 
     #[test]

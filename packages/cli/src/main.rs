@@ -5,6 +5,8 @@ mod android;
 mod app_store_connect;
 mod bytes;
 mod config;
+mod google_play;
+mod http;
 mod icon;
 mod ios;
 mod key;
@@ -24,10 +26,11 @@ use clap::{Args, Parser, Subcommand};
 use adb::AdbKey;
 use app_store_connect::{ApiKey, Client};
 use config::App;
+use google_play::ServiceAccount;
 use ios::{Distribution, Provisioner};
 use key::{SigningKey, debug_key_path, display_name};
 use modules::Module;
-use report::{Event, Format, KeyKind, Platform, Reporter};
+use report::{Event, Format, KeyKind, Platform, Reporter, Store};
 use x509_cert::name::Name;
 
 /// How the error for a file that's none of the shells OmniBuild knows
@@ -39,6 +42,8 @@ const KEY_PASSWORD: &str = "OMNI_BUILD_KEY_PASSWORD";
 /// Where App Store Connect's API is, if not at Apple: the CLI's tests point
 /// it at one of their own.
 const APP_STORE_CONNECT_URL: &str = "OMNI_BUILD_APP_STORE_CONNECT_URL";
+/// Where Google Play's API is, if not at Google, for the same tests.
+const GOOGLE_PLAY_URL: &str = "OMNI_BUILD_GOOGLE_PLAY_URL";
 
 /// Build, sign, install and ship iOS and Android apps with no native toolchain.
 #[derive(Debug, Parser)]
@@ -57,6 +62,7 @@ struct Cli {
 enum Command {
     Repackage(Repackage),
     Provision(Provision),
+    Upload(Upload),
     Install(Install),
     Tcpip(Tcpip),
     Pair(Pair),
@@ -136,6 +142,30 @@ struct Provision {
     distribution: Distribution,
     #[command(flatten)]
     api_key: ApiKeyArgs,
+}
+
+/// Upload an app to its store, for its testers: an Android app bundle (AAB)
+/// to Google Play, released to a track, as a Google Cloud service account.
+#[derive(Debug, Args)]
+struct Upload {
+    /// The app: an Android app bundle (AAB), signed with the app's upload
+    /// key, as `repackage --signing-key` writes one.
+    app: PathBuf,
+    /// The key of the Google Cloud service account to upload as: the JSON
+    /// file Google Cloud creates for it. The Play Console has to have
+    /// invited the account, under Users and permissions, with permission to
+    /// release the app.
+    #[arg(long)]
+    service_account: Option<PathBuf>,
+    /// The Google Play track to release it to: `internal`, for internal
+    /// testing, `alpha`, for closed testing, `beta`, for open testing,
+    /// `production`, or a closed testing track of the app's own, by name.
+    #[arg(long, default_value = "internal")]
+    track: String,
+    /// Leave the release a draft, to roll out in the Play Console. Google
+    /// Play takes only drafts of a draft app, one it hasn't published yet.
+    #[arg(long)]
+    draft: bool,
 }
 
 /// An App Store Connect API key, which an account's Admin creates in App
@@ -279,6 +309,7 @@ fn run(command: Command, reporter: &Reporter) -> Result<()> {
     match command {
         Command::Repackage(args) => repackage(&args, reporter),
         Command::Provision(args) => provision(&args, reporter),
+        Command::Upload(args) => upload(&args, reporter),
         Command::Install(args) => install(&args, reporter),
         Command::Tcpip(args) => tcpip(&args, reporter),
         Command::Pair(args) => pair(&args, reporter),
@@ -441,6 +472,43 @@ fn provision(args: &Provision, reporter: &Reporter) -> Result<()> {
         distribution: args.distribution,
         out: args.out.display().to_string(),
         profiles,
+    });
+    Ok(())
+}
+
+fn upload(args: &Upload, reporter: &Reporter) -> Result<()> {
+    let path = args.app.display();
+    let app = fs::read(&args.app).with_context(|| format!("couldn't read the app {path}"))?;
+    let entries = zip::read(&app).unwrap_or_default();
+    let layout = match android::layout(&entries) {
+        Some(layout) if layout.bundle => layout,
+        Some(_) => bail!(
+            "{path} is an APK, and Google Play takes app bundles (AAB), from which it makes the APKs each device installs: repackage an AAB shell to upload the app"
+        ),
+        None => bail!("{path} isn't an app bundle (AAB)"),
+    };
+    let identity = android::identity(&entries, layout)?;
+    let account = args.service_account.as_deref().context(
+        "give the key of the Google Cloud service account to upload as with --service-account",
+    )?;
+    let account = ServiceAccount::read(account)?;
+    let url = std::env::var(GOOGLE_PLAY_URL);
+    let url = url.as_deref().unwrap_or(google_play::URL);
+    let build = google_play::Client::sign_in(&account, url)?.release(
+        &identity.id,
+        &app,
+        &args.track,
+        args.draft,
+    )?;
+    reporter.report(&Event::Uploaded {
+        app: path.to_string(),
+        id: identity.id,
+        version: identity.version,
+        build: build.to_string(),
+        store: Store::GooglePlay {
+            track: args.track.clone(),
+            draft: args.draft,
+        },
     });
     Ok(())
 }

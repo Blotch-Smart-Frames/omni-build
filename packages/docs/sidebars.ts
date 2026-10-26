@@ -11,6 +11,7 @@ const sidebars: SidebarsConfig = {
     'repackaging',
     'webview-shell',
     'installing',
+    'uploading',
     'build-tools',
     'shells',
     'native-modules',

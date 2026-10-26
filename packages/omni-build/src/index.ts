@@ -110,6 +110,26 @@ export interface ProvisionedEvent {
 }
 
 /**
+ * `upload` uploaded the app to its store: an app bundle to Google Play,
+ * released to `track`, or as a draft there, to roll out in the Play Console.
+ */
+export interface UploadedEvent {
+  event: 'uploaded';
+  app: string;
+  /** The app's ID. */
+  id: string;
+  /** Its version, as people see it, if it has one as text. */
+  version?: string;
+  /** Its build number: an Android app's version code. */
+  build: string;
+  store: 'google-play';
+  /** The track, as `--track` took it. */
+  track: string;
+  draft: boolean;
+  message: string;
+}
+
+/**
  * The device asks its user whether to allow this computer, and OmniBuild
  * waits for the answer: a tool should show the message.
  */
@@ -199,6 +219,7 @@ export type OmniBuildEvent =
   | CapabilityEnabledEvent
   | ProfileCreatedEvent
   | ProvisionedEvent
+  | UploadedEvent
   | AuthorizingEvent
   | ModuleFoundEvent
   | RepackagedEvent

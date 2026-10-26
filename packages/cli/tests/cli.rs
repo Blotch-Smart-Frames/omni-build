@@ -1564,3 +1564,206 @@ fn repackage_reports_a_folder_of_profiles_it_cant_read() {
         stderr(&output)
     );
 }
+
+/// A made-up Google, which issues the test service account an access
+/// token, and whose Google Play takes any app's bundle on any track but
+/// `gone`.
+/// Returns its URL, and each request it received, as its method and path.
+fn google() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{BufRead, BufReader};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received = Arc::clone(&requests);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut reader = BufReader::new(stream.unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let request = line.trim_end().rsplit_once(' ').unwrap().0.to_owned();
+            let mut length = 0;
+            while line != "\r\n" {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if let Some(value) = line.to_lowercase().strip_prefix("content-length: ") {
+                    length = value.trim().parse().unwrap();
+                }
+            }
+            reader.read_exact(&mut vec![0; length]).unwrap();
+            let path = request.split(['?', ' ']).nth(1).unwrap();
+            let (status, body) = if path.ends_with("/tracks/gone") {
+                let error = serde_json::json!({ "code": 404, "message": "Track not found: gone." });
+                (404, serde_json::json!({ "error": error }))
+            } else if path == "/token" {
+                let token =
+                    serde_json::json!({ "access_token": "ya29.access", "token_type": "Bearer" });
+                (200, token)
+            } else if path.ends_with("/bundles") {
+                (200, serde_json::json!({ "versionCode": 1 }))
+            } else {
+                (200, serde_json::json!({ "id": "E1" }))
+            };
+            let body = body.to_string();
+            received.lock().unwrap().push(request);
+            write!(
+                reader.get_mut(),
+                "HTTP/1.1 {status} Answer\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    (url, requests)
+}
+
+/// A service account's key, as Google Cloud gives one, with the test
+/// identity's private key, written to `dir`, asking `url` for its access
+/// tokens. It's made as tests run, rather than kept as a fixture, which
+/// GitHub's push protection would take for a real one.
+fn service_account(dir: &Path, url: &str) -> String {
+    let pem = fs::read_to_string(IDENTITY).unwrap();
+    let end = "-----END PRIVATE KEY-----";
+    let key = serde_json::json!({
+        "type": "service_account",
+        "private_key_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+        "private_key": &pem[..pem.find(end).unwrap() + end.len()],
+        "client_email": "upload@omnibuild-test.iam.gserviceaccount.com",
+        "token_uri": format!("{url}/token"),
+    });
+    let path = dir.join("service-account.json");
+    fs::write(&path, key.to_string()).unwrap();
+    path.to_str().unwrap().to_owned()
+}
+
+/// Runs omni against Google Play's API at `url`.
+fn omni_build_uploading(url: &str, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_omni"))
+        .args(args)
+        .env("OMNI_BUILD_GOOGLE_PLAY_URL", url)
+        .output()
+        .expect("the omni binary should start")
+}
+
+#[test]
+fn uploads_an_app_bundle_to_google_play() {
+    let dir = tempfile::tempdir().unwrap();
+    let (url, requests) = google();
+    let key = service_account(dir.path(), &url);
+
+    let output = omni_build_uploading(
+        &url,
+        &[
+            "upload",
+            SHELL_AAB,
+            "--service-account",
+            &key,
+            "--track",
+            "beta",
+            "--json",
+        ],
+    );
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        events(&output),
+        [serde_json::json!({
+            "event": "uploaded",
+            "app": SHELL_AAB,
+            "id": "dev.omnibuild.shell",
+            "version": "1.0.0",
+            "build": "1",
+            "store": "google-play",
+            "track": "beta",
+            "draft": false,
+            "message": format!("Released {SHELL_AAB}, dev.omnibuild.shell 1.0.0 (1), to Google Play's beta track"),
+        })]
+    );
+    let app = "/androidpublisher/v3/applications/dev.omnibuild.shell";
+    assert_eq!(
+        *requests.lock().unwrap(),
+        [
+            "POST /token".to_owned(),
+            format!("POST {app}/edits"),
+            format!("POST /upload{app}/edits/E1/bundles?uploadType=media"),
+            format!("PUT {app}/edits/E1/tracks/beta"),
+            format!("POST {app}/edits/E1:commit"),
+        ]
+    );
+}
+
+#[test]
+fn upload_reports_what_went_wrong() {
+    let dir = tempfile::tempdir().unwrap();
+    let not_zip = dir.path().join("not.aab");
+    fs::write(&not_zip, "not a zip").unwrap();
+    let not_zip = not_zip.to_str().unwrap();
+    let (url, _) = google();
+    let nothing_there = format!(
+        "http://{}",
+        TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+    );
+    let unreachable = service_account(dir.path(), &nothing_there);
+    let reachable = dir.path().join("reachable");
+    fs::create_dir(&reachable).unwrap();
+    let key = service_account(&reachable, &url);
+    // An app bundle without a manifest, under another name.
+    let no_manifest = dir.path().join("no-manifest.aab");
+    let mut bundle = fs::read(SHELL_AAB).unwrap();
+    let name = b"base/manifest/AndroidManifest.xml";
+    while let Some(at) = bundle.windows(name.len()).position(|window| window == name) {
+        bundle[at + name.len() - 1] = b'_';
+    }
+    fs::write(&no_manifest, bundle).unwrap();
+    let no_manifest = no_manifest.to_str().unwrap();
+    let cases = [
+        (
+            vec!["upload", "missing.aab", "--service-account", &key],
+            "error: couldn't read the app missing.aab: ".to_owned(),
+        ),
+        (
+            vec!["upload", SHELL, "--service-account", &key],
+            format!(
+                "error: {SHELL} is an APK, and Google Play takes app bundles (AAB), from which it makes the APKs each device installs: repackage an AAB shell to upload the app\n"
+            ),
+        ),
+        (
+            vec!["upload", not_zip, "--service-account", &key],
+            format!("error: {not_zip} isn't an app bundle (AAB)\n"),
+        ),
+        (
+            vec!["upload", SHELL_IPA, "--service-account", &key],
+            format!("error: {SHELL_IPA} isn't an app bundle (AAB)\n"),
+        ),
+        (
+            vec!["upload", SHELL_AAB],
+            "error: give the key of the Google Cloud service account to upload as with --service-account\n".to_owned(),
+        ),
+        (
+            vec!["upload", SHELL_AAB, "--service-account", "missing.json"],
+            "error: couldn't read the service account's key missing.json: ".to_owned(),
+        ),
+        (
+            vec!["upload", no_manifest, "--service-account", &key],
+            "error: the app has no base/manifest/AndroidManifest.xml\n".to_owned(),
+        ),
+        (
+            vec!["upload", SHELL_AAB, "--service-account", &unreachable],
+            "error: couldn't reach Google: ".to_owned(),
+        ),
+        (
+            vec!["upload", SHELL_AAB, "--service-account", &key, "--track", "gone"],
+            "error: couldn't release it to the gone track: Google Play refused it (404). It said: Track not found: gone.\n".to_owned(),
+        ),
+    ];
+
+    for (args, message) in cases {
+        let output = omni_build_uploading(&url, &args);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(stderr(&output).starts_with(&message), "{}", stderr(&output));
+    }
+}
