@@ -60,6 +60,34 @@ object ShellReport {
             // Which way up the launcher activity's screen is, as Android
             // read it from the manifest.
             .put("orientation", orientation(launcherActivity(context).activityInfo))
+            // What the native modules OmniBuild added say, once the shell
+            // has registered them.
+            .put("modules", modules(context) ?: JSONObject.NULL)
+    }
+
+    /**
+     * What each native module OmniBuild added says, as the shell's runtime,
+     * `omnibuild-e2e@1` (its manifest's dev.omnibuild.runtime), registers a
+     * module: a class found by its name, in the DEX files OmniBuild added
+     * beside the shell's, made with no arguments, which says something when
+     * asked to `report`. The manifest lists them, between commas. Null when
+     * the app has none.
+     */
+    private fun modules(context: Context): String? {
+        @Suppress("DEPRECATION") // The flags overload is API 33 and up.
+        val metaData = context.packageManager
+            .getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
+            .metaData
+        val names = metaData?.getString("dev.omnibuild.modules").orEmpty()
+            .split(',')
+            .filter { it.isNotEmpty() }
+        if (names.isEmpty()) return null
+        return names.joinToString { name ->
+            runCatching {
+                val module = Class.forName(name).getDeclaredConstructor().newInstance()
+                module.javaClass.getMethod("report").invoke(module) as String
+            }.getOrElse { "$name: $it" }
+        }
     }
 
     private fun launcherActivity(context: Context): ResolveInfo {

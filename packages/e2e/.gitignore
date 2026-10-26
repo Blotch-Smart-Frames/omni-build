@@ -8,6 +8,11 @@
 /fixtures/android/build/
 /fixtures/android/app/build/
 /fixtures/android/local.properties
+/fixtures/module/android/.gradle/
+/fixtures/module/android/.kotlin/
+/fixtures/module/android/build/
+/fixtures/module/android/module/build/
+/fixtures/module/android/local.properties
 
 # Xcode and Android Studio, when a fixture is opened in them
 xcuserdata/

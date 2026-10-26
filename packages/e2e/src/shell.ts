@@ -44,6 +44,34 @@ export const GRADLE_PROJECTS: Record<ShellName, string> = {
 };
 
 /**
+ * The native module the tests add to the fixture's apps, as an app gets one
+ * from npm: a Swift framework and a Kotlin library (`fixtures/module`), which
+ * the Module workflow builds as it builds a module's binaries for its
+ * author, and a package.json that names them. The fixture shells register
+ * it by name, as their runtime, `omnibuild-e2e@1`, registers a module, and
+ * report what it says.
+ */
+export const MODULE = {
+  name: 'OmniBuildModule',
+  /** The package npm would install it as, which `app/package.json` names. */
+  packageName: 'omnibuild-e2e-module',
+  packageJson: fileURLToPath(
+    new URL('../fixtures/module/package.json', import.meta.url),
+  ),
+  xcodeProject: fileURLToPath(
+    new URL(
+      '../fixtures/module/ios/OmniBuildModule.xcodeproj',
+      import.meta.url,
+    ),
+  ),
+  gradleProject: fileURLToPath(
+    new URL('../fixtures/module/android/', import.meta.url),
+  ),
+  /** Its Android library module, in the Gradle project. */
+  library: 'module',
+};
+
+/**
  * The values the fixture shells are built with, and so what they must
  * report on launch. They're set in:
  *

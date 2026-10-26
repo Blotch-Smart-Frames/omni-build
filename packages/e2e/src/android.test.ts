@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildAndroid } from '../../shells/src/android.ts';
+import { buildAndroidModule } from '../../shells/src/module-android.ts';
 import { android, appLinkHosts } from './android.ts';
 import { type RunResult, run } from './process.ts';
 import { omniBuild } from './repackage.ts';
@@ -43,6 +44,9 @@ vi.mock('../../shells/src/android.ts', () => ({
     `out/${name}-release.apk`,
     `out/${name}-release.aab`,
   ]),
+}));
+vi.mock('../../shells/src/module-android.ts', () => ({
+  buildAndroidModule: vi.fn(async () => 'module/android'),
 }));
 // omniBuild() runs the binary through the run() above, as the real one
 // does, but leaves checking its result to repackage.test.ts.
@@ -123,11 +127,12 @@ afterEach(() => {
 });
 
 describe('build', () => {
-  it("builds each shell's release APK and app bundle with Gradle, with the Android SDK", async () => {
+  it("builds each shell's release APK and app bundle with Gradle, with the Android SDK, then the native module", async () => {
     const shells = await android.build({
       ...artifacts,
       buildDir: 'build',
       outDir: 'out',
+      moduleDir: 'module',
     });
 
     const building = (project: string, name: string) => [
@@ -150,12 +155,27 @@ describe('build', () => {
       'out/WebViewShell-release.apk',
       'out/WebViewShell-release.aab',
     ]);
+    expect(buildAndroidModule).toHaveBeenCalledWith({
+      project: fileURLToPath(
+        new URL('../fixtures/module/android/', import.meta.url),
+      ),
+      library: 'module',
+      out: 'module',
+      work: path.join('build', 'android', 'OmniBuildModule'),
+      env: expect.objectContaining({ ANDROID_HOME: '/sdk' }),
+      log: 'commands.log',
+    });
   });
 });
 
 describe('the Android SDK', () => {
   const sdkGradleGets = async () => {
-    await android.build({ ...artifacts, buildDir: 'build', outDir: 'out' });
+    await android.build({
+      ...artifacts,
+      buildDir: 'build',
+      outDir: 'out',
+      moduleDir: 'module',
+    });
     return vi.mocked(buildAndroid).mock.calls[0][0].env?.ANDROID_HOME;
   };
 

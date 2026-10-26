@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildIos } from '../../shells/src/ios.ts';
+import { buildIosModule } from '../../shells/src/module-ios.ts';
 import { ios } from './ios.ts';
 import { type RunResult, run } from './process.ts';
 
@@ -45,6 +46,9 @@ vi.mock('../../shells/src/ios.ts', () => ({
     `out/${name}-release-simulator.zip`,
     `out/${name}-release.ipa`,
   ]),
+}));
+vi.mock('../../shells/src/module-ios.ts', () => ({
+  buildIosModule: vi.fn(async () => 'module/ios/OmniBuildModule.xcframework'),
 }));
 
 const PROJECTS = {
@@ -119,11 +123,12 @@ afterEach(() => {
 });
 
 describe('build', () => {
-  it("builds each shell's release apps with Xcode, in derived data of its own", async () => {
+  it("builds each shell's release apps with Xcode, in derived data of its own, then the native module", async () => {
     const shells = await ios.build({
       ...artifacts,
       buildDir: 'build',
       outDir: 'out',
+      moduleDir: 'module',
     });
 
     const building = (shell: keyof typeof PROJECTS) => [
@@ -146,6 +151,18 @@ describe('build', () => {
       'out/WebViewShell-release-simulator.zip',
       'out/WebViewShell-release.ipa',
     ]);
+    expect(buildIosModule).toHaveBeenCalledWith({
+      project: fileURLToPath(
+        new URL(
+          '../fixtures/module/ios/OmniBuildModule.xcodeproj',
+          import.meta.url,
+        ),
+      ),
+      name: 'OmniBuildModule',
+      out: 'module',
+      work: path.join('build', 'ios', 'OmniBuildModule'),
+      log: 'commands.log',
+    });
   });
 });
 
@@ -571,6 +588,7 @@ describe('verify', () => {
         'UIInterfaceOrientationLandscapeLeft',
         'UIInterfaceOrientationLandscapeRight',
       ],
+      OmniBuildModules: ['OmniBuildModule', 'dev.example.Haptics'],
     };
     respond = (program, args) => {
       if (program === 'plutil') {
@@ -630,6 +648,7 @@ describe('verify', () => {
         version: '2.5.0',
         build: '42',
         payload: 'the payload',
+        modules: 'OmniBuildModule, dev.example.Haptics',
         applicationIdentifier: 'TEAM.dev.omnibuild.e2e.app',
         // A string, or an array of them, joined, and none for an empty
         // array.
@@ -657,10 +676,12 @@ describe('verify', () => {
     );
     // Without a display name, the bundle's name is under the icon, and
     // without an iPhone's own orientations, it has those for every device.
+    // It has no native modules either.
     expect(nameless.report).toMatchObject({
       name: 'OmniBuildShell',
       orientations: 'UIInterfaceOrientationPortrait',
       applicationIdentifier: undefined,
+      modules: '',
     });
   });
 

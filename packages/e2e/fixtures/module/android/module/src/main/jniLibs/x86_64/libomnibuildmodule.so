@@ -1,0 +1,1 @@
+A stand-in for the module's native library built for x86_64. The app never loads it.

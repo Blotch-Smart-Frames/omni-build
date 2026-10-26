@@ -15,7 +15,7 @@ import {
  * platform: a watch app for watchOS, where `-sdk iphoneos` would build it
  * for iOS.
  */
-const DESTINATIONS = {
+export const DESTINATIONS = {
   iphonesimulator: 'generic/platform=iOS Simulator',
   iphoneos: 'generic/platform=iOS',
 };

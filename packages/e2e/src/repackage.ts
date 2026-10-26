@@ -1,4 +1,6 @@
 import {
+  copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -9,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { type RunOptions, run } from './process.ts';
-import { SHELL, shellOf } from './shell.ts';
+import { MODULE, SHELL, shellOf } from './shell.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 /**
@@ -34,6 +36,24 @@ const APP: {
     usesNonExemptEncryption: boolean;
   };
 } = JSON.parse(readFileSync(APP_CONFIG, 'utf8'));
+/**
+ * The native module the app depends on (`app/package.json`), as its own
+ * package.json says what it adds to an app.
+ */
+const NATIVE_MODULE: {
+  omniBuild: { android: { permissions: string[] } };
+} = JSON.parse(readFileSync(MODULE.packageJson, 'utf8'));
+/**
+ * What the module says when the shell registers it (fixtures/module): its
+ * framework's bundle ID on the Simulator, its class's name on Android, and
+ * for a build for devices, which the simulator can't run, the module the
+ * app's Info.plist lists.
+ */
+const MODULE_REPORTS = {
+  simulator: 'OmniBuildModule, in dev.omnibuild.module',
+  devices: 'OmniBuildModule',
+  android: 'OmniBuildModule in dev.omnibuild.module.OmniBuildModule',
+};
 /** The colour of every pixel of the app's icon, `app/icon.png`. */
 const APP_ICON = '#E8590C';
 /**
@@ -291,12 +311,14 @@ export const expected = (
       ...values,
       // Under the app's ID, as Gradle would have put them for it.
       provider: `${APP.id}.provider`,
-      // The app's, sorted as the app lists them, and the one the shell
-      // declares for itself, under the app's ID.
+      // The app's and its native module's, sorted as the app lists them,
+      // and the one the shell declares for itself, under the app's ID.
       permissions: [
-        ...APP.android.permissions.map((name) => `android.permission.${name}`),
-        `${APP.id}.permission.SHELL`,
+        ...APP.android.permissions,
+        ...NATIVE_MODULE.omniBuild.android.permissions,
       ]
+        .map((name) => `android.permission.${name}`)
+        .concat(`${APP.id}.permission.SHELL`)
         .sort()
         .join(', '),
       abis: [...APP.android.abis].sort().join(', '),
@@ -306,6 +328,7 @@ export const expected = (
       webLinks: APP.webLinks.join(', '),
       // `landscape`, either side up.
       orientation: 'userLandscape',
+      modules: MODULE_REPORTS.android,
       signer: androidSigner(app),
     };
   }
@@ -325,6 +348,7 @@ export const expected = (
       build: values.build,
       payload: values.payload,
       cameraUsage,
+      modules: MODULE_REPORTS.devices,
       signer: SIGNER,
       applicationIdentifier: `${TEAM}.${APP.id}`,
       // What app.json claims, which the profile allows: the push
@@ -378,8 +402,31 @@ export const expected = (
     watchAppId: `${APP.id}.${WATCH_APP}`,
     watchCompanion: APP.id,
     watchWidgetsId: `${APP.id}.${WATCH_WIDGETS}`,
+    modules: MODULE_REPORTS.simulator,
     signer: 'ad hoc',
   };
+};
+
+/**
+ * Installs the native module's binaries, as the Module workflow writes
+ * them (`ios/`, `android/`), for the app, beside its package.json, as npm
+ * would install the module's package: its package.json, and the binaries
+ * it names.
+ */
+export const installModule = (module: string) => {
+  if (!existsSync(module)) {
+    throw new Error(
+      `There's no native module in ${module}: run the build stage first, or give --module the folder the Module workflow wrote.`,
+    );
+  }
+  const installed = path.join(
+    path.dirname(APP_CONFIG),
+    'node_modules',
+    MODULE.packageName,
+  );
+  rmSync(installed, { recursive: true, force: true });
+  cpSync(module, installed, { recursive: true });
+  copyFileSync(MODULE.packageJson, path.join(installed, 'package.json'));
 };
 
 /**
@@ -390,10 +437,13 @@ export const expected = (
 export const repackage = async ({
   shell,
   outDir,
+  module,
   log,
 }: {
   shell: string;
   outDir: string;
+  /** The native module the fixture's app gets (see installModule()). */
+  module: string;
   log: string;
 }) => {
   mkdirSync(outDir, { recursive: true });
@@ -406,6 +456,9 @@ export const repackage = async ({
   );
   const env = { ...toolchainFree(), OMNI_BUILD_KEY_PASSWORD: KEY_PASSWORD };
   const webApp = shellOf(shell) === 'WebViewShell';
+  if (!webApp) {
+    installModule(module);
+  }
   // A hidden folder, which no stage takes for an app.
   const keys = mkdtempSync(path.join(outDir, '.keys-'));
   try {

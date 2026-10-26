@@ -7,7 +7,7 @@ description: Add native code to an app with npm install, as prebuilt binaries Om
 
 :::warning[Phase 4]
 
-`omni repackage` adds native modules to apps, but no shell OmniBuild ships registers them yet: the WebView shell will, and a workflow that builds modules for their authors is to come. Until then, a shell has to register them itself, as [below](#shells-that-take-native-modules).
+`omni repackage` adds native modules to apps, and the [Module workflow](#building-one) builds them, but no shell OmniBuild ships registers them yet: the WebView shell will. Until then, a shell has to register them itself, as [below](#shells-that-take-native-modules). The end-to-end tests' shell does, and runs a module on the iOS Simulator and Android emulators.
 
 :::
 
@@ -83,7 +83,35 @@ Not yet: Android resources and manifest entries other than permissions, such as 
 
 ### Building one
 
-A module's iOS code is a framework target, built as a dynamic framework for devices and for the Simulator, then put together with `xcodebuild -create-xcframework -allow-internal-distribution`: nothing compiles against a module's framework, so it needs no Swift interface, which `-create-xcframework` otherwise asks for. Its Android code is a library module's classes, compiled by Gradle, then by d8 into DEX without the libraries it uses, for the shell's oldest Android (`--min-api`). A workflow that builds both, as the [Shell workflow](./shells.md) builds shells, is to come.
+The Module workflow builds a module's binaries in GitHub Actions, as the [Shell workflow](./shells.md) builds shells: call it from the module's repository, with its Xcode project, whose scheme builds a framework of the module's name, and its Gradle project, with the library module that has its Android code.
+
+```yaml
+jobs:
+  module:
+    uses: Blotch-Smart-Frames/omni-build/.github/workflows/module.yml@v1.2.3
+    with:
+      name: Haptics
+      xcode-project: ios/Haptics.xcodeproj
+      gradle-project: android
+      gradle-library: haptics
+      # The Xcode the shell is built with: a module is built against the shell's runtime.
+      developer-dir: /Applications/Xcode_26.6.app/Contents/Developer
+```
+
+Its artifact, `module-Haptics`, has the binaries where the `omniBuild` above names them, for the module's release to pack with its `package.json`:
+
+| File                      | What it is                                                                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ios/Haptics.xcframework` | The framework, built with Xcode for devices, unsigned with room for a signature, and for the Simulator, then put together for internal distribution    |
+| `android/classes.dex`     | The library's own classes, as Gradle compiles them for its release build type, then d8 for the library's `minSdk`, with the libraries it uses left out |
+| `android/jni/<abi>/*.so`  | The native libraries in the library's AAR, by ABI, whether from `src/main/jniLibs` or the NDK                                                          |
+
+Nothing compiles against a module's framework, so it needs no Swift interface, and its `.xcframework` is made for internal distribution (`xcodebuild -create-xcframework -allow-internal-distribution`). Gradle builds the Android library with an init script of OmniBuild's, so its project needs nothing added: the script gives d8 the library's compile classpath, which d8 reads to compile the classes and leaves out of the DEX, and d8 comes from the Android SDK's build tools of the version the Android Gradle plugin uses. The same tool builds them on a Mac with Xcode and the Android SDK, from a checkout of OmniBuild:
+
+```sh
+npm run shells -w @blotch/omni-build-shells -- module --platform ios --project ios/Haptics.xcodeproj --name Haptics --out out
+npm run shells -w @blotch/omni-build-shells -- module --platform android --project android --library haptics --out out
+```
 
 A module's classes have to be ones the shell finds by name: on iOS, give a Swift class an Objective-C name, `@objc(Haptics)`, which `NSClassFromString("Haptics")` finds, and on Android keep its name from R8. What a class has to do to be registered is the shell's runtime's business.
 

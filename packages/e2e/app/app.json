@@ -5,6 +5,7 @@
   "build": 42,
   "icon": "icon.png",
   "payload": "payload",
+  "packageJson": "package.json",
   "urlSchemes": ["omnibuild-e2e"],
   "webLinks": ["e2e.omnibuild.example"],
   "orientation": "landscape",

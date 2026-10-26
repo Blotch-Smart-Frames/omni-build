@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   GRADLE_PROJECTS,
+  MODULE,
   SHELL,
   SHELLS,
   XCODE_PROJECTS,
@@ -82,14 +83,52 @@ describe('the shells', () => {
     );
   });
 
+  // A module's binaries are built against the shell's runtime, and the
+  // fixture's for the fixture's.
+  it.each([
+    [
+      'compileSdk',
+      /^\s*compileSdk = (\d+)$/gm,
+      'app/build.gradle.kts',
+      'module/build.gradle.kts',
+    ],
+    [
+      'minSdk',
+      /^\s*minSdk = (\d+)$/gm,
+      'app/build.gradle.kts',
+      'module/build.gradle.kts',
+    ],
+    [
+      'the Android Gradle plugin',
+      /id\("com\.android\.(?:application|library)"\) version "([^"]+)"/g,
+      'build.gradle.kts',
+      'build.gradle.kts',
+    ],
+  ])(
+    'and the native module build for Android with the same %s',
+    (_, pattern, shellFile, moduleFile) => {
+      const values = settings(
+        {
+          shell: path.join(GRADLE_PROJECTS.OmniBuildShell, shellFile),
+          module: path.join(MODULE.gradleProject, moduleFile),
+        },
+        pattern,
+      );
+
+      expect(values.shell).toHaveLength(1);
+      expect(values.module).toEqual(values.shell);
+    },
+  );
+
   it('build for the same iOS version', () => {
     const values = settings(
-      Object.fromEntries(
-        SHELLS.map((shell) => [
+      Object.fromEntries([
+        ...SHELLS.map((shell) => [
           shell,
           path.join(XCODE_PROJECTS[shell], 'project.pbxproj'),
         ]),
-      ),
+        [MODULE.name, path.join(MODULE.xcodeProject, 'project.pbxproj')],
+      ]),
       /IPHONEOS_DEPLOYMENT_TARGET = ([\d.]+);/g,
     );
 

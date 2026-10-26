@@ -2,12 +2,17 @@
   "$schema": "../../node_modules/@cspell/cspell-types/cspell.schema.json",
   "version": "0.2",
   "import": ["../../cspell.json"],
-  // The Gradle wrapper and the Xcode project, as Gradle and Xcode generate them.
+  // The Gradle wrappers and the Xcode projects, as Gradle and Xcode generate
+  // them: the shell's and the native module's.
   "ignorePaths": [
     "fixtures/android/gradlew",
     "fixtures/android/gradlew.bat",
     "fixtures/android/gradle/wrapper",
-    "fixtures/ios/OmniBuildShell.xcodeproj"
+    "fixtures/ios/OmniBuildShell.xcodeproj",
+    "fixtures/module/android/gradlew",
+    "fixtures/module/android/gradlew.bat",
+    "fixtures/module/android/gradle/wrapper",
+    "fixtures/module/ios/OmniBuildModule.xcodeproj"
   ],
   "words": [
     "adbd",

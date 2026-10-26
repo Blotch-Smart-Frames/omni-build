@@ -1,0 +1,172 @@
+name: Module
+
+# Builds a native module's binaries with Xcode and Gradle, as its
+# package.json's omniBuild names them, and leaves them in an artifact, for
+# the module's own release to pack into its npm package. A reusable
+# workflow: a module's author calls it from the module's repository, and
+# OmniBuild's CI for the E2E tests' module, from ci.yml.
+#
+#   jobs:
+#     module:
+#       uses: Blotch-Smart-Frames/omni-build/.github/workflows/module.yml@v1.2.3
+#       with:
+#         name: Haptics
+#         xcode-project: ios/Haptics.xcodeproj
+#         gradle-project: android
+#         gradle-library: haptics
+#
+# The artifact, module-Haptics, has what omniBuild names: on iOS
+# ios/Haptics.xcframework, the framework for devices and the Simulator, and
+# on Android android/classes.dex, the library's own classes compiled for its
+# oldest Android, without the libraries it uses, which the app has, and
+# android/jni/, its native libraries by ABI. A module is built against a
+# shell's runtime, so build it with the Xcode and the Android Gradle plugin
+# the shell is built with. packages/shells/README.md has the rest.
+#
+# The tools it runs are OmniBuild's own (packages/shells), from the commit
+# this workflow is called at, which job.workflow_repository and
+# job.workflow_sha name. Everything else is the caller's: its checkout, its
+# runners and its permissions.
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        description: "The module's name: its Xcode scheme and the framework it builds, and the name of the .xcframework. Letters, digits, '.', '_' and '-'."
+        required: true
+        type: string
+      xcode-project:
+        description: 'The Xcode project (.xcodeproj), whose scheme `name` builds `name`.framework. Without it, nothing for iOS.'
+        type: string
+        default: ''
+      gradle-project:
+        description: "The Gradle project's folder, with its wrapper. Without it, nothing for Android."
+        type: string
+        default: ''
+      gradle-library:
+        description: 'The Android library module in the Gradle project, by its name there, such as `haptics`.'
+        type: string
+        default: ''
+      developer-dir:
+        description: "The Xcode to build with, as DEVELOPER_DIR takes one: /Applications/Xcode_26.6.app/Contents/Developer. The macOS runner's default without it."
+        type: string
+        default: ''
+      macos-runner:
+        description: 'The runner Xcode builds on, for an Xcode only a newer image has.'
+        type: string
+        default: macos-latest
+      java-version:
+        description: 'The JDK Gradle runs on, from Temurin.'
+        type: string
+        default: '21'
+      retention-days:
+        description: "How long the artifact is kept. The repository's default without it."
+        type: number
+        default: 0
+    outputs:
+      artifact:
+        description: "The artifact with the module's binaries."
+        value: module-${{ inputs.name }}
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    if: inputs.xcode-project != ''
+    runs-on: ${{ inputs.macos-runner }}
+    timeout-minutes: 30
+    steps:
+      # The caller's repository, with the module, first: a checkout to the
+      # workspace's root empties it.
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .omni-build
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          # The tools use only Node's built-in modules, so there's no
+          # `npm ci` and nothing to cache.
+          package-manager-cache: false
+      - name: Select Xcode
+        if: inputs.developer-dir != ''
+        env:
+          XCODE: ${{ inputs.developer-dir }}
+        run: echo "DEVELOPER_DIR=$XCODE" >> "$GITHUB_ENV"
+      - name: Build the module's framework
+        env:
+          PROJECT: ${{ inputs.xcode-project }}
+          NAME: ${{ inputs.name }}
+        run: node .omni-build/packages/shells/src/cli.ts module --platform ios --project "$PROJECT" --name "$NAME" --out "$RUNNER_TEMP/module"
+      # Only for the module job, which takes both platforms' and keeps them.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: module-${{ inputs.name }}-ios
+          path: ${{ runner.temp }}/module
+          if-no-files-found: error
+          retention-days: 1
+
+  android:
+    if: inputs.gradle-project != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .omni-build
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+      # Caches Gradle's downloads, saving only on the default branch, and
+      # checks that the committed gradle-wrapper.jar is Gradle's.
+      - uses: gradle/actions/setup-gradle@v6
+      # GitHub's Linux runner has the Android SDK, in ANDROID_HOME, with the
+      # build tools whose d8 compiles the classes.
+      - name: Build the module's library and compile it into DEX
+        env:
+          PROJECT: ${{ inputs.gradle-project }}
+          LIBRARY: ${{ inputs.gradle-library }}
+        run: node .omni-build/packages/shells/src/cli.ts module --platform android --project "$PROJECT" --library "$LIBRARY" --out "$RUNNER_TEMP/module"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: module-${{ inputs.name }}-android
+          path: ${{ runner.temp }}/module
+          if-no-files-found: error
+          retention-days: 1
+
+  module:
+    needs: [ios, android]
+    # After both, when a module has nothing for one, which is skipped.
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # By name, as a pattern would take in another module's too: module-A-*
+      # matches module-A-B-ios.
+      - if: needs.ios.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          name: module-${{ inputs.name }}-ios
+          path: ${{ runner.temp }}/module
+      - if: needs.android.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          name: module-${{ inputs.name }}-android
+          path: ${{ runner.temp }}/module
+      - uses: actions/upload-artifact@v7
+        with:
+          name: module-${{ inputs.name }}
+          path: ${{ runner.temp }}/module
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}

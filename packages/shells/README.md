@@ -6,7 +6,7 @@ The app shells OmniBuild ships: native apps that keep nothing about an app in th
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | [`webview`](webview) | A web app: the payload's `index.html` and the files beside it, in a WebView that fills the screen ([docs](../docs/docs/webview-shell.md)) |
 
-Xcode and Gradle build them in OmniBuild's CI, never on a user's machine. Each release of OmniBuild has the WebView shell's variants and their manifest beside its archives, as the Shell workflow built and checked them.
+Xcode and Gradle build them in OmniBuild's CI, never on a user's machine. Each release of OmniBuild has the WebView shell's variants and their manifest beside its archives, as the Shell workflow built and checked them. The same tool builds native modules' binaries for their authors, with the Module workflow.
 
 ## The Shell workflow
 
@@ -53,6 +53,31 @@ The `.ipa` is signed with a key and provisioning profile made for the check, `ch
  'get-task-allow': True, 'keychain-access-groups': ['OMNIBUILD0.*'],
  'com.apple.developer.on-demand-install-capable': True}
 ```
+
+## The Module workflow
+
+`.github/workflows/module.yml` builds a native module's binaries, as its `package.json` names them under `omniBuild` (the [docs](../docs/docs/native-modules.md)), and leaves them in an artifact, `module-<name>`, for the module's release to pack. It's a reusable workflow too: a module's author calls it from the module's repository, and OmniBuild's CI calls it for the E2E tests' module (`packages/e2e/fixtures/module`).
+
+```yaml
+jobs:
+  module:
+    uses: Blotch-Smart-Frames/omni-build/.github/workflows/module.yml@v1.2.3
+    with:
+      name: Haptics
+      xcode-project: ios/Haptics.xcodeproj
+      gradle-project: android
+      gradle-library: haptics
+```
+
+```sh
+npm run shells -w @blotch/omni-build-shells -- module --platform ios --project ios/Haptics.xcodeproj --name Haptics --out out
+npm run shells -w @blotch/omni-build-shells -- module --platform android --project android --library haptics --out out
+```
+
+- **iOS** (`module-ios.ts`): `xcodebuild` builds the scheme `name`'s framework in the Release configuration for devices, unsigned with room for a signature (`-Wl,-adhoc_codesign`), as a shell's build for devices is, and for the Simulator, which Xcode signs ad hoc. `xcodebuild -create-xcframework` puts them together as `ios/<name>.xcframework`, for internal distribution: nothing compiles against a module's framework, so it needs no Swift interface, which only a build for library evolution has.
+- **Android** (`module-android.ts`): Gradle builds the library module's release AAR with an init script, `module.gradle`, so the module's project needs nothing added. The script unpacks the AAR's classes and native libraries, and prints what d8 needs: d8 itself, from the Android SDK's build tools of the version the Android Gradle plugin uses, the library's `minSdk`, the SDK's classes, and the library's compile classpath. d8 compiles the classes into `android/classes.dex` with the classpath read but left out: the app has those libraries already, and Android loads only one of a class. The AAR's `jni/` becomes `android/jni/`.
+
+A module is built against its shell's runtime, so its author builds it with the Xcode and the Android Gradle plugin the shell is built with. CI builds the E2E module with the shells' Xcode, and `packages/e2e/src/shell.test.ts` checks its API levels, Android Gradle plugin and iOS deployment target are the fixture shell's.
 
 ## E2E
 

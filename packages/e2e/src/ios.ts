@@ -15,7 +15,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import type { Artifacts, Platform } from './run.ts';
 import { type RunOptions, poll, run } from './process.ts';
 import { buildIos } from '../../shells/src/ios.ts';
-import { SHELLS, type ShellName, XCODE_PROJECTS } from './shell.ts';
+import { buildIosModule } from '../../shells/src/module-ios.ts';
+import { MODULE, SHELLS, type ShellName, XCODE_PROJECTS } from './shell.ts';
 
 /** The simulator the tests create and reuse, so a developer's own stay untouched. */
 const DEVICE_NAME = 'OmniBuild E2E';
@@ -48,9 +49,15 @@ interface SimctlList {
 /**
  * Builds each shell's release variants with Xcode, as the Shell workflow
  * does in CI (packages/shells): an app for the simulator, zipped, and one for
- * devices, an .ipa, unsigned. Returns their paths.
+ * devices, an .ipa, unsigned. Returns their paths. Then the native module's
+ * .xcframework, as the Module workflow does.
  */
-const build: Platform['build'] = async ({ buildDir, outDir, log }) => {
+const build: Platform['build'] = async ({
+  buildDir,
+  outDir,
+  moduleDir,
+  log,
+}) => {
   const shells: string[] = [];
   for (const shell of SHELLS) {
     shells.push(
@@ -64,6 +71,13 @@ const build: Platform['build'] = async ({ buildDir, outDir, log }) => {
       })),
     );
   }
+  await buildIosModule({
+    project: MODULE.xcodeProject,
+    name: MODULE.name,
+    out: moduleDir,
+    work: path.join(buildDir, 'ios', MODULE.name),
+    log,
+  });
   return shells;
 };
 
@@ -238,6 +252,9 @@ const verify: Platform['verify'] = ({ app, shell, log }) =>
         version: info.CFBundleShortVersionString,
         build: info.CFBundleVersion,
         payload: readFileSync(path.join(bundle, 'payload.txt'), 'utf8'),
+        // The native modules Info.plist lists for the shell, each of whose
+        // frameworks codesign has checked above.
+        modules: ((info.OmniBuildModules ?? []) as string[]).join(', '),
         applicationIdentifier: claimed(own, 'application-identifier'),
         // What the app claims for its capabilities, as its profile allowed.
         pushEnvironment: claimed(own, 'aps-environment'),

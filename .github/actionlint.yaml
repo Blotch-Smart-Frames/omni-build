@@ -1,5 +1,7 @@
 paths:
-  .github/workflows/shell.yml:
+  # The reusable workflows that check out their own source, the Shell and
+  # Module workflows.
+  .github/workflows/{shell,module}.yml:
     ignore:
       # The job context's workflow identity, which GitHub added on 3
       # September 2026 for a reusable workflow to check out its own source

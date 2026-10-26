@@ -1,4 +1,6 @@
 import {
+  copyFileSync,
+  cpSync,
   existsSync,
   mkdtempSync,
   readdirSync,
@@ -13,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { run } from './process.ts';
 import { expected, omniBuild, repackage } from './repackage.ts';
-import { SHELL } from './shell.ts';
+import { MODULE, SHELL } from './shell.ts';
 
 // omni, reporting to a build tool that each command worked: the
 // keystore `key create` was given, or the app `repackage` wrote.
@@ -28,10 +30,16 @@ vi.mock('./process.ts', () => ({
 }));
 
 // The real file system, but with existsSync() a spy, so a test can say the
-// release binary in target/ is there whether or not this checkout built it.
+// release binary in target/ is there whether or not this checkout built it,
+// and nothing copied into app/node_modules, where the native module goes.
 vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
-  return { ...fs, existsSync: vi.fn(fs.existsSync) };
+  return {
+    ...fs,
+    existsSync: vi.fn(fs.existsSync),
+    cpSync: vi.fn(),
+    copyFileSync: vi.fn(),
+  };
 });
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
@@ -54,12 +62,15 @@ const tempDir = () => mkdtempSync(path.join(TEMP, 'e2e-repackage-'));
 
 let binary: string;
 let outDir: string;
+/** The native module's binaries, as the build stage writes them. */
+let moduleDir: string;
 
 beforeEach(() => {
   const dir = tempDir();
   binary = path.join(dir, 'omni');
   writeFileSync(binary, '');
   outDir = path.join(dir, 'out');
+  moduleDir = tempDir();
   vi.stubEnv('OMNI_BUILD_BINARY', binary);
   // A user's environment, which omni gets only the home and temporary
   // folders of.
@@ -96,12 +107,14 @@ describe('expected', () => {
       ...values,
       icon: '#E8590C',
       provider: 'dev.omnibuild.e2e.app.provider',
+      // The native module's too.
       permissions:
-        'android.permission.INTERNET, android.permission.VIBRATE, dev.omnibuild.e2e.app.permission.SHELL',
+        'android.permission.ACCESS_NETWORK_STATE, android.permission.INTERNET, android.permission.VIBRATE, dev.omnibuild.e2e.app.permission.SHELL',
       abis: 'arm64-v8a, x86_64',
       openedWith: 'omnibuild-e2e://report',
       webLinks: 'e2e.omnibuild.example',
       orientation: 'userLandscape',
+      modules: 'OmniBuildModule in dev.omnibuild.module.OmniBuildModule',
       signer: 'CN=OmniBuild Debug, O=OmniBuild',
     });
     // An app bundle, signed with the upload key omni created.
@@ -126,6 +139,7 @@ describe('expected', () => {
       watchAppId: 'dev.omnibuild.e2e.app.watchkitapp',
       watchCompanion: 'dev.omnibuild.e2e.app',
       watchWidgetsId: 'dev.omnibuild.e2e.app.watchkitapp.ShellWatchWidgets',
+      modules: 'OmniBuildModule, in dev.omnibuild.module',
       signer: 'ad hoc',
     });
   });
@@ -134,6 +148,7 @@ describe('expected', () => {
     expect(expected('ios', 'OmniBuildShell-linux.ipa')).toEqual({
       ...values,
       cameraUsage: "Scans the codes on OmniBuild's test cards.",
+      modules: 'OmniBuildModule',
       signer: 'OmniBuild E2E',
       applicationIdentifier: 'OMNIBUILD0.dev.omnibuild.e2e.app',
       pushEnvironment: 'development',
@@ -214,6 +229,7 @@ describe('repackage', () => {
     const app = await repackage({
       shell,
       outDir,
+      module: moduleDir,
       log: 'commands.log',
     });
 
@@ -230,7 +246,12 @@ describe('repackage', () => {
     const shell = path.join('shells', 'OmniBuildShell.zip');
     onPlatform('darwin');
 
-    const app = await repackage({ shell, outDir, log: 'commands.log' });
+    const app = await repackage({
+      shell,
+      outDir,
+      module: moduleDir,
+      log: 'commands.log',
+    });
 
     expect(app).toBe(path.join(outDir, 'OmniBuildShell-macos.zip'));
     expect(run).toHaveBeenCalledWith(
@@ -244,7 +265,12 @@ describe('repackage', () => {
     const shell = path.join('shells', 'OmniBuildShell.ipa');
     onPlatform('darwin');
 
-    const app = await repackage({ shell, outDir, log: 'commands.log' });
+    const app = await repackage({
+      shell,
+      outDir,
+      module: moduleDir,
+      log: 'commands.log',
+    });
 
     expect(app).toBe(path.join(outDir, 'OmniBuildShell-macos.ipa'));
     expect(run).toHaveBeenCalledWith(
@@ -291,7 +317,12 @@ describe('repackage', () => {
   it('signs an app bundle with an upload key it has omni create', async () => {
     const shell = path.join('shells', 'OmniBuildShell.aab');
 
-    const app = await repackage({ shell, outDir, log: 'commands.log' });
+    const app = await repackage({
+      shell,
+      outDir,
+      module: moduleDir,
+      log: 'commands.log',
+    });
 
     const [create, sign] = vi.mocked(run).mock.calls;
     const keystore = create[1][2];
@@ -335,8 +366,18 @@ describe('repackage', () => {
     const apk = path.join('shells', 'WebViewShell.apk');
     const ipa = path.join('shells', 'WebViewShell.ipa');
 
-    const apkApp = await repackage({ shell: apk, outDir, log: 'commands.log' });
-    const ipaApp = await repackage({ shell: ipa, outDir, log: 'commands.log' });
+    const apkApp = await repackage({
+      shell: apk,
+      outDir,
+      module: moduleDir,
+      log: 'commands.log',
+    });
+    const ipaApp = await repackage({
+      shell: ipa,
+      outDir,
+      module: moduleDir,
+      log: 'commands.log',
+    });
 
     expect(vi.mocked(run).mock.calls.map(([, args]) => args)).toEqual([
       ['repackage', apk, '--config', webApp, '--out', apkApp, '--json'],
@@ -358,6 +399,45 @@ describe('repackage', () => {
     ]);
   });
 
+  it("installs the native module beside the fixture app's package.json first, as npm would", async () => {
+    const shell = path.join('shells', 'OmniBuildShell.apk');
+
+    await repackage({ shell, outDir, module: moduleDir, log: 'commands.log' });
+    await repackage({
+      shell: path.join('shells', 'WebViewShell.apk'),
+      outDir,
+      module: moduleDir,
+      log: 'commands.log',
+    });
+
+    const installed = fileURLToPath(
+      new URL('../app/node_modules/omnibuild-e2e-module', import.meta.url),
+    );
+    // The binaries, then the module's package.json, which names them.
+    expect(vi.mocked(cpSync).mock.calls).toEqual([
+      [moduleDir, installed, { recursive: true }],
+    ]);
+    expect(vi.mocked(copyFileSync).mock.calls).toEqual([
+      [MODULE.packageJson, path.join(installed, 'package.json')],
+    ]);
+  });
+
+  it('says how to get the native module when there is none', async () => {
+    const missing = path.join(tempDir(), 'module');
+
+    await expect(
+      repackage({
+        shell: 'OmniBuildShell.apk',
+        outDir,
+        module: missing,
+        log: 'commands.log',
+      }),
+    ).rejects.toThrow(
+      `There's no native module in ${missing}: run the build stage first, or give --module the folder the Module workflow wrote.`,
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it('names an app for an OS it has no name for by its platform', async () => {
     onPlatform('freebsd');
 
@@ -365,6 +445,7 @@ describe('repackage', () => {
       await repackage({
         shell: 'OmniBuildShell.aab',
         outDir,
+        module: moduleDir,
         log: 'commands.log',
       }),
     ).toBe(path.join(outDir, 'OmniBuildShell-freebsd.aab'));
@@ -372,17 +453,24 @@ describe('repackage', () => {
 
   it("runs this repository's release build without OMNI_BUILD_BINARY", async () => {
     vi.stubEnv('OMNI_BUILD_BINARY', undefined);
-    vi.mocked(existsSync).mockReturnValueOnce(true).mockReturnValueOnce(true);
+    // The native module's folder, then the binary, for each app.
+    vi.mocked(existsSync)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true);
 
     await repackage({
       shell: 'OmniBuildShell.apk',
       outDir,
+      module: moduleDir,
       log: 'commands.log',
     });
     onPlatform('win32');
     const app = await repackage({
       shell: 'OmniBuildShell.apk',
       outDir,
+      module: moduleDir,
       log: 'commands.log',
     });
 
@@ -401,6 +489,7 @@ describe('repackage', () => {
       repackage({
         shell: 'OmniBuildShell.apk',
         outDir,
+        module: moduleDir,
         log: 'commands.log',
       }),
     ).rejects.toThrow(

@@ -35,9 +35,16 @@ export interface DeviceOptions extends Artifacts {
 export interface Platform<Started = unknown, Device = unknown> {
   name: string;
   toolchain: string;
-  /** Builds every shell into `outDir`, and returns their paths. */
+  /**
+   * Builds every shell into `outDir`, and returns their paths, and the
+   * native module the fixture's apps get into `moduleDir`.
+   */
   build(
-    options: Artifacts & { buildDir: string; outDir: string },
+    options: Artifacts & {
+      buildDir: string;
+      outDir: string;
+      moduleDir: string;
+    },
   ): Promise<string[]>;
   /**
    * Checks an app with the platform's own tools, and returns what signed it,
@@ -90,10 +97,13 @@ Commands:
              and app bundle, or iOS app for the simulator and one for
              devices, of each shell), as CI's Shell workflow does
              (packages/shells): the only stage that uses them. Writes them
-             to --out (default: build/shells/<platform>).
+             to --out (default: build/shells/<platform>), and the native
+             module the fixture's apps get, as CI's Module workflow builds
+             it, to build/module.
   repackage  Run each shell (--shell) through omni, which gets no
-             PATH and no toolchain variables. Writes to --out (default:
-             build/repackaged/<platform>).
+             PATH and no toolchain variables, the fixture with the native
+             module (--module) installed for the app as npm would install
+             it. Writes to --out (default: build/repackaged/<platform>).
   test [app...]
              Install and launch each app (default: every file in
              build/repackaged/<platform>), and check what it reports.
@@ -102,6 +112,9 @@ Options:
   --platform <ios|android>  Required.
   --shell <file>            repackage: a shell, as often as there are
                             shells. Default: the ones build wrote.
+  --module <dir>            repackage: the native module's binaries, as
+                            the Module workflow writes them (ios/,
+                            android/). Default: the ones build wrote.
   --out <dir>               build, repackage: where to write.
   --avd <name>              test, Android: boot this emulator unless it's
                             already running (\`emulator -list-avds\` lists
@@ -143,6 +156,7 @@ export const run = async (
     options: {
       platform: { type: 'string' },
       shell: { type: 'string', multiple: true },
+      module: { type: 'string' },
       out: { type: 'string' },
       avd: { type: 'string' },
       'artifacts-dir': { type: 'string' },
@@ -174,6 +188,7 @@ export const run = async (
     platformId,
   );
   const shellsDir = path.join(buildDir, 'shells', platformId);
+  const moduleDir = path.join(buildDir, 'module');
   const repackagedDir = path.join(buildDir, 'repackaged', platformId);
 
   /**
@@ -193,12 +208,17 @@ export const run = async (
       ...artifactsFor('build'),
       buildDir,
       outDir,
+      moduleDir,
     });
     shells.forEach((shell) => console.log(shell));
     return shells;
   };
 
-  const repackageStage = async (shells: string[], outDir: string) => {
+  const repackageStage = async (
+    shells: string[],
+    outDir: string,
+    module: string,
+  ) => {
     step('Repackaging them with omni, with no toolchain in reach');
     const artifacts = artifactsFor('repackage');
     const apps: string[] = [];
@@ -207,6 +227,7 @@ export const run = async (
         ...artifacts,
         shell,
         outDir,
+        module,
       });
       console.log(app);
       apps.push(app);
@@ -321,6 +342,7 @@ export const run = async (
             ? values.shell.map((shell) => path.resolve(shell))
             : filesFrom(shellsDir, 'build'),
           path.resolve(values.out ?? repackagedDir),
+          values.module ? path.resolve(values.module) : moduleDir,
         );
         break;
       case 'test': {
@@ -339,6 +361,7 @@ export const run = async (
           apps = await repackageStage(
             await buildStage(shellsDir),
             repackagedDir,
+            moduleDir,
           );
         } catch (error) {
           // The device started booting first; don't leave it running for a
