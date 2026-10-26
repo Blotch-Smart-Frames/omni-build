@@ -30,6 +30,12 @@ pub struct App {
     /// bundle: they go in the APK's `assets/`, or in the iOS app's bundle,
     /// replacing the shell's files of the same name.
     pub payload: Option<PathBuf>,
+    /// The app's `package.json`. OmniBuild adds the native modules among
+    /// its dependencies, and theirs, where npm installed them: packages
+    /// with native code built for the shell's runtime, which the shell
+    /// registers when it starts.
+    #[serde(rename = "packageJson")]
+    pub package_json: Option<PathBuf>,
     /// The URL schemes that open the app, such as `myapp` for
     /// `myapp://path`, as deep links: an intent filter on the launcher
     /// activity on Android, and a URL type in `Info.plist` on iOS. They're
@@ -329,6 +335,7 @@ impl App {
         Ok(Self {
             icon: app.icon.map(|icon| folder.join(icon)),
             payload: app.payload.map(|payload| folder.join(payload)),
+            package_json: app.package_json.map(|path| folder.join(path)),
             android: Android {
                 adaptive_icon,
                 ..app.android
@@ -356,7 +363,8 @@ mod tests {
         fs::write(
             &path,
             r#"{ "id": "dev.example.app", "name": "Example", "version": "2.5.0", "build": 42,
-                "icon": "icon.png", "payload": "bundle", "urlSchemes": ["example"],
+                "icon": "icon.png", "payload": "bundle", "packageJson": "package.json",
+                "urlSchemes": ["example"],
                 "webLinks": ["example.com"], "orientation": "landscape",
                 "android": {
                     "adaptiveIcon": { "foreground": "front.png", "background": "back.png", "monochrome": "mono.png" },
@@ -389,6 +397,7 @@ mod tests {
                 // Relative to the config's folder.
                 icon: Some(dir.path().join("icon.png")),
                 payload: Some(dir.path().join("bundle")),
+                package_json: Some(dir.path().join("package.json")),
                 url_schemes: Some(vec!["example".to_owned()]),
                 web_links: Some(vec!["example.com".to_owned()]),
                 orientation: Some(Orientation::Landscape),

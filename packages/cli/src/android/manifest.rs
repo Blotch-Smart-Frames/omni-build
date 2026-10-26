@@ -27,6 +27,8 @@ const SCHEME: u32 = 0x0101_0027;
 const HOST: u32 = 0x0101_0028;
 const AUTO_VERIFY: u32 = 0x0101_04ee;
 const SCREEN_ORIENTATION: u32 = 0x0101_001e;
+const VALUE: u32 = 0x0101_0024;
+const EXTRACT_NATIVE_LIBS: u32 = 0x0101_04ea;
 
 /// The elements that start an app's components. The intent filters
 /// inside one come after it in document order, before the next one.
@@ -146,6 +148,11 @@ pub struct Changes {
     /// The resources the app's icon goes in: the application's icon, and
     /// its round icon, which some launchers show instead.
     pub icon_resources: Vec<u32>,
+    /// Whether Android copies the app's native libraries out of the APK
+    /// when it installs it (`android:extractNativeLibs`, true unless the
+    /// application says otherwise), where they can be compressed, rather
+    /// than map them from it, where they're stored, aligned to a page.
+    pub extract_native_libs: bool,
 }
 
 /// Gives the manifest the app's ID, name, version, build number and
@@ -234,10 +241,16 @@ pub fn rewrite(manifest: &mut dyn Document, app: &App) -> Result<Changes> {
             bail!("it has no android:icon to change");
         }
     }
+    let extract_native_libs = !matches!(
+        find(manifest, "application", EXTRACT_NATIVE_LIBS)
+            .map(|index| &manifest.attributes()[index].value),
+        Some(Value::Boolean(false))
+    );
     Ok(Changes {
         min_sdk,
         name_resources,
         icon_resources,
+        extract_native_libs,
     })
 }
 
@@ -447,20 +460,7 @@ fn set_orientation(manifest: &mut dyn Document, orientation: Orientation) -> Res
 /// itself (AndroidX's `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`).
 fn set_permissions(manifest: &mut dyn Document, permissions: &[String]) -> Result<()> {
     let own = format!("{}.", package(manifest)?);
-    let mut wanted = Vec::new();
-    for permission in permissions {
-        let name = if permission.contains('.') {
-            permission.clone()
-        } else {
-            format!("android.permission.{permission}")
-        };
-        if !is_application_id(&name) {
-            bail!(
-                "\"{permission}\" isn't the name of a permission, such as android.permission.CAMERA, or CAMERA for short"
-            );
-        }
-        wanted.push(name);
-    }
+    let wanted = permission_names(permissions)?;
     for element in PERMISSION_REQUESTS {
         manifest.remove_children(element, &|attributes| {
             attributes.iter().any(|attribute| {
@@ -471,7 +471,39 @@ fn set_permissions(manifest: &mut dyn Document, permissions: &[String]) -> Resul
             })
         });
     }
-    let requested: Vec<Value> = manifest
+    request(manifest, &wanted)
+}
+
+/// Asks for the permissions, named as `set_permissions` takes them, as
+/// well as those the manifest asks for already.
+pub fn add_permissions(manifest: &mut dyn Document, permissions: &[String]) -> Result<()> {
+    request(manifest, &permission_names(permissions)?)
+}
+
+/// The whole names of permissions, given as `set_permissions` takes them.
+fn permission_names(permissions: &[String]) -> Result<Vec<String>> {
+    permissions
+        .iter()
+        .map(|permission| {
+            let name = if permission.contains('.') {
+                permission.clone()
+            } else {
+                format!("android.permission.{permission}")
+            };
+            if !is_application_id(&name) {
+                bail!(
+                    "\"{permission}\" isn't the name of a permission, such as android.permission.CAMERA, or CAMERA for short"
+                );
+            }
+            Ok(name)
+        })
+        .collect()
+}
+
+/// Asks for each permission, by its whole name, that the manifest doesn't
+/// ask for already, once.
+fn request(manifest: &mut dyn Document, wanted: &[String]) -> Result<()> {
+    let mut requested: Vec<Value> = manifest
         .attributes()
         .iter()
         .filter(|attribute| {
@@ -480,13 +512,66 @@ fn set_permissions(manifest: &mut dyn Document, permissions: &[String]) -> Resul
         })
         .map(|attribute| attribute.value.clone())
         .collect();
-    for name in wanted
-        .iter()
-        .filter(|name| !requested.contains(&Value::String((*name).clone())))
-    {
-        manifest.add_element(0, &Element::with("uses-permission", ("name", NAME), name))?;
+    for name in wanted {
+        let value = Value::String(name.clone());
+        if !requested.contains(&value) {
+            manifest.add_element(0, &Element::with("uses-permission", ("name", NAME), name))?;
+            requested.push(value);
+        }
     }
     Ok(())
+}
+
+/// The value, as text, of the `<meta-data>` named `name`, if the manifest
+/// has one: a value its code reads through `PackageManager`.
+pub fn meta_data(manifest: &dyn Document, name: &str) -> Option<String> {
+    let index = meta_data_value(manifest, name)?;
+    match &manifest.attributes()[index].value {
+        Value::String(value) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+/// Sets the `<meta-data>` named `name` to `value`, adding one to the
+/// application if the manifest has none.
+pub fn set_meta_data(manifest: &mut dyn Document, name: &str, value: &str) -> Result<()> {
+    if let Some(index) = meta_data_value(manifest, name) {
+        manifest.set_string(index, value);
+        return Ok(());
+    }
+    let application = manifest
+        .attributes()
+        .iter()
+        .find(|attribute| attribute.element == "application")
+        .map(|attribute| attribute.node)
+        .context("it has no <application> to give a <meta-data>")?;
+    manifest.add_element(
+        application,
+        &Element {
+            name: "meta-data",
+            attributes: vec![
+                ("name", NAME, Literal::Text(name)),
+                ("value", VALUE, Literal::Text(value)),
+            ],
+            children: Vec::new(),
+        },
+    )
+}
+
+/// The index of the `android:value` of the `<meta-data>` named `name`.
+fn meta_data_value(manifest: &dyn Document, name: &str) -> Option<usize> {
+    let attributes = manifest.attributes();
+    let node = attributes
+        .iter()
+        .find(|attribute| {
+            attribute.element == "meta-data"
+                && attribute.resource_id == Some(NAME)
+                && attribute.value == Value::String(name.to_owned())
+        })?
+        .node;
+    attributes
+        .iter()
+        .position(|attribute| attribute.node == node && attribute.resource_id == Some(VALUE))
 }
 
 /// The manifest's package.
@@ -617,12 +702,13 @@ mod tests {
     use anyhow::Result;
 
     use super::{
-        AUTHORITIES, AUTO_VERIFY, BACKUP_AGENT, Changes, Document, Element, HOST, NAME, PERMISSION,
-        SCHEME, SCREEN_ORIENTATION, TARGET_ACTIVITY, VERSION_CODE, Value as Typed, rewrite,
+        AUTHORITIES, AUTO_VERIFY, BACKUP_AGENT, Changes, Document, EXTRACT_NATIVE_LIBS, Element,
+        HOST, NAME, PERMISSION, SCHEME, SCREEN_ORIENTATION, TARGET_ACTIVITY, VALUE, VERSION_CODE,
+        Value as Typed, add_permissions, meta_data, rewrite, set_meta_data,
     };
     use crate::android::binary_xml::BinaryXml;
     use crate::android::binary_xml::tests::{
-        Value::{Int, Ref, Str},
+        Value::{Bool, Int, Ref, Str},
         binary_xml, names, shell_manifest, texts,
     };
     use crate::config::{AdaptiveIcon, Android, App, Background, Orientation, Translation};
@@ -1374,6 +1460,97 @@ mod tests {
             texts(&["dev.example.app.permission.SHELL"])
         );
         assert_eq!(unchanged, shell);
+    }
+
+    #[test]
+    fn adds_permissions_to_those_it_asks_for() {
+        let mut shell = BinaryXml::parse(&shell_manifest()).unwrap();
+
+        add_permissions(
+            &mut shell,
+            &[
+                "VIBRATE".to_owned(),
+                "android.permission.INTERNET".to_owned(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            names(&shell, "uses-permission"),
+            texts(&[
+                "android.permission.VIBRATE",
+                "android.permission.INTERNET",
+                "android.permission.CAMERA",
+                "dev.omnibuild.shell.permission.SHELL",
+            ])
+        );
+        assert_eq!(
+            add_permissions(&mut shell, &["CAMERA!".to_owned()])
+                .unwrap_err()
+                .to_string(),
+            "\"CAMERA!\" isn't the name of a permission, such as android.permission.CAMERA, or CAMERA for short"
+        );
+    }
+
+    #[test]
+    fn reads_and_sets_meta_data() {
+        let mut shell = BinaryXml::parse(&shell_manifest()).unwrap();
+        assert_eq!(meta_data(&shell, "dev.example.key"), None);
+
+        set_meta_data(&mut shell, "dev.example.key", "first").unwrap();
+        set_meta_data(&mut shell, "dev.example.key", "second").unwrap();
+
+        let read = BinaryXml::parse(&shell.to_bytes()).unwrap();
+        assert_eq!(
+            meta_data(&read, "dev.example.key").as_deref(),
+            Some("second")
+        );
+        assert_eq!(names(&read, "meta-data"), texts(&["dev.example.key"]));
+        // A value that isn't text, as aapt2 compiles a number.
+        let number = BinaryXml::parse(&binary_xml(&[(
+            "meta-data",
+            vec![
+                ("name", Some(NAME), Str("dev.example.key")),
+                ("value", Some(VALUE), Int(1)),
+            ],
+        )]))
+        .unwrap();
+        assert_eq!(meta_data(&number, "dev.example.key"), None);
+        let mut no_application = BinaryXml::parse(&binary_xml(&[(
+            "manifest",
+            vec![("package", None, Str("dev.example.app"))],
+        )]))
+        .unwrap();
+        assert_eq!(
+            set_meta_data(&mut no_application, "dev.example.key", "value")
+                .unwrap_err()
+                .to_string(),
+            "it has no <application> to give a <meta-data>"
+        );
+    }
+
+    #[test]
+    fn reads_whether_android_extracts_native_libraries() {
+        let extracts = |value: Option<bool>| {
+            let manifest = binary_xml(&[
+                ("manifest", vec![("package", None, Str("dev.example.app"))]),
+                (
+                    "application",
+                    value
+                        .map(|value| ("extractNativeLibs", Some(EXTRACT_NATIVE_LIBS), Bool(value)))
+                        .into_iter()
+                        .collect(),
+                ),
+            ]);
+            rewritten(&manifest, &App::default())
+                .unwrap()
+                .1
+                .extract_native_libs
+        };
+
+        assert!(extracts(None));
+        assert!(extracts(Some(true)));
+        assert!(!extracts(Some(false)));
     }
 
     #[test]

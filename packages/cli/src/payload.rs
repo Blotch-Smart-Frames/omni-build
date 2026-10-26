@@ -13,12 +13,19 @@ use anyhow::{Context, Result};
 /// the file system's or git's rather than the app's, and aapt2 leaves them
 /// out of an APK's assets too.
 pub fn read(root: &Path) -> Result<Vec<(String, Vec<u8>)>> {
+    read_folder(root, "the payload folder")
+}
+
+/// The files in any folder that goes in an app, as `read` reads a
+/// payload's, such as a native module's framework. `what` names the folder
+/// in errors.
+pub fn read_folder(root: &Path, what: &str) -> Result<Vec<(String, Vec<u8>)>> {
     let mut files: Vec<(String, PathBuf)> = Vec::new();
     let mut folders = vec![(root.to_path_buf(), String::new())];
     while let Some((folder, prefix)) = folders.pop() {
         let children = fs::read_dir(&folder)
             .and_then(Iterator::collect::<io::Result<Vec<_>>>)
-            .with_context(|| format!("couldn't read the payload folder {}", folder.display()))?;
+            .with_context(|| format!("couldn't read {what} {}", folder.display()))?;
         for child in children {
             let name = child.file_name().to_string_lossy().into_owned();
             if name.starts_with('.') {

@@ -65,17 +65,17 @@ The framework maps its own options to OmniBuild's [app config](./repackaging.md#
 
 ## Native modules from npm
 
-A prebuilt shell can't compile a module's source, so the plan is for module packages to ship binaries built against the shell's runtime version, and declare them in `package.json`:
+A prebuilt shell can't compile a module's source, so a module package ships its native code built against the shell's runtime, and declares it in `package.json`:
 
 ```jsonc
 "omniBuild": {
-  "runtime": "lynx@4.1",
-  "ios": { "frameworks": ["ios/Camera.xcframework"], "modules": ["CameraModule"] },
-  "android": { "dex": "android/classes.dex", "jniLibs": "android/jni", "modules": ["dev.example.CameraModule"], "manifest": "android/AndroidManifest.xml" }
+  "runtime": "example@1",
+  "ios": { "frameworks": ["ios/Camera.xcframework"], "modules": ["Camera"] },
+  "android": { "dex": ["android/classes.dex"], "jniLibs": "android/jni", "modules": ["com.example.camera.Camera"], "permissions": ["CAMERA"] }
 }
 ```
 
-OmniBuild collects these from the app's dependencies, embeds the binaries and writes the module list into the app's configuration. The shell registers each module by name at startup, so nothing is generated and nothing is compiled. This is [Phase 4](./roadmap.md#phases).
+`omni repackage` collects these from the app's dependencies, embeds the binaries and lists the modules where the shell reads them. The shell registers each module by name at startup, so nothing is generated and nothing is compiled. [Native modules](./native-modules.md) has the details, and this is [Phase 4](./roadmap.md#phases).
 
 ## Prior art
 

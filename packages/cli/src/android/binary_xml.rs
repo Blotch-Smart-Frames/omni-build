@@ -512,8 +512,8 @@ fn u32_of(value: usize) -> u32 {
 #[cfg(test)]
 pub mod tests {
     use super::{
-        BinaryXml, CDATA, NO_STRING, START_ELEMENT, TYPE_INT_DEC, TYPE_INT_HEX, TYPE_REFERENCE,
-        TYPE_STRING, chunks, node,
+        BinaryXml, CDATA, NO_STRING, START_ELEMENT, TYPE_INT_BOOLEAN, TYPE_INT_DEC, TYPE_INT_HEX,
+        TYPE_REFERENCE, TYPE_STRING, chunks, node,
     };
     use crate::android::manifest::{
         Attribute, Document, Element as Added, Literal, Value as Typed,
@@ -526,6 +526,7 @@ pub mod tests {
         Str(&'a str),
         Int(u32),
         Ref(u32),
+        Bool(bool),
     }
 
     pub type Element<'a> = (&'a str, Vec<(&'a str, Option<u32>, Value<'a>)>);
@@ -571,6 +572,12 @@ pub mod tests {
                     }
                     Value::Int(value) => (NO_STRING, TYPE_INT_DEC, *value),
                     Value::Ref(id) => (NO_STRING, TYPE_REFERENCE, *id),
+                    // aapt2 writes true as all ones.
+                    Value::Bool(value) => (
+                        NO_STRING,
+                        TYPE_INT_BOOLEAN,
+                        if *value { u32::MAX } else { 0 },
+                    ),
                 };
                 records.extend(NO_STRING.to_le_bytes());
                 records.extend(attribute_name.to_le_bytes());

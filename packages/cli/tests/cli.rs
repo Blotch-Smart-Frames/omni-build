@@ -829,6 +829,86 @@ fn reports_to_build_tools_as_json_lines() {
     );
 }
 
+/// An app config in `dir` naming the app's `package.json`, which depends
+/// on a native module, `haptics`, for both platforms, as npm installs it.
+fn app_with_a_native_module(dir: &Path) -> String {
+    let module = dir.join("node_modules").join("haptics");
+    fs::create_dir_all(&module).unwrap();
+    fs::write(
+        module.join("package.json"),
+        r#"{ "name": "haptics", "version": "1.0.0", "omniBuild": {
+            "runtime": "example@1",
+            "ios": { "modules": ["Haptics"] },
+            "android": { "modules": ["dev.example.Haptics"] }
+        } }"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("package.json"),
+        r#"{ "dependencies": { "haptics": "^1.0.0" } }"#,
+    )
+    .unwrap();
+    let config = dir.join("app.json");
+    fs::write(&config, r#"{ "packageJson": "package.json" }"#).unwrap();
+    config.display().to_string()
+}
+
+#[test]
+fn repackage_finds_the_apps_native_modules() {
+    let home = tempfile::tempdir().unwrap();
+    let config = app_with_a_native_module(home.path());
+    let out = home.path().join("app").display().to_string();
+
+    // Neither shell takes native modules, as a shell that registers them
+    // says.
+    for (shell, place) in [
+        (SHELL_APP, "its Info.plist, as OmniBuildRuntime"),
+        (
+            SHELL,
+            "its manifest, as <meta-data android:name=\"dev.omnibuild.runtime\">",
+        ),
+    ] {
+        let output = omni_build_at_home(
+            home.path(),
+            &["--json", "repackage", shell, "-c", &config, "-o", &out],
+        );
+
+        assert_eq!(output.status.code(), Some(1));
+        let events = events(&output);
+        let found = events
+            .iter()
+            .find(|event| event["event"] == "module-found")
+            .unwrap();
+        assert_eq!(
+            found,
+            &serde_json::json!({
+                "event": "module-found",
+                "name": "haptics",
+                "version": "1.0.0",
+                "message": "Found the native module haptics 1.0.0 among the app's dependencies",
+            })
+        );
+        assert_eq!(
+            events.last().unwrap()["message"],
+            format!(
+                "haptics 1.0.0 is a native module, and the shell takes none: a shell that registers native modules names its runtime in {place}"
+            )
+        );
+    }
+    fs::remove_dir_all(home.path().join("node_modules")).unwrap();
+    let output = omni_build_at_home(
+        home.path(),
+        &["repackage", SHELL, "-c", &config, "-o", &out],
+    );
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "error: haptics, which {} depends on, isn't installed in node_modules: run npm install\n",
+            home.path().join("package.json").display()
+        )
+    );
+}
+
 #[test]
 fn tells_build_tools_when_the_device_asks_its_user() {
     let home = tempfile::tempdir().unwrap();

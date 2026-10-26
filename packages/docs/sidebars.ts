@@ -13,6 +13,7 @@ const sidebars: SidebarsConfig = {
     'installing',
     'build-tools',
     'shells',
+    'native-modules',
     'roadmap',
     'contributing',
   ],

@@ -72,6 +72,10 @@ pub enum Event {
     /// The device asks its user whether to allow this computer, and
     /// OmniBuild waits for the answer.
     Authorizing { device: String },
+    /// `repackage` found a native module among the app's dependencies, or
+    /// theirs, with something for the shell's platform, which it adds to
+    /// the app.
+    ModuleFound { name: String, version: String },
     /// `repackage` wrote the app.
     Repackaged {
         shell: String,
@@ -212,6 +216,9 @@ impl Event {
             Self::Authorizing { device } => format!(
                 "{device} asks whether to allow debugging from this computer. Allow it on the device."
             ),
+            Self::ModuleFound { name, version } => {
+                format!("Found the native module {name} {version} among the app's dependencies")
+            }
             Self::Repackaged { shell, out, .. } => format!("Repackaged {shell} into {out}"),
             Self::Installed {
                 app,
@@ -400,6 +407,20 @@ mod tests {
     }
 
     #[test]
+    fn tells_people_the_native_modules_it_found() {
+        assert_eq!(
+            Reporter::new(false).line(&Event::ModuleFound {
+                name: "@example/haptics".to_owned(),
+                version: "1.0.0".to_owned(),
+            }),
+            Line::Stderr(
+                "Found the native module @example/haptics 1.0.0 among the app's dependencies"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
     fn tells_people_results_on_stdout_and_the_rest_on_stderr() {
         let people = Reporter::new(false);
         let key = |key| Event::KeyCreated {
@@ -559,6 +580,16 @@ mod tests {
                 r#"{"event":"capability-enabled","bundleId":"dev.example.app","capability":"Push Notifications","message":"#
             )
         ));
+        assert_eq!(
+            tools.line(&Event::ModuleFound {
+                name: "@example/haptics".to_owned(),
+                version: "1.0.0".to_owned(),
+            }),
+            Line::Stdout(
+                r#"{"event":"module-found","name":"@example/haptics","version":"1.0.0","message":"Found the native module @example/haptics 1.0.0 among the app's dependencies"}"#
+                    .to_owned()
+            )
+        );
         assert_eq!(
             tools.line(&Event::Error {
                 message: "couldn't read \"shell\"".to_owned()
