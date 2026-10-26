@@ -15,6 +15,7 @@ mod entitlements;
 mod info_plist;
 mod macho;
 mod profile;
+mod provisioning;
 mod signing;
 
 use std::collections::BTreeMap;
@@ -29,6 +30,7 @@ use crate::zip::{self, Entry, Method};
 use crate::{icon, payload};
 use info_plist::InfoPlist;
 use profile::Profile;
+pub use provisioning::{Distribution, Provisioner};
 use signing::{Claims, Identity};
 
 /// The platforms in `CFBundleSupportedPlatforms` of a build for the
@@ -118,7 +120,10 @@ pub fn repackage(
     let shell_id = shell
         .id()
         .context("the shell's Info.plist has no bundle ID (CFBundleIdentifier)")?;
-    let nested = rewrite_nested(&mut entries, bundle, shell_id, app)?;
+    let nested: Vec<String> = rewrite_nested(&mut entries, bundle, shell_id, app)?
+        .into_iter()
+        .map(|(suffix, _)| suffix)
+        .collect();
     if let Some(unknown) = app
         .ios
         .bundles
@@ -151,6 +156,54 @@ pub fn repackage(
     });
     let entries = signing::sign(entries, bundle, &info, identity.as_ref())?;
     Ok(zip::write(&entries).bytes)
+}
+
+/// A bundle a build for devices signs with a provisioning profile of its
+/// own: the app, or a program nested in it.
+pub struct Signed {
+    /// Its ID, as repackaging gives it.
+    pub id: String,
+    /// Whether it's an App Clip, whose App ID is registered as one.
+    pub app_clip: bool,
+    /// What it claims for the capabilities it uses, if anything.
+    pub claims: Option<Claims>,
+}
+
+/// The bundles of the app a build for devices becomes with `app`, given
+/// its entries and the folder in them that holds the app, that each need a
+/// provisioning profile: the app, then each program nested in it, by the
+/// IDs repackaging gives them, with what each claims.
+pub fn signed_bundles(entries: &[Entry], bundle: &str, app: &App) -> Result<Vec<Signed>> {
+    // A copy, which the nested bundles' Info.plists are rewritten in as
+    // repackaging rewrites them, for the IDs they end up with.
+    let mut entries = entries.to_vec();
+    let mut info = signing::bundle_info(&entries, bundle)?;
+    let platforms = info.platforms();
+    if !platforms.contains(&DEVICES) {
+        bail!(
+            "only a build for iOS devices, an .ipa, is signed with provisioning profiles, and the shell's CFBundleSupportedPlatforms is [{}]",
+            platforms.join(", ")
+        );
+    }
+    let shell_id = signing::bundle_id(&info, bundle)?.to_owned();
+    info.rewrite(app)
+        .with_context(|| format!("couldn't rewrite the shell's {bundle}Info.plist"))?;
+    let mut claims = claims(&info, app);
+    let id = info.id().unwrap_or_default().to_owned();
+    let nested = rewrite_nested(&mut entries, bundle, &shell_id, app)?;
+    let app_clips = format!("{bundle}{APP_CLIPS}");
+    let bundles = std::iter::once((id.clone(), false)).chain(
+        nested
+            .into_iter()
+            .map(|(suffix, folder)| (format!("{id}.{suffix}"), folder.starts_with(&app_clips))),
+    );
+    Ok(bundles
+        .map(|(id, app_clip)| Signed {
+            claims: claims.remove(&id),
+            id,
+            app_clip,
+        })
+        .collect())
 }
 
 /// What the app and the bundles nested in it claim, by their IDs: the
@@ -209,13 +262,14 @@ fn claims(info: &InfoPlist, app: &App) -> BTreeMap<String, Claims> {
 /// Gives each app extension, App Clip and watch app in the shell, and each
 /// extension in those in turn, such as a watch app's widgets, an ID under
 /// the app's, in place of the shell's (`shell_id`), and the app's version
-/// and build number. Returns the part of each one's ID after the app's.
+/// and build number. Returns the part of each one's ID after the app's,
+/// and the folder it's in.
 fn rewrite_nested(
     entries: &mut [Entry],
     bundle: &str,
     shell_id: &str,
     app: &App,
-) -> Result<Vec<String>> {
+) -> Result<Vec<(String, String)>> {
     let mut suffixes = Vec::new();
     for program in signing::programs(entries, bundle)? {
         let name = format!("{program}Info.plist");
@@ -239,7 +293,7 @@ fn rewrite_nested(
                 .id()
                 .and_then(|own| own.strip_prefix(shell_id))
                 .and_then(|suffix| suffix.strip_prefix('.'))
-                .map(str::to_owned),
+                .map(|suffix| (suffix.to_owned(), program.clone())),
         );
     }
     Ok(suffixes)
@@ -393,7 +447,7 @@ pub mod tests {
     use super::asset_catalog::tests::icon_bitmap;
     use super::code_signature::tests::{blobs, identity};
     use super::profile::tests::{PROFILE, app_clip_profile};
-    use super::{InfoPlist, bundle, claims, repackage};
+    use super::{InfoPlist, bundle, claims, repackage, signed_bundles};
     use crate::bytes::Reader;
     use crate::config::{App, Bundle, Entitlement, Ios, Translation};
     use crate::icon::tests::solid_png;
@@ -1633,6 +1687,162 @@ pub mod tests {
             error
                 .to_string()
                 .starts_with("couldn't read the payload folder ")
+        );
+    }
+
+    /// A file of the device shell's Info.plists, with `change` made to it.
+    fn device_plist_with(name: &str, change: impl FnOnce(&mut plist::Dictionary)) -> Entry {
+        let mut info = Value::from_reader(Cursor::new(device_file(name))).unwrap();
+        change(info.as_dictionary_mut().unwrap());
+        let mut bytes = Vec::new();
+        info.to_writer_binary(&mut bytes).unwrap();
+        Entry::new(name, Method::Deflated, &bytes)
+    }
+
+    /// The device shell with one of its files replaced by `replacement`.
+    fn device_with(replacement: &Entry) -> Vec<Entry> {
+        zip::read(SHELL_IPA)
+            .unwrap()
+            .into_iter()
+            .map(|entry| {
+                if entry.name == replacement.name {
+                    replacement.clone()
+                } else {
+                    entry
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn names_the_bundles_a_build_for_devices_signs() {
+        let groups = Entitlement::Strings(vec!["group.dev.example".to_owned()]);
+        let app = App {
+            id: Some("dev.example.app".to_owned()),
+            web_links: Some(vec!["example.com".to_owned()]),
+            ios: Ios {
+                bundles: Some(BTreeMap::from([(
+                    "ShellNotifications".to_owned(),
+                    Bundle {
+                        entitlements: Some(BTreeMap::from([(
+                            "com.apple.security.application-groups".to_owned(),
+                            groups.clone(),
+                        )])),
+                    },
+                )])),
+                ..Ios::default()
+            },
+            ..App::default()
+        };
+
+        let bundles = signed_bundles(
+            &zip::read(SHELL_IPA).unwrap(),
+            "Payload/OmniBuildShell.app/",
+            &app,
+        )
+        .unwrap();
+
+        let ids: Vec<_> = bundles
+            .iter()
+            .map(|bundle| (bundle.id.as_str(), bundle.app_clip))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                ("dev.example.app", false),
+                ("dev.example.app.ShellIntents", false),
+                ("dev.example.app.ShellNotifications", false),
+                ("dev.example.app.watchkitapp", false),
+                ("dev.example.app.watchkitapp.ShellWatchWidgets", false),
+                ("dev.example.app.Clip", true),
+            ]
+        );
+        let app_claims = bundles[0].claims.as_ref().unwrap();
+        assert_eq!(app_claims.source, "webLinks");
+        assert_eq!(
+            app_claims.entitlements["com.apple.developer.associated-domains"],
+            Entitlement::Strings(vec!["applinks:example.com".to_owned()])
+        );
+        let extension = bundles[2].claims.as_ref().unwrap();
+        assert_eq!(
+            extension.source,
+            "ios.bundles.ShellNotifications.entitlements"
+        );
+        assert_eq!(
+            extension.entitlements["com.apple.security.application-groups"],
+            groups
+        );
+        assert!(bundles[1].claims.is_none());
+
+        // Without an app config, the shell's own IDs.
+        let shell = signed_bundles(
+            &zip::read(SHELL_IPA).unwrap(),
+            "Payload/OmniBuildShell.app/",
+            &App::default(),
+        )
+        .unwrap();
+
+        assert_eq!(shell[0].id, "dev.omnibuild.shell");
+        assert_eq!(shell[5].id, "dev.omnibuild.shell.Clip");
+    }
+
+    #[test]
+    fn says_why_it_cant_name_the_bundles() {
+        const DEVICE_INFO: &str = "Payload/OmniBuildShell.app/Info.plist";
+        const DEVICE_EXTENSION_INFO: &str =
+            "Payload/OmniBuildShell.app/PlugIns/ShellNotifications.appex/Info.plist";
+        let error = |entries: &[Entry], app: &App| {
+            let bundle = bundle(entries).unwrap();
+            format!("{:#}", signed_bundles(entries, &bundle, app).err().unwrap())
+        };
+        let with_id = App {
+            id: Some("dev.example.app".to_owned()),
+            ..App::default()
+        };
+
+        assert_eq!(
+            error(&zip::read(SHELL_APP).unwrap(), &App::default()),
+            "only a build for iOS devices, an .ipa, is signed with provisioning profiles, and the shell's CFBundleSupportedPlatforms is [iPhoneSimulator]"
+        );
+        assert!(
+            error(
+                &device_with(&Entry::new(DEVICE_INFO, Method::Stored, b"not a plist")),
+                &App::default()
+            )
+            .starts_with(&format!("couldn't read the shell's {DEVICE_INFO}"))
+        );
+        assert_eq!(
+            error(
+                &device_with(&device_plist_with(DEVICE_INFO, |info| {
+                    info.remove("CFBundleIdentifier");
+                })),
+                &App::default()
+            ),
+            format!("the shell's {DEVICE_INFO} has no bundle ID (CFBundleIdentifier)")
+        );
+        assert!(
+            error(
+                &zip::read(SHELL_IPA).unwrap(),
+                &App {
+                    id: Some("not an id!".to_owned()),
+                    ..App::default()
+                }
+            )
+            .starts_with(&format!("couldn't rewrite the shell's {DEVICE_INFO}: "))
+        );
+        assert!(
+            error(
+                &device_with(&device_plist_with(DEVICE_EXTENSION_INFO, |info| {
+                    info.insert(
+                        "CFBundleIdentifier".to_owned(),
+                        Value::String("dev.other.Share".to_owned()),
+                    );
+                })),
+                &with_id
+            )
+            .starts_with(&format!(
+                "couldn't rewrite the shell's {DEVICE_EXTENSION_INFO}: "
+            ))
         );
     }
 }

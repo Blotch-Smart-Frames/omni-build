@@ -399,8 +399,9 @@ fn nested_bundle<'a>(
     Ok(Some((nested, inside)))
 }
 
-/// The Info.plist of the nested bundle in the folder `folder`.
-fn bundle_info(entries: &[Entry], folder: &str) -> Result<InfoPlist> {
+/// The Info.plist of the bundle in the folder `folder`: the app, or a
+/// bundle nested in it.
+pub fn bundle_info(entries: &[Entry], folder: &str) -> Result<InfoPlist> {
     let name = format!("{folder}Info.plist");
     entries
         .iter()
@@ -411,8 +412,9 @@ fn bundle_info(entries: &[Entry], folder: &str) -> Result<InfoPlist> {
         .with_context(|| format!("couldn't read the shell's {name}"))
 }
 
-/// The nested bundle's ID, from its Info.plist, `info`.
-fn bundle_id<'a>(info: &'a InfoPlist, folder: &str) -> Result<&'a str> {
+/// The ID of the bundle in the folder `folder`, from its Info.plist,
+/// `info`.
+pub fn bundle_id<'a>(info: &'a InfoPlist, folder: &str) -> Result<&'a str> {
     info.id().with_context(|| {
         format!("the shell's {folder}Info.plist has no bundle ID (CFBundleIdentifier)")
     })

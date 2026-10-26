@@ -7,7 +7,7 @@ description: Turn an app shell, an Android APK or app bundle or an iOS app, into
 
 :::warning[Phase 0]
 
-Android shells, APKs and app bundles, and iOS shells, for the Simulator or for devices. No iOS build OmniBuild signed has been through TestFlight yet. Install OmniBuild from npm, as [Installation](./installation.md) shows.
+Android shells, APKs and app bundles, and iOS shells, for the Simulator or for devices. No iOS build OmniBuild signed has been through TestFlight yet, and `omni provision` hasn't provisioned an app on a real Apple account yet. Install OmniBuild from npm, as [Installation](./installation.md) shows.
 
 :::
 
@@ -120,7 +120,7 @@ An iOS app gets Apple's code signature, as `codesign` writes it: every file seal
 
 - **For devices**, it's signed with a key Apple issued a certificate for (`--signing-key`), and a provisioning profile that allows the certificate and the app's ID (`--profile`). Export the key from Keychain Access as a `.p12`, or make one without a Mac (below), and give it as it is: OmniBuild adds the certificates above it, Apple's Worldwide Developer Relations authority (G3) and Apple's root, as `codesign` does. The profile goes in the app as `embedded.mobileprovision`, and its App ID, team and `get-task-allow` or `beta-reports-active` become the app's entitlements. Each app extension and a watch app, and the extensions in those, has an ID of its own, and needs a profile of its own too, unless a wildcard App ID covers it (`TEAM.*`), so give `--profile` once for each. Each bundle takes the profile whose App ID fits it closest, as Xcode picks them: its own App ID over a wildcard, and `TEAM.dev.example.*` over `TEAM.*`. An App Clip always needs its own: the profile of an App ID registered as an App Clip's, of the app's App ID, which allows what makes it one. It's signed as one of the app's (`com.apple.developer.on-demand-install-capable` and `com.apple.developer.parent-application-identifiers`), and the app names it in turn (`com.apple.developer.associated-appclip-app-identifiers`), as Xcode signs them.
 
-Without a Mac, OmniBuild makes the key and its certificate signing request, as Keychain Access's Certificate Assistant does, and puts the certificate Apple issues with the key:
+Without a Mac, OmniBuild makes the key and its certificate signing request, as Keychain Access's Certificate Assistant does, and puts the certificate Apple issues with the key. [With an App Store Connect API key](#with-an-app-store-connect-api-key), it gets the certificate, and the profiles, itself. By hand:
 
 ```sh
 export OMNI_BUILD_KEY_PASSWORD='a password'
@@ -132,7 +132,7 @@ omni repackage shell.ipa --config app.json --out app.ipa --signing-key apple.p12
 
 `omni key request` makes an RSA key, in a keystore with no certificate yet, and a certificate signing request for it beside the keystore, which developer.apple.com takes to issue an Apple Development or Apple Distribution certificate. Apple names the certificate after your team, whatever the request's subject; its common name names the key, as in Keychain Access. `omni key import` adds the `.cer` file Apple issues to the keystore, which then signs as one exported from Keychain Access does. The keystore is in the format macOS's Keychain imports, PKCS #12's own 3DES with a SHA-1 MAC, which Keychain Access and `security import` take where they refuse the newer one OmniBuild writes upload keys in, so the key can go on a Mac too.
 
-The app also claims the entitlements in `ios.entitlements`, for the capabilities it uses, such as push notifications, and the associated domains of `webLinks`, and its profile has to allow each, as iOS checks them: turn the capability on for the App ID, and make the profile again. A profile allows a value it has, or one its wildcard covers (`TEAM.*`, or `*` for any), and an array when it allows each of its strings. `aps-environment` is the profile's, `development` or `production`, as Xcode sets it. Xcode's build settings that an `.entitlements` file names are filled in as Xcode fills them in: `$(AppIdentifierPrefix)` and `$(TeamIdentifierPrefix)` with the team's ID and a dot, so `$(AppIdentifierPrefix)com.example.shared` is a keychain group of the team's, and `$(CFBundleIdentifier)` and `$(PRODUCT_BUNDLE_IDENTIFIER)` with the ID of the bundle that claims it. The Simulator reads its entitlements from the shell's executable, where Xcode links them, rather than its signature, so they apply to builds for devices.
+The app also claims the entitlements in `ios.entitlements`, for the capabilities it uses, such as push notifications, and the associated domains of `webLinks`, and its profile has to allow each, as iOS checks them: turn the capability on for the App ID, and make the profile again, or have `omni provision` do both. A profile allows a value it has, or one its wildcard covers (`TEAM.*`, or `*` for any), and an array when it allows each of its strings. `aps-environment` is the profile's, `development` or `production`, as Xcode sets it. Xcode's build settings that an `.entitlements` file names are filled in as Xcode fills them in: `$(AppIdentifierPrefix)` and `$(TeamIdentifierPrefix)` with the team's ID and a dot, so `$(AppIdentifierPrefix)com.example.shared` is a keychain group of the team's, and `$(CFBundleIdentifier)` and `$(PRODUCT_BUNDLE_IDENTIFIER)` with the ID of the bundle that claims it. The Simulator reads its entitlements from the shell's executable, where Xcode links them, rather than its signature, so they apply to builds for devices.
 
 The app's extensions, App Clips and watch app, and the extensions in those, claim entitlements of their own in `ios.bundles`, as each Xcode target has its own `.entitlements` file, and each one's own profile has to allow them. Each is named by the part of its ID after the app's, which is the same in the shell: `ShellNotifications` for the shell's `dev.omnibuild.shell.ShellNotifications`, which becomes `dev.example.app.ShellNotifications`. A name the shell has no bundle for is an error, and a bundle with nothing to claim is signed with the entitlements its profile gives every program. An App Group the app shares with its notification extension, say, is claimed by both:
 
@@ -150,6 +150,28 @@ The app's extensions, App Clips and watch app, and the extensions in those, clai
   }
 }
 ```
+
+### With an App Store Connect API key
+
+With an App Store Connect API key, OmniBuild gets the certificate and the profiles itself, as Xcode's automatic signing does with an Apple ID:
+
+```sh
+export OMNI_BUILD_KEY_PASSWORD='a password'
+omni provision shell.ipa --config app.json --signing-key apple.p12 --out profiles \
+  --api-key AuthKey_2X9R4HXF34.p8 --api-issuer 57246542-96fe-1a63-e053-0824d011072a
+omni repackage shell.ipa --config app.json --out app.ipa --signing-key apple.p12 --profile profiles
+```
+
+`omni provision` reads the shell and the app config for the IDs of the app and of each bundle nested in it, and what each claims, as `repackage` gives them, so give both the same shell and config. Then, through Apple's App Store Connect API, it:
+
+- Finds the account's certificate for the key in the keystore, or has Apple issue one, from a signing request it makes, and adds it to the keystore. With no keystore there, it creates one, with a new key. A keystore holds one certificate, so give App Store and ad hoc profiles, which allow an Apple Distribution certificate, and development profiles, which allow an Apple Development one, a keystore each.
+- Registers an App ID for each bundle the account has none for. The API can't register an App Clip's, so register that at developer.apple.com, under Identifiers, as an App Clip of the app's App ID.
+- Turns on the capabilities that what each bundle claims needs, such as Push Notifications for `aps-environment`, or Associated Domains for `webLinks`. Some take settings or identifiers the API doesn't set, such as iCloud's containers or App Groups' groups: set those at developer.apple.com, and OmniBuild says which entitlement a profile lacks until then.
+- Finds a profile for each bundle that allows the certificate and what the bundle claims, and for development and ad hoc profiles, every device on the account, or makes one. It writes each to the `--out` folder, named by the bundle's ID, and `--profile` takes the folder.
+
+`--distribution` says what the profiles are for: `app-store`, for TestFlight and the App Store, which it is unless you say, `ad-hoc` or `development`. OmniBuild reuses what the account has, and says what it creates: an account has only a few distribution certificates, and profiles pile up. It names the profiles it makes `OmniBuild`, their kind, the bundle's ID and the time.
+
+The API key is one the account's Admin creates in App Store Connect, under Users and Access > Integrations, with a role that may manage certificates, identifiers and profiles, such as Admin. It comes as a `.p8` file, `AuthKey_<key ID>.p8`, which gives OmniBuild its ID (or `--api-key-id`), and a team's key has an issuer ID too, which App Store Connect shows above the team's keys (`--api-issuer`); an individual key has none. OmniBuild signs a token with it for each request, and the key itself stays on the computer. In CI, write the key to a file from a secret. OmniBuild reaches Apple over HTTPS, through a proxy if `HTTPS_PROXY` names one.
 
 ## What a shell needs
 

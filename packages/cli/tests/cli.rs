@@ -1172,3 +1172,315 @@ fn pair_reports_what_went_wrong() {
         assert!(stderr(&output).starts_with(&message), "{}", stderr(&output));
     }
 }
+
+/// The test App Store Connect API key.
+const API_KEY: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/AuthKey_TESTKEY123.p8"
+);
+/// The test identity in the keystore Keychain Access exports, with the
+/// password `omnibuild`.
+const KEYCHAIN_KEYSTORE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/keystores/keychain.p12"
+);
+
+/// A made-up App Store Connect, whose account has all the shell needs: the
+/// test identity's certificate, an App ID for each bundle, and the test
+/// profiles. It refuses to create anything more. Returns its URL.
+fn app_store_connect() -> String {
+    use base64::Engine;
+    use std::io::{BufRead, BufReader};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    let certificate = encode(&CertificateDer::from_pem_file(IDENTITY).unwrap());
+    let profile = encode(&fs::read(PROFILE).unwrap());
+    let clip_profile = encode(&fs::read(CLIP_PROFILE).unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut reader = BufReader::new(stream.unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let request = line.clone();
+            // The headers, up to the line that ends them, and the body.
+            let mut length = 0;
+            while line != "\r\n" {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if let Some(value) = line.to_lowercase().strip_prefix("content-length: ") {
+                    length = value.trim().parse().unwrap();
+                }
+            }
+            reader.read_exact(&mut vec![0; length]).unwrap();
+            let mut parts = request.split(' ');
+            let (method, target) = (parts.next().unwrap(), parts.next().unwrap());
+            let (path, query) = target.split_once('?').unwrap_or((target, ""));
+            let (status, data) = if method == "POST" {
+                let errors =
+                    serde_json::json!([{ "title": "Refused.", "detail": "The test says so." }]);
+                (409, serde_json::json!({ "errors": errors }))
+            } else if path == "/v1/certificates" {
+                (
+                    200,
+                    serde_json::json!({ "data": [{ "type": "certificates", "id": "C1", "attributes": { "certificateType": "DISTRIBUTION", "certificateContent": certificate } }] }),
+                )
+            } else if path == "/v1/bundleIds" {
+                // The filter comes first: `filter[identifier]=<ID>`.
+                let id = query.split('&').next().unwrap().split_once('=').unwrap().1;
+                (
+                    200,
+                    serde_json::json!({ "data": [{ "type": "bundleIds", "id": id, "attributes": { "identifier": id } }] }),
+                )
+            } else {
+                // A bundle's profiles, at /v1/bundleIds/<ID>/profiles.
+                let content = if path.ends_with(".Clip/profiles") {
+                    &clip_profile
+                } else {
+                    &profile
+                };
+                (
+                    200,
+                    serde_json::json!({ "data": [{ "type": "profiles", "id": "P1", "attributes": { "profileType": "IOS_APP_STORE", "profileState": "ACTIVE", "profileContent": content } }] }),
+                )
+            };
+            let body = data.to_string();
+            write!(
+                reader.get_mut(),
+                "HTTP/1.1 {status} Answer\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    url
+}
+
+/// Runs omni at `home` with the test keystore's password, against App
+/// Store Connect at `url`.
+fn omni_build_provisioning(home: &Path, url: &str, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_omni"))
+        .args(args)
+        .env("HOME", home)
+        .env("USERPROFILE", home)
+        .env("OMNI_BUILD_KEY_PASSWORD", "omnibuild")
+        .env("OMNI_BUILD_APP_STORE_CONNECT_URL", url)
+        .output()
+        .expect("the omni binary should start")
+}
+
+#[test]
+fn provisions_an_ios_app_and_signs_it_with_what_it_got() {
+    let home = tempfile::tempdir().unwrap();
+    let keystore = home.path().join("apple.p12");
+    fs::copy(KEYCHAIN_KEYSTORE, &keystore).unwrap();
+    let profiles = home.path().join("profiles");
+    let ipa = home.path().join("app.ipa");
+    let url = app_store_connect();
+
+    let provisioned = omni_build_provisioning(
+        home.path(),
+        &url,
+        &[
+            "provision",
+            SHELL_IPA,
+            "--signing-key",
+            keystore.to_str().unwrap(),
+            "--api-key",
+            API_KEY,
+            "--api-issuer",
+            "issuer",
+            "--out",
+            profiles.to_str().unwrap(),
+            "--json",
+        ],
+    );
+
+    assert!(provisioned.status.success(), "{}", stderr(&provisioned));
+    let events = events(&provisioned);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["event"], "provisioned");
+    assert_eq!(events[0]["certificate"], "OmniBuild Test");
+    assert_eq!(events[0]["distribution"], "app-store");
+    assert_eq!(events[0]["out"], profiles.to_str().unwrap());
+    let mut written: Vec<_> = fs::read_dir(&profiles)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        [
+            "dev.omnibuild.shell.Clip.mobileprovision",
+            "dev.omnibuild.shell.ShellIntents.mobileprovision",
+            "dev.omnibuild.shell.ShellNotifications.mobileprovision",
+            "dev.omnibuild.shell.mobileprovision",
+            "dev.omnibuild.shell.watchkitapp.ShellWatchWidgets.mobileprovision",
+            "dev.omnibuild.shell.watchkitapp.mobileprovision",
+        ]
+    );
+    assert_eq!(
+        fs::read(profiles.join("dev.omnibuild.shell.Clip.mobileprovision")).unwrap(),
+        fs::read(CLIP_PROFILE).unwrap()
+    );
+    // What isn't a profile, beside them, is left out.
+    fs::write(profiles.join("README.txt"), "Profiles").unwrap();
+
+    let repackaged = omni_build_provisioning(
+        home.path(),
+        &url,
+        &[
+            "repackage",
+            SHELL_IPA,
+            "--signing-key",
+            keystore.to_str().unwrap(),
+            "--profile",
+            profiles.to_str().unwrap(),
+            "--out",
+            ipa.to_str().unwrap(),
+        ],
+    );
+
+    assert!(repackaged.status.success(), "{}", stderr(&repackaged));
+}
+
+#[test]
+fn provision_reports_what_went_wrong() {
+    let home = tempfile::tempdir().unwrap();
+    let keystore = home.path().join("apple.p12");
+    fs::copy(KEYCHAIN_KEYSTORE, &keystore).unwrap();
+    let keystore = keystore.to_str().unwrap();
+    let not_ipa = home.path().join("not.ipa");
+    fs::write(&not_ipa, "not a zip").unwrap();
+    let file = home.path().join("file");
+    fs::write(&file, "a file").unwrap();
+    // A folder where the app's profile should be written.
+    let taken = home.path().join("taken");
+    fs::create_dir_all(taken.join("dev.omnibuild.shell.mobileprovision")).unwrap();
+    let url = app_store_connect();
+    let nothing_there = format!(
+        "http://{}",
+        TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+    );
+    let new_keystore = home.path().join("new.p12");
+    let provision_with = |shell: &str, out: &Path, api_key: &str, keystore: &str| {
+        [
+            "provision",
+            shell,
+            "--signing-key",
+            keystore,
+            "--api-key",
+            api_key,
+            "--out",
+            out.to_str().unwrap(),
+        ]
+        .map(str::to_owned)
+        .to_vec()
+    };
+    let provision = |shell: &str, out: &Path| provision_with(shell, out, API_KEY, keystore);
+    let out = home.path().join("profiles");
+    let cases = [
+        (
+            &url,
+            provision("missing.ipa", &out),
+            "error: couldn't read the shell missing.ipa: ".to_owned(),
+        ),
+        (
+            &url,
+            [provision(SHELL_IPA, &out), vec!["--config".to_owned(), "missing.json".to_owned()]].concat(),
+            "error: couldn't read the app config missing.json: ".to_owned(),
+        ),
+        (
+            &url,
+            provision(not_ipa.to_str().unwrap(), &out),
+            "error: the shell isn't an APK, an AAB or an iOS app: it isn't a zip archive\n"
+                .to_owned(),
+        ),
+        (
+            &url,
+            provision(SHELL, &out),
+            format!("error: {SHELL} isn't an iOS app, which is what provisioning profiles sign\n"),
+        ),
+        (
+            &url,
+            provision(SHELL_APP, &out),
+            "error: only a build for iOS devices, an .ipa, is signed with provisioning profiles, and the shell's CFBundleSupportedPlatforms is [iPhoneSimulator]\n".to_owned(),
+        ),
+        (
+            &url,
+            provision_with(SHELL_IPA, &out, "missing.p8", keystore),
+            "error: couldn't read the API key missing.p8: ".to_owned(),
+        ),
+        (
+            &nothing_there,
+            provision(SHELL_IPA, &out),
+            "error: couldn't list the account's certificates: couldn't reach App Store Connect: "
+                .to_owned(),
+        ),
+        (
+            &url,
+            provision(SHELL_IPA, &file),
+            "error: couldn't create the folder ".to_owned(),
+        ),
+        (
+            &url,
+            provision(SHELL_IPA, &taken),
+            "error: couldn't write the provisioning profile to ".to_owned(),
+        ),
+        // It says it created the key, then why Apple didn't issue its
+        // certificate.
+        (
+            &url,
+            provision_with(SHELL_IPA, &out, API_KEY, new_keystore.to_str().unwrap()),
+            format!(
+                "Created a key for an Apple signing certificate in {}. Keep it, and its password, safe: the certificate Apple issues for it signs nothing without it.\nerror: couldn't create a certificate for the key in {}: App Store Connect refused it (409). It said: Refused. The test says so.\n",
+                new_keystore.display(),
+                new_keystore.display()
+            ),
+        ),
+    ];
+
+    for (url, args, message) in cases {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let output = omni_build_provisioning(home.path(), url, &args);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(stderr(&output).starts_with(&message), "{}", stderr(&output));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn repackage_reports_a_folder_of_profiles_it_cant_read() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir().unwrap();
+    let profiles = home.path().join("profiles");
+    fs::create_dir(&profiles).unwrap();
+    fs::set_permissions(&profiles, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let output = omni_build_at_home(
+        home.path(),
+        &[
+            "repackage",
+            SHELL_IPA,
+            "--signing-key",
+            IDENTITY,
+            "--profile",
+            profiles.to_str().unwrap(),
+            "--out",
+            "app.ipa",
+        ],
+    );
+
+    fs::set_permissions(&profiles, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).starts_with("error: couldn't read the folder "),
+        "{}",
+        stderr(&output)
+    );
+}

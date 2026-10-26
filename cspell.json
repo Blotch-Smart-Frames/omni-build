@@ -107,6 +107,7 @@
     "toplevel",
     "udevadm",
     "unstub",
+    "ureq",
     "USERPROFILE",
     "vhci",
     "vitest",

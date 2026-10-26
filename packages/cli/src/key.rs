@@ -62,7 +62,7 @@ pub struct SigningKey {
 }
 
 impl SigningKey {
-    fn new(key: RsaPrivateKey, certificate: Certificate, chain: Vec<Certificate>) -> Self {
+    pub fn new(key: RsaPrivateKey, certificate: Certificate, chain: Vec<Certificate>) -> Self {
         Self {
             signer: pkcs1v15::SigningKey::new(key),
             chain,
@@ -157,11 +157,7 @@ impl SigningKey {
     pub fn import(path: &Path, certificate: &Path, password: &str) -> Result<Self> {
         let keystore = fs::read(path)
             .with_context(|| format!("couldn't read the keystore {}", path.display()))?;
-        let (key, _) = keystore::read(&keystore, password)
-            .with_context(|| format!("couldn't read the keystore {}", path.display()))?;
-        let key = RsaPrivateKey::from_pkcs8_der(&key)
-            .ok()
-            .with_context(|| format!("{} doesn't have an RSA private key", path.display()))?;
+        let (key, _) = read_keystore(&keystore, path, password)?;
         let issued = fs::read(certificate)
             .with_context(|| format!("couldn't read the certificate {}", certificate.display()))?;
         let issued = read_certificate(&issued).with_context(|| {
@@ -170,13 +166,27 @@ impl SigningKey {
                 certificate.display()
             )
         })?;
-        let key = Self::from_parts(key, vec![issued]).with_context(|| {
-            format!(
+        if !is_certificate_of(&issued, &public_key(&key)) {
+            bail!(
                 "{} is the certificate of another key than the one in {}: Apple issues a certificate for the key whose request it's given",
                 certificate.display(),
                 path.display()
-            )
-        })?;
+            );
+        }
+        Self::store(path, key, issued, password)
+    }
+
+    /// Saves `key` with `certificate`, its own, in the keystore at `path`,
+    /// with `password`, in place of what it had: a key that had no
+    /// certificate yet, or one Apple issued for it before. The keystore
+    /// then signs iOS apps.
+    pub fn store(
+        path: &Path,
+        key: RsaPrivateKey,
+        certificate: Certificate,
+        password: &str,
+    ) -> Result<Self> {
+        let key = Self::new(key, certificate, Vec::new());
         let keystore = keystore::write(
             &pkcs8(key.signer.as_ref()),
             Some(&key.certificate),
@@ -265,14 +275,10 @@ impl SigningKey {
     /// The key and its certificate, the one with the key's public key. The
     /// other certificates are its chain, whatever their order.
     fn from_parts(key: RsaPrivateKey, mut certificates: Vec<Certificate>) -> Option<Self> {
-        let public_key = key
-            .to_public_key()
-            .to_public_key_der()
-            .expect("an RSA public key encodes");
-        let leaf = certificates.iter().position(|certificate| {
-            certificate.tbs_certificate.subject_public_key_info.to_der()
-                == Ok(public_key.as_bytes().to_vec())
-        })?;
+        let public_key = public_key(&key);
+        let leaf = certificates
+            .iter()
+            .position(|certificate| is_certificate_of(certificate, &public_key))?;
         let certificate = certificates.remove(leaf);
         Some(Self::new(key, certificate, certificates))
     }
@@ -306,28 +312,9 @@ impl SigningKey {
 /// developer.apple.com takes to issue the certificate. The keystore is in
 /// the format macOS's Keychain imports, so it can join a Mac's keychain too.
 pub fn request(path: &Path, request: &Path, subject: &Name, password: &str) -> Result<()> {
-    check_password(password)?;
-    let key = new_key();
-    let signer = pkcs1v15::SigningKey::<Sha256>::new(key.clone());
-    // PKCS #10, with the subject and nothing else, as Keychain Access
-    // writes one: Apple issues the certificate in the team's name, and
-    // takes no extensions from the request.
-    let pem = RequestBuilder::new(subject.clone(), &signer)
-        .and_then(Builder::build::<pkcs1v15::Signature>)
-        .expect("a request with a valid subject builds")
-        .to_pem(LineEnding::LF)
-        .expect("a request encodes");
     // Keychain Access names the key by the request's common name.
-    let keystore = keystore::write(
-        &pkcs8(&key),
-        None,
-        &display_name(subject),
-        password,
-        Encryption::Keychain,
-    )?;
-    save(path, &keystore)
-        .with_context(|| format!("couldn't save the keystore to {}", path.display()))?;
-    save(request, pem.as_bytes())
+    let key = create_apple_key(path, &display_name(subject), password)?;
+    save(request, signing_request(&key, subject).as_bytes())
         // A key without its request is no use, and could be mistaken for
         // one with a certificate on the way.
         .inspect_err(|_| {
@@ -339,6 +326,85 @@ pub fn request(path: &Path, request: &Path, subject: &Name, password: &str) -> R
                 request.display()
             )
         })
+}
+
+/// Creates a key for an Apple signing certificate: a new RSA key, saved at
+/// `path`, which mustn't exist yet, in a keystore with `password` and no
+/// certificate yet, under the name `name`. The keystore is in the format
+/// macOS's Keychain imports.
+pub fn create_apple_key(path: &Path, name: &str, password: &str) -> Result<RsaPrivateKey> {
+    check_password(password)?;
+    let key = new_key();
+    let keystore = keystore::write(&pkcs8(&key), None, name, password, Encryption::Keychain)?;
+    save(path, &keystore)
+        .with_context(|| format!("couldn't save the keystore to {}", path.display()))?;
+    Ok(key)
+}
+
+/// The key for an Apple signing certificate in the keystore at `path`,
+/// with `password`, and its certificate, if Apple issued one yet: a key
+/// `request` or `create_apple_key` created, or one with the certificate
+/// added. Nothing if there's no keystore there.
+pub fn read_apple_key(
+    path: &Path,
+    password: &str,
+) -> Result<Option<(RsaPrivateKey, Option<Certificate>)>> {
+    let keystore = match fs::read(path) {
+        Ok(keystore) => keystore,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("couldn't read the keystore {}", path.display()));
+        }
+    };
+    let (key, certificates) = read_keystore(&keystore, path, password)?;
+    let public_key = public_key(&key);
+    let certificate = certificates
+        .into_iter()
+        .find(|certificate| is_certificate_of(certificate, &public_key));
+    Ok(Some((key, certificate)))
+}
+
+/// A certificate signing request for `key`, in PEM, which Apple issues a
+/// certificate for: PKCS #10, with the subject and nothing else, as
+/// Keychain Access writes one. Apple issues the certificate in the team's
+/// name, and takes no extensions from the request.
+pub fn signing_request(key: &RsaPrivateKey, subject: &Name) -> String {
+    let signer = pkcs1v15::SigningKey::<Sha256>::new(key.clone());
+    RequestBuilder::new(subject.clone(), &signer)
+        .and_then(Builder::build::<pkcs1v15::Signature>)
+        .expect("a request with a valid subject builds")
+        .to_pem(LineEnding::LF)
+        .expect("a request encodes")
+}
+
+/// The key's public key, as a DER `SubjectPublicKeyInfo`, as a certificate
+/// for it has it.
+pub fn public_key(key: &RsaPrivateKey) -> Vec<u8> {
+    key.to_public_key()
+        .to_public_key_der()
+        .expect("an RSA public key encodes")
+        .into_vec()
+}
+
+/// Whether `certificate` is for the key whose public key is `public_key`.
+pub fn is_certificate_of(certificate: &Certificate, public_key: &[u8]) -> bool {
+    certificate.tbs_certificate.subject_public_key_info.to_der() == Ok(public_key.to_vec())
+}
+
+/// The RSA key in a keystore read from `path`, with `password`, and the
+/// keystore's certificates.
+fn read_keystore(
+    keystore: &[u8],
+    path: &Path,
+    password: &str,
+) -> Result<(RsaPrivateKey, Vec<Certificate>)> {
+    let (key, certificates) = keystore::read(keystore, password)
+        .with_context(|| format!("couldn't read the keystore {}", path.display()))?;
+    let key = RsaPrivateKey::from_pkcs8_der(&key)
+        .ok()
+        .with_context(|| format!("{} doesn't have an RSA private key", path.display()))?;
+    Ok((key, certificates))
 }
 
 /// What people call a certificate's subject, or a request's: its common
@@ -781,7 +847,14 @@ pub mod tests {
     /// A certificate that `KEY` issues, as Apple's authority, for the key in
     /// the request at `path`, in a name of its own, as Apple names one.
     fn issue(path: &Path, subject: &str) -> Certificate {
-        let request = CertReq::from_pem(fs::read(path).unwrap()).unwrap();
+        issue_for(&fs::read_to_string(path).unwrap(), subject, 2)
+    }
+
+    /// A certificate that `KEY` issues, as Apple's authority, for the key in
+    /// the request `pem`, in a name of its own, with the serial number
+    /// `serial`.
+    pub fn issue_for(pem: &str, subject: &str, serial: u32) -> Certificate {
+        let request = CertReq::from_pem(pem).unwrap();
         let expires = DateTime::new(2027, 10, 22, 12, 0, 0).unwrap();
         CertificateBuilder::new(
             Profile::Leaf {
@@ -789,7 +862,7 @@ pub mod tests {
                 enable_key_agreement: false,
                 enable_key_encipherment: false,
             },
-            SerialNumber::from(2u32),
+            SerialNumber::from(serial),
             Validity {
                 not_before: Time::UtcTime(
                     UtcTime::from_date_time(DateTime::new(2026, 10, 22, 12, 0, 0).unwrap())
@@ -1054,6 +1127,20 @@ pub mod tests {
                 .starts_with("couldn't save the keystore to ")
         );
         assert_eq!(fs::read(&keystore).unwrap(), before);
+    }
+
+    #[test]
+    fn reads_an_apple_key_where_there_is_one() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let none = super::read_apple_key(&dir.path().join("missing.p12"), "a password").unwrap();
+        // A folder where the keystore should be.
+        let error = super::read_apple_key(dir.path(), "a password")
+            .err()
+            .unwrap();
+
+        assert!(none.is_none());
+        assert!(error.to_string().starts_with("couldn't read the keystore "));
     }
 
     #[test]
