@@ -37,5 +37,5 @@ The repository already gates every pull request on what OmniBuild will need:
 
 - **Signing identities:** both ways, so users can choose. OmniBuild makes the key and its signing request for developer.apple.com, with no API key (`omni key request`), or gets the certificate and the profiles through the App Store Connect API, with the user's own key, behind a command of its own (`omni provision`), reusing what the account has.
 - **Wireless debugging:** `omni tcpip`, which switches a phone plugged in by USB to ADB over the network, and Android 11's wireless debugging: `omni pair` pairs with a code, and installing goes over TLS, through rustls with a pure-Rust crypto provider.
-- **Native modules:** prebuilt binaries in npm packages by default, and a hosted build for native code without them, eventually as a paid service.
+- **Native modules:** prebuilt binaries in npm packages by default, which `omni repackage` adds from the app's dependencies, and a hosted build for native code without them, eventually as a paid service.
 - **Dependencies:** fine, as long as none makes OmniBuild depend on a platform. Nothing may need a Mac, or any other OS, to build or run it.

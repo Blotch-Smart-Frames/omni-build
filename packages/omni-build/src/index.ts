@@ -119,6 +119,18 @@ export interface AuthorizingEvent {
   message: string;
 }
 
+/**
+ * `repackage` found a native module among the app's dependencies, or theirs,
+ * with something for the shell's platform, which it adds to the app.
+ */
+export interface ModuleFoundEvent {
+  event: 'module-found';
+  /** Its package's name and version. */
+  name: string;
+  version: string;
+  message: string;
+}
+
 /** `repackage` wrote the app. */
 export interface RepackagedEvent {
   event: 'repackaged';
@@ -188,6 +200,7 @@ export type OmniBuildEvent =
   | ProfileCreatedEvent
   | ProvisionedEvent
   | AuthorizingEvent
+  | ModuleFoundEvent
   | RepackagedEvent
   | InstalledEvent
   | ListeningEvent

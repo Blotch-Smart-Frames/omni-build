@@ -9,6 +9,7 @@ mod icon;
 mod ios;
 mod key;
 mod keystore;
+mod modules;
 mod payload;
 mod report;
 mod zip;
@@ -25,6 +26,7 @@ use app_store_connect::{ApiKey, Client};
 use config::App;
 use ios::{Distribution, Provisioner};
 use key::{SigningKey, debug_key_path, display_name};
+use modules::Module;
 use report::{Event, Format, KeyKind, Platform, Reporter};
 use x509_cert::name::Name;
 
@@ -311,6 +313,10 @@ fn repackage(args: &Repackage, reporter: &Reporter) -> Result<()> {
         .map(|path| read_profiles(path))
         .collect::<Result<Vec<_>>>()?
         .concat();
+    let modules = match &app.package_json {
+        Some(path) => modules::find(path)?,
+        None => Vec::new(),
+    };
     let entries = zip::read(&shell).context(NOT_A_SHELL)?;
     let (repackaged, platform, format) = if let Some(bundle) = ios::bundle(&entries) {
         let format = if bundle.starts_with("Payload/") {
@@ -318,7 +324,8 @@ fn repackage(args: &Repackage, reporter: &Reporter) -> Result<()> {
         } else {
             Format::App
         };
-        let repackaged = ios::repackage(entries, &bundle, &app, key.as_ref(), &profiles)?;
+        report_modules(&modules, &Platform::Ios, reporter);
+        let repackaged = ios::repackage(entries, &bundle, &app, &modules, key.as_ref(), &profiles)?;
         (repackaged, Platform::Ios, format)
     } else if let Some(layout) = android::layout(&entries) {
         if !profiles.is_empty() {
@@ -333,7 +340,8 @@ fn repackage(args: &Repackage, reporter: &Reporter) -> Result<()> {
         } else {
             Format::Apk
         };
-        let repackaged = android::repackage(entries, layout, &app, &key)?;
+        report_modules(&modules, &Platform::Android, reporter);
+        let repackaged = android::repackage(entries, layout, &app, &modules, &key)?;
         (repackaged, Platform::Android, format)
     } else {
         bail!(
@@ -349,6 +357,20 @@ fn repackage(args: &Repackage, reporter: &Reporter) -> Result<()> {
         format,
     });
     Ok(())
+}
+
+/// Tells which of the native modules go in an app for `platform`: those
+/// with something for it.
+fn report_modules(modules: &[Module], platform: &Platform, reporter: &Reporter) {
+    for module in modules.iter().filter(|module| match platform {
+        Platform::Ios => module.ios.is_some(),
+        Platform::Android => module.android.is_some(),
+    }) {
+        reporter.report(&Event::ModuleFound {
+            name: module.name.clone(),
+            version: module.version.clone(),
+        });
+    }
 }
 
 /// The provisioning profiles at `path`: a profile, or a folder of them, as

@@ -72,10 +72,12 @@
     "keypbe",
     "KLNI",
     "Lanczos",
+    "Ldev",
     "libshell",
     "libswift",
     "libusb",
     "linkedit",
+    "lipo",
     "locversion",
     "LOGNAME",
     "lzfse",
@@ -84,6 +86,7 @@
     "MIIE",
     "mios",
     "MLEC",
+    "MULTIDEX",
     "mwatchos",
     "Nagle",
     "networkextension",
@@ -128,6 +131,7 @@
     "tmfk",
     "udid",
     "udids",
+    "ULEB",
     "unrewritable",
     "usbfs",
     "varint",
@@ -143,6 +147,7 @@
     "WWDR",
     "WWDRCAG",
     "xcassets",
+    "XFWK",
     "xxxhdpi"
   ]
 }

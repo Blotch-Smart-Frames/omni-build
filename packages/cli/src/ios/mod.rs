@@ -14,6 +14,7 @@ mod code_signature;
 mod entitlements;
 mod info_plist;
 mod macho;
+mod modules;
 mod profile;
 mod provisioning;
 mod signing;
@@ -26,6 +27,7 @@ use image::RgbaImage;
 
 use crate::config::{App, Entitlement, check_web_link, closest};
 use crate::key::SigningKey;
+use crate::modules::Module;
 use crate::zip::{self, Entry, Method};
 use crate::{icon, payload};
 use info_plist::InfoPlist;
@@ -70,14 +72,16 @@ pub fn bundle(entries: &[Entry]) -> Option<String> {
 }
 
 /// Repackages an iOS app shell, given its entries and the folder in them
-/// that holds the app, into the app `app` describes. A build for devices is
-/// signed with `key` and provisioning profiles, `profiles`, one for the app
-/// and each of its extensions, or one that covers them all, which a
-/// Simulator build doesn't need.
+/// that holds the app, into the app `app` describes, with the native
+/// `modules` the app has. A build for devices is signed with `key` and
+/// provisioning profiles, `profiles`, one for the app and each of its
+/// extensions, or one that covers them all, which a Simulator build doesn't
+/// need.
 pub fn repackage(
     mut entries: Vec<Entry>,
     bundle: &str,
     app: &App,
+    modules: &[Module],
     key: Option<&SigningKey>,
     profiles: &[Vec<u8>],
 ) -> Result<Vec<u8>> {
@@ -91,7 +95,8 @@ pub fn repackage(
         .and_then(|contents| InfoPlist::parse(&contents))
         .with_context(|| format!("couldn't read the shell's {name}"))?;
     let platforms = info.platforms();
-    let profiles = if platforms.contains(&SIMULATOR) {
+    let simulator = platforms.contains(&SIMULATOR);
+    let profiles = if simulator {
         Vec::new()
     } else if platforms.contains(&DEVICES) {
         if key.is_none() || profiles.is_empty() {
@@ -113,6 +118,7 @@ pub fn repackage(
     let shell = info.clone();
     info.rewrite(app)
         .with_context(|| format!("couldn't rewrite the shell's {name}"))?;
+    modules::add(&mut entries, bundle, &mut info, modules, simulator)?;
     // Left as it was when nothing changed, rather than written again.
     if info != shell {
         entries[index] = entries[index].with_contents(&info.to_bytes());
@@ -447,7 +453,7 @@ pub mod tests {
     use super::asset_catalog::tests::icon_bitmap;
     use super::code_signature::tests::{blobs, identity};
     use super::profile::tests::{PROFILE, app_clip_profile};
-    use super::{InfoPlist, bundle, claims, repackage, signed_bundles};
+    use super::{InfoPlist, bundle, claims, signed_bundles};
     use crate::bytes::Reader;
     use crate::config::{App, Bundle, Entitlement, Ios, Translation};
     use crate::icon::tests::solid_png;
@@ -474,6 +480,17 @@ pub mod tests {
         "OmniBuildShell.app/Watch/ShellWatch.app/PlugIns/ShellWatchWidgets.appex/Info.plist";
     /// The colour of every pixel of the app's icon in the tests.
     const ICON: Rgba<u8> = Rgba([0xe8, 0x59, 0x0c, 0xff]);
+
+    /// Repackages the shell with no native modules, as most tests do.
+    fn repackage(
+        entries: Vec<Entry>,
+        bundle: &str,
+        app: &App,
+        key: Option<&crate::key::SigningKey>,
+        profiles: &[Vec<u8>],
+    ) -> anyhow::Result<Vec<u8>> {
+        super::repackage(entries, bundle, app, &[], key, profiles)
+    }
 
     fn file<'a>(entries: &'a [Entry], name: &str) -> &'a Entry {
         entries.iter().find(|entry| entry.name == name).unwrap()
@@ -1712,6 +1729,88 @@ pub mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn adds_native_modules_and_signs_their_frameworks() {
+        let dir = tempfile::tempdir().unwrap();
+        let modules = [super::modules::tests::module(
+            vec![super::modules::tests::xcframework(dir.path(), "Haptics")],
+            &["Haptics"],
+        )];
+        let runtime = |info: &mut plist::Dictionary| {
+            info.insert("OmniBuildRuntime".to_owned(), "example@1".into());
+        };
+        let simulator = super::repackage(
+            with_file(&info_plist_with(runtime)),
+            "OmniBuildShell.app/",
+            &App::default(),
+            &modules,
+            None,
+            &[],
+        )
+        .unwrap();
+        let device = super::repackage(
+            device_with(&device_plist_with(
+                "Payload/OmniBuildShell.app/Info.plist",
+                runtime,
+            )),
+            "Payload/OmniBuildShell.app/",
+            &App {
+                id: Some("dev.example.app".to_owned()),
+                ..App::default()
+            },
+            &modules,
+            Some(&identity()),
+            &[PROFILE.to_vec(), example_app_clip_profile()],
+        )
+        .unwrap();
+
+        // A shell that names no runtime takes none.
+        let error = super::repackage(
+            zip::read(SHELL_APP).unwrap(),
+            "OmniBuildShell.app/",
+            &App::default(),
+            &modules,
+            None,
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .ends_with("names its runtime in its Info.plist, as OmniBuildRuntime")
+        );
+        for (app, bundle) in [
+            (simulator, "OmniBuildShell.app/"),
+            (device, "Payload/OmniBuildShell.app/"),
+        ] {
+            let entries = zip::read(&app).unwrap();
+            let contents = |name: &str| {
+                file(&entries, &format!("{bundle}{name}"))
+                    .contents()
+                    .unwrap()
+            };
+            // Signed as the shell's own framework is: with a seal of its own,
+            // which the app's seal covers in turn.
+            let seal = contents("Frameworks/Haptics.framework/_CodeSignature/CodeResources");
+            assert!(
+                String::from_utf8(seal)
+                    .unwrap()
+                    .contains("<key>Info.plist</key>")
+            );
+            let app_seal = String::from_utf8(contents("_CodeSignature/CodeResources")).unwrap();
+            assert!(app_seal.contains("<key>Frameworks/Haptics.framework/Haptics</key>"));
+            let info = Value::from_reader(Cursor::new(contents("Info.plist"))).unwrap();
+            let listed = |key: &str| {
+                info.as_dictionary().unwrap()[key].as_array().unwrap()[0]
+                    .as_string()
+                    .unwrap()
+                    .to_owned()
+            };
+            assert_eq!(listed("OmniBuildModuleFrameworks"), "Haptics.framework");
+            assert_eq!(listed("OmniBuildModules"), "Haptics");
+        }
     }
 
     #[test]

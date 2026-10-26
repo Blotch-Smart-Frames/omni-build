@@ -88,8 +88,21 @@ impl InfoPlist {
         self.string("CFBundleExecutable")
     }
 
-    fn string(&self, key: &str) -> Option<&str> {
+    pub fn string(&self, key: &str) -> Option<&str> {
         self.dictionary.get(key).and_then(Value::as_string)
+    }
+
+    /// Adds `values` to the array of strings at `key`, after the shell's,
+    /// or in a new one if it has none.
+    pub fn append(&mut self, key: &str, values: &[String]) {
+        let mut array = self
+            .dictionary
+            .get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        array.extend(values.iter().cloned().map(Value::String));
+        self.dictionary.insert(key.to_owned(), Value::Array(array));
     }
 
     /// The name of the app's icon in its asset catalog, which Xcode gives

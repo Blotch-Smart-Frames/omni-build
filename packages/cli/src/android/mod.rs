@@ -3,9 +3,11 @@
 
 mod binary_xml;
 mod chunk;
+mod dex;
 mod icons;
 mod jar_signing;
 mod manifest;
+mod modules;
 mod proto_resources;
 mod proto_xml;
 mod protobuf;
@@ -19,6 +21,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::config::App;
 use crate::key::SigningKey;
+use crate::modules::Module;
 use crate::payload;
 use crate::zip::{self, Entry, Method};
 use binary_xml::BinaryXml;
@@ -79,15 +82,18 @@ pub fn layout(entries: &[Entry]) -> Option<&'static Layout> {
 }
 
 /// Repackages an APK or AAB shell, given its entries and their layout, into
-/// the app `app` describes, and signs it with `key`: an APK with schemes v2
-/// and v3, for devices, and v1 too if it runs on Android before 7.0, and an
-/// AAB with a JAR signature, as Google Play checks an upload.
+/// the app `app` describes, with the native `modules` the app has, and
+/// signs it with `key`: an APK with schemes v2 and v3, for devices, and v1
+/// too if it runs on Android before 7.0, and an AAB with a JAR signature,
+/// as Google Play checks an upload.
 pub fn repackage(
     entries: Vec<Entry>,
     layout: &Layout,
     app: &App,
+    modules: &[Module],
     key: &SigningKey,
 ) -> Result<Vec<u8>> {
+    let modules = modules::android(modules);
     // The shell's own JAR signature, if it has one, describes the shell's
     // contents, not the app's.
     let mut entries: Vec<_> = entries
@@ -100,8 +106,7 @@ pub fn repackage(
         .position(|entry| entry.name == layout.manifest)
         .with_context(|| format!("the shell has no {}", layout.manifest))?;
     let contents = entries[index].contents()?;
-    let (manifest, changes) = rewrite_manifest(&contents, layout, app)
-        .with_context(|| format!("couldn't rewrite the shell's {}", layout.manifest))?;
+    let (manifest, changes) = rewrite_manifest(&contents, layout, app, &modules)?;
     // Google Play signs the APKs it makes from an app bundle itself, for
     // whichever versions the app runs on.
     if !layout.bundle && changes.min_sdk < V1_MIN_SDK {
@@ -117,9 +122,27 @@ pub fn repackage(
     if !changes.name_resources.is_empty() || !changes.icon_resources.is_empty() {
         set_resources(&mut entries, layout, app, &changes)?;
     }
-    if let Some(abis) = &app.android.abis {
-        keep_abis(&mut entries, layout, abis)?;
+    let libraries = modules::libraries(&modules)?;
+    if app.android.abis.is_some() || !libraries.is_empty() {
+        let owners: Vec<(String, Vec<String>)> = libraries
+            .iter()
+            .filter(|(_, own)| !own.is_empty())
+            .map(|(module, own)| {
+                let mut abis: Vec<String> = own.iter().map(|library| library.abi.clone()).collect();
+                abis.dedup();
+                (module.to_string(), abis)
+            })
+            .collect();
+        let abis = keep_abis(&mut entries, layout, app.android.abis.as_deref(), &owners)?;
+        modules::add_libraries(
+            &mut entries,
+            layout,
+            &libraries,
+            &abis,
+            changes.extract_native_libs,
+        )?;
     }
+    modules::add_dex(&mut entries, layout, &modules, changes.min_sdk)?;
     if let Some(payload) = &app.payload {
         add_payload(&mut entries, layout, payload)?;
     }
@@ -133,13 +156,30 @@ pub fn repackage(
     Ok(signing::sign(&zip::write(&entries), key))
 }
 
-fn rewrite_manifest(contents: &[u8], layout: &Layout, app: &App) -> Result<(Vec<u8>, Changes)> {
+/// Rewrites the manifest for the app, and its native modules: the ones
+/// with something for Android.
+fn rewrite_manifest(
+    contents: &[u8],
+    layout: &Layout,
+    app: &App,
+    modules: &[(&Module, &crate::modules::Android)],
+) -> Result<(Vec<u8>, Changes)> {
+    let context = || format!("couldn't rewrite the shell's {}", layout.manifest);
     let mut document: Box<dyn Document> = if layout.bundle {
-        Box::new(ProtoXml::parse(contents)?)
+        Box::new(ProtoXml::parse(contents).with_context(context)?)
     } else {
-        Box::new(BinaryXml::parse(contents)?)
+        Box::new(BinaryXml::parse(contents).with_context(context)?)
     };
-    let changes = manifest::rewrite(document.as_mut(), app)?;
+    let changes = manifest::rewrite(document.as_mut(), app).with_context(context)?;
+    if !modules.is_empty() {
+        modules::check(document.as_ref(), modules)?;
+        modules::list(document.as_mut(), modules).with_context(|| {
+            format!(
+                "couldn't list the native modules in the shell's {}",
+                layout.manifest
+            )
+        })?;
+    }
     Ok((document.to_bytes(), changes))
 }
 
@@ -203,11 +243,20 @@ fn set_resources(
     Ok(())
 }
 
-/// Keeps only the native libraries for the ABIs the app asks for: each
-/// ABI's are in `lib/<abi>/`. An app bundle lists the folders in
-/// `native.pb` too, as `TargetedNativeDirectory` messages: their paths,
-/// and which ABI each is for.
-fn keep_abis(entries: &mut Vec<Entry>, layout: &Layout, abis: &[String]) -> Result<()> {
+/// Keeps only the native libraries for the app's ABIs, and says which they
+/// are: those it asks for, `wanted`, or else every one the shell or a
+/// native module has libraries for. Each of those, `owners`, by the ABIs
+/// it has them for, has to have them for each of the app's, or a device of
+/// that ABI couldn't load them. Each ABI's are in `lib/<abi>/`. An app
+/// bundle lists the folders in `native.pb` too, as
+/// `TargetedNativeDirectory` messages: their paths, and which ABI each is
+/// for.
+fn keep_abis(
+    entries: &mut Vec<Entry>,
+    layout: &Layout,
+    wanted: Option<&[String]>,
+    owners: &[(String, Vec<String>)],
+) -> Result<Vec<String>> {
     let libraries = format!("{}lib/", layout.base);
     let abi_of = |name: &str| -> Option<String> {
         let (abi, _) = name.strip_prefix(&libraries)?.split_once('/')?;
@@ -219,16 +268,45 @@ fn keep_abis(entries: &mut Vec<Entry>, layout: &Layout, abis: &[String]) -> Resu
         .collect();
     shell_abis.sort();
     shell_abis.dedup();
-    for abi in abis {
-        if !shell_abis.contains(abi) {
-            bail!(
-                "the shell has no native libraries for {abi}: {}",
-                if shell_abis.is_empty() {
-                    "it has none at all".to_owned()
-                } else {
-                    format!("it has them for {}", shell_abis.join(", "))
-                }
-            );
+    let shell = ("the shell".to_owned(), shell_abis);
+    let owners: Vec<&(String, Vec<String>)> = [&shell]
+        .into_iter()
+        .filter(|(_, abis)| !abis.is_empty())
+        .chain(owners)
+        .collect();
+    let abis: Vec<String> = if let Some(wanted) = wanted {
+        wanted.to_vec()
+    } else {
+        let mut all: Vec<String> = owners.iter().flat_map(|(_, abis)| abis.clone()).collect();
+        all.sort();
+        all.dedup();
+        all
+    };
+    if owners.is_empty()
+        && let Some(abi) = abis.first()
+    {
+        bail!(
+            "the shell has no native libraries for {abi}, which android.abis keeps: it has none at all"
+        );
+    }
+    for (owner, theirs) in &owners {
+        let Some(abi) = abis.iter().find(|abi| !theirs.contains(abi)) else {
+            continue;
+        };
+        match wanted {
+            Some(_) => bail!(
+                "{owner} has no native libraries for {abi}, which android.abis keeps: it has them for {}",
+                theirs.join(", ")
+            ),
+            None => bail!(
+                "{owner} has no native libraries for {abi}, which {} has: it has them for {}. Give android.abis the ABIs to keep, which the shell and every native module have libraries for",
+                owners
+                    .iter()
+                    .find(|(_, abis)| abis.contains(abi))
+                    .map(|(other, _)| other)
+                    .expect("the ABI is one of theirs"),
+                theirs.join(", ")
+            ),
         }
     }
     entries.retain(|entry| abi_of(&entry.name).is_none_or(|abi| abis.contains(&abi)));
@@ -246,7 +324,7 @@ fn keep_abis(entries: &mut Vec<Entry>, layout: &Layout, abis: &[String]) -> Resu
         });
         *entry = entry.with_contents(&protobuf::encode(&directories));
     }
-    Ok(())
+    Ok(abis)
 }
 
 /// Adds the payload's files to the package's `assets/`, replacing the
@@ -296,13 +374,16 @@ mod tests {
         Value::{Ref, Str},
         binary_xml, names, texts,
     };
-    use crate::android::manifest::{Document, Value};
+    use crate::android::dex::tests::made_up;
+    use crate::android::manifest::{self, Document, Value};
     use crate::android::proto_xml::tests::SHELL_AAB;
     use crate::android::resources::Value as ResourceValue;
     use crate::android::resources::tests::strings;
     use crate::config::{AdaptiveIcon, Android, App, Background, Translation};
     use crate::icon::tests::solid_png;
     use crate::key::tests::KEY;
+    use crate::modules::Module;
+    use crate::modules::tests::example;
     use crate::zip::{self, Entry, Method, tests::SHELL, tests::entry, tests::named};
 
     const ORANGE: [u8; 4] = [0xe8, 0x59, 0x0c, 0xff];
@@ -314,7 +395,7 @@ mod tests {
     fn repackage(shell: &[u8], app: &App, key: &SigningKey) -> Result<Vec<u8>> {
         let entries = zip::read(shell).unwrap();
         let layout = layout(&entries).unwrap();
-        super::repackage(entries, layout, app, key)
+        super::repackage(entries, layout, app, &[], key)
     }
 
     #[test]
@@ -407,7 +488,7 @@ mod tests {
         entries.push(corrupt);
         let layout = layout(&entries).unwrap();
 
-        let error = super::repackage(entries, layout, &App::default(), &KEY).unwrap_err();
+        let error = super::repackage(entries, layout, &App::default(), &[], &KEY).unwrap_err();
 
         assert_eq!(error.to_string(), "assets/corrupt.bin is corrupt");
     }
@@ -1286,11 +1367,11 @@ mod tests {
 
         assert_eq!(
             missing.to_string(),
-            "the shell has no native libraries for riscv64: it has them for arm64-v8a, armeabi-v7a, x86, x86_64"
+            "the shell has no native libraries for riscv64, which android.abis keeps: it has them for arm64-v8a, armeabi-v7a, x86, x86_64"
         );
         assert_eq!(
             none.to_string(),
-            "the shell has no native libraries for x86_64: it has none at all"
+            "the shell has no native libraries for x86_64, which android.abis keeps: it has none at all"
         );
         assert_eq!(
             format!("{corrupt:#}"),
@@ -1307,6 +1388,209 @@ mod tests {
             "base/native.pb is corrupt: corrupt deflate stream"
         );
         assert_eq!(file(&kept, "lib/README"), b"libraries");
+    }
+
+    /// The shell, its manifest naming the runtime `example@1`, as a shell
+    /// that registers native modules does.
+    fn with_runtime(shell: &[u8]) -> Vec<u8> {
+        let entries = zip::read(shell).unwrap();
+        let layout = layout(&entries).unwrap();
+        let mut document = manifest_of(&entries, layout);
+        manifest::set_meta_data(document.as_mut(), "dev.omnibuild.runtime", "example@1").unwrap();
+        changed(shell, &[(layout.manifest, document.to_bytes())], &[])
+    }
+
+    fn manifest_of(entries: &[Entry], layout: &super::Layout) -> Box<dyn Document> {
+        let manifest = file(entries, layout.manifest);
+        if layout.bundle {
+            Box::new(ProtoXml::parse(&manifest).unwrap())
+        } else {
+            Box::new(BinaryXml::parse(&manifest).unwrap())
+        }
+    }
+
+    /// A native module with code, native libraries for `abis` and a
+    /// permission, written in `dir`.
+    fn haptics(dir: &Path, abis: &[&str]) -> Module {
+        fs::create_dir_all(dir).unwrap();
+        let dex = dir.join("classes.dex");
+        fs::write(&dex, made_up("035", &["dev.example.Haptics"])).unwrap();
+        for abi in abis {
+            fs::create_dir_all(dir.join("jni").join(abi)).unwrap();
+            fs::write(dir.join("jni").join(abi).join("libhaptics.so"), abi).unwrap();
+        }
+        Module {
+            android: Some(crate::modules::Android {
+                dex: vec![dex],
+                jni_libs: Some(dir.join("jni")),
+                modules: vec!["dev.example.Haptics".to_owned()],
+                permissions: vec!["VIBRATE".to_owned()],
+            }),
+            ..example("haptics", "example@1")
+        }
+    }
+
+    fn with_modules(shell: &[u8], app: &App, modules: &[Module]) -> Result<Vec<u8>> {
+        let entries = zip::read(shell).unwrap();
+        let layout = layout(&entries).unwrap();
+        super::repackage(entries, layout, app, modules, &KEY)
+    }
+
+    fn keeping(abis: &[&str]) -> App {
+        App {
+            android: Android {
+                abis: Some(abis.iter().map(|&abi| abi.to_owned()).collect()),
+                ..Android::default()
+            },
+            ..App::default()
+        }
+    }
+
+    /// The entries' names that start with `prefix`, without it.
+    fn under(entries: &[Entry], prefix: &str) -> Vec<String> {
+        entries
+            .iter()
+            .filter_map(|entry| entry.name.strip_prefix(prefix).map(str::to_owned))
+            .collect()
+    }
+
+    #[test]
+    fn adds_the_apps_native_modules() {
+        let dir = tempfile::tempdir().unwrap();
+        let modules = [haptics(dir.path(), &["arm64-v8a", "x86_64"])];
+
+        for shell in [SHELL, SHELL_AAB] {
+            let app = with_modules(
+                &with_runtime(shell),
+                &keeping(&["arm64-v8a", "x86_64"]),
+                &modules,
+            )
+            .unwrap();
+
+            let entries = zip::read(&app).unwrap();
+            let layout = layout(&entries).unwrap();
+            let base = layout.base;
+            // The shell's code is left out of the fixture, so the module's
+            // comes first.
+            let dex = if layout.bundle {
+                "base/dex/classes.dex"
+            } else {
+                "classes.dex"
+            };
+            assert_eq!(
+                file(&entries, dex),
+                made_up("035", &["dev.example.Haptics"])
+            );
+            assert_eq!(
+                under(&entries, &format!("{base}lib/")),
+                [
+                    "arm64-v8a/libshell.so",
+                    "x86_64/libshell.so",
+                    "arm64-v8a/libhaptics.so",
+                    "x86_64/libhaptics.so",
+                ]
+            );
+            let manifest = manifest_of(&entries, layout);
+            assert_eq!(
+                manifest::meta_data(manifest.as_ref(), "dev.omnibuild.modules").as_deref(),
+                Some("dev.example.Haptics")
+            );
+            assert!(
+                names(manifest.as_ref(), "uses-permission")
+                    .contains(&Value::String("android.permission.VIBRATE".to_owned()))
+            );
+        }
+        // A shell without native libraries of its own has the module's, for
+        // each ABI it has them for.
+        let without_libraries = changed(
+            &with_runtime(SHELL_AAB),
+            &[],
+            &[
+                "base/lib/arm64-v8a/libshell.so",
+                "base/lib/armeabi-v7a/libshell.so",
+                "base/lib/x86/libshell.so",
+                "base/lib/x86_64/libshell.so",
+                "base/native.pb",
+            ],
+        );
+        let entries =
+            zip::read(&with_modules(&without_libraries, &App::default(), &modules).unwrap())
+                .unwrap();
+        assert_eq!(
+            under(&entries, "base/lib/"),
+            ["arm64-v8a/libhaptics.so", "x86_64/libhaptics.so"]
+        );
+        assert_eq!(
+            protobuf::decode(&file(&entries, "base/native.pb"))
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn says_why_it_cant_add_the_apps_native_modules() {
+        let dir = tempfile::tempdir().unwrap();
+        let two = [haptics(&dir.path().join("two"), &["arm64-v8a", "x86_64"])];
+        let riscv = [haptics(&dir.path().join("riscv"), &["riscv64"])];
+        let other = [Module {
+            runtime: "example@2".to_owned(),
+            ..haptics(&dir.path().join("other"), &[])
+        }];
+        let mut unnamed = haptics(&dir.path().join("unnamed"), &[]);
+        unnamed.android.as_mut().unwrap().permissions = vec!["VIBRATE!".to_owned()];
+        let shell = with_runtime(SHELL);
+        let error = |app: &App, modules: &[Module]| {
+            format!("{:#}", with_modules(&shell, app, modules).unwrap_err())
+        };
+
+        assert_eq!(
+            error(&App::default(), &two),
+            "haptics 1.0.0 has no native libraries for armeabi-v7a, which the shell has: it has them for arm64-v8a, x86_64. Give android.abis the ABIs to keep, which the shell and every native module have libraries for"
+        );
+        assert_eq!(
+            error(&App::default(), &riscv),
+            "the shell has no native libraries for riscv64, which haptics 1.0.0 has: it has them for arm64-v8a, armeabi-v7a, x86, x86_64. Give android.abis the ABIs to keep, which the shell and every native module have libraries for"
+        );
+        assert_eq!(
+            error(&keeping(&["arm64-v8a", "x86"]), &two),
+            "haptics 1.0.0 has no native libraries for x86, which android.abis keeps: it has them for arm64-v8a, x86_64"
+        );
+        // A folder of native libraries that isn't there, a library the shell
+        // has of that name, and code the shell can't run.
+        let mut absent = haptics(&dir.path().join("absent"), &[]);
+        absent.android.as_mut().unwrap().jni_libs = Some(dir.path().join("nowhere"));
+        assert!(
+            error(&App::default(), &[absent])
+                .starts_with("couldn't read haptics 1.0.0's native libraries: ")
+        );
+        let mut clash = haptics(&dir.path().join("clash"), &[]);
+        let clashing = dir.path().join("clash/jni/x86_64");
+        fs::create_dir_all(&clashing).unwrap();
+        fs::write(clashing.join("libshell.so"), "x86_64").unwrap();
+        clash.android.as_mut().unwrap().jni_libs = Some(dir.path().join("clash/jni"));
+        assert_eq!(
+            error(&keeping(&["x86_64"]), &[clash]),
+            "haptics 1.0.0's x86_64/libshell.so would replace the app's lib/x86_64/libshell.so, from the shell or another module"
+        );
+        let mut newer = haptics(&dir.path().join("newer"), &[]);
+        newer.android.as_mut().unwrap().jni_libs = None;
+        fs::write(
+            &newer.android.as_ref().unwrap().dex[0],
+            made_up("039", &["dev.example.Newer"]),
+        )
+        .unwrap();
+        assert!(
+            error(&App::default(), &[newer]).contains("is for Android API 28 and later (DEX 039)")
+        );
+        assert_eq!(
+            error(&App::default(), &other),
+            "haptics 1.0.0 is built for the runtime example@2, and the shell's is example@1: install a version of it built for example@1"
+        );
+        assert_eq!(
+            error(&App::default(), &[unnamed]),
+            "couldn't list the native modules in the shell's AndroidManifest.xml: \"VIBRATE!\" isn't the name of a permission, such as android.permission.CAMERA, or CAMERA for short"
+        );
     }
 
     #[test]

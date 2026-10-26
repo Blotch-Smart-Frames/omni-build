@@ -41,6 +41,9 @@ const LC_VERSION_MIN_WATCHOS: u32 = 0x30;
 const SHA256_ONLY_WATCHOS: u32 = 12 << 16;
 const CPU_TYPE_ARM64: u32 = 0x0100_000c;
 const CPU_TYPE_ARM64_32: u32 = 0x0200_000c;
+const CPU_TYPE_X86_64: u32 = 0x0100_0007;
+/// The file type of a dynamic library, as a framework's code is.
+pub const MH_DYLIB: u32 = 0x6;
 
 /// Where a Mach-O file of each width has what signing reads and changes:
 /// the size of its header, which the load commands follow, and the kind
@@ -138,23 +141,11 @@ impl<'a> Executable<'a> {
     /// Reads an executable, each of whose architectures has to have a
     /// signature at its end, to replace.
     pub fn read(executable: &'a [u8]) -> Result<Self> {
-        if Reader::at(executable, 0).u32_be() != FAT_MAGIC {
+        let Some(slices) = universal(executable)? else {
             return Ok(Self::Thin(Architecture::read(executable)?));
-        }
-        let mut header = Reader::at(executable, 4);
-        let count = header.u32_be() as usize;
-        let table = header.bytes(count.saturating_mul(FAT_ARCH_SIZE));
-        if header.overrun() {
-            bail!("it's truncated");
-        }
+        };
         let mut architectures = Vec::new();
-        for entry in table.as_chunks::<FAT_ARCH_SIZE>().0 {
-            let mut entry = Reader::at(entry, 0);
-            let (cpu, subtype) = (entry.u32_be(), entry.u32_be());
-            let (offset, size) = (entry.u32_be() as usize, entry.u32_be() as usize);
-            let code = executable
-                .get(offset..offset.saturating_add(size))
-                .context("it's truncated")?;
+        for (cpu, subtype, code) in slices {
             architectures.push((cpu, subtype, Architecture::read(code)?));
         }
         Ok(Self::Universal(architectures))
@@ -202,6 +193,66 @@ impl<'a> Executable<'a> {
             out.extend(code);
         }
         out
+    }
+}
+
+/// A universal file's architectures, each its CPU type and subtype and its
+/// own Mach-O file.
+type Slices<'a> = Vec<(u32, u32, &'a [u8])>;
+
+/// A universal file's architectures, or none if it isn't one.
+fn universal(file: &[u8]) -> Result<Option<Slices<'_>>> {
+    if Reader::at(file, 0).u32_be() != FAT_MAGIC {
+        return Ok(None);
+    }
+    let mut header = Reader::at(file, 4);
+    let count = header.u32_be() as usize;
+    let table = header.bytes(count.saturating_mul(FAT_ARCH_SIZE));
+    if header.overrun() {
+        bail!("it's truncated");
+    }
+    let mut architectures = Vec::new();
+    for entry in table.as_chunks::<FAT_ARCH_SIZE>().0 {
+        let mut entry = Reader::at(entry, 0);
+        let (cpu, subtype) = (entry.u32_be(), entry.u32_be());
+        let (offset, size) = (entry.u32_be() as usize, entry.u32_be() as usize);
+        let code = file
+            .get(offset..offset.saturating_add(size))
+            .context("it's truncated")?;
+        architectures.push((cpu, subtype, code));
+    }
+    Ok(Some(architectures))
+}
+
+/// The CPU type and the file type (`MH_EXECUTE`, `MH_DYLIB`) of each of a
+/// Mach-O file's architectures, signed or not.
+pub fn architectures(file: &[u8]) -> Result<Vec<(u32, u32)>> {
+    let slices = match universal(file)? {
+        Some(slices) => slices.into_iter().map(|(_, _, code)| code).collect(),
+        None => vec![file],
+    };
+    slices
+        .into_iter()
+        .map(|code| {
+            let mut header = Reader::at(code, 0);
+            let (magic, cpu) = (header.u32(), header.u32());
+            header.skip(4); // The CPU subtype.
+            let kind = header.u32();
+            if header.overrun() || !matches!(magic, MH_MAGIC | MH_MAGIC_64) {
+                bail!("it isn't a Mach-O file");
+            }
+            Ok((cpu, kind))
+        })
+        .collect()
+}
+
+/// A CPU type's name, as Xcode's settings and `lipo` name it.
+pub fn cpu_name(cpu: u32) -> String {
+    match cpu {
+        CPU_TYPE_ARM64 => "arm64".to_owned(),
+        CPU_TYPE_ARM64_32 => "arm64_32".to_owned(),
+        CPU_TYPE_X86_64 => "x86_64".to_owned(),
+        _ => format!("CPU type {cpu:#x}"),
     }
 }
 
@@ -358,7 +409,10 @@ mod tests {
 
     use anyhow::Result;
 
-    use super::{Code, Executable, MH_MAGIC};
+    use super::{Code, Executable, MH_DYLIB, MH_MAGIC, architectures, cpu_name};
+
+    /// A program's file type.
+    const MH_EXECUTE: u32 = 0x2;
     use crate::bytes::Reader;
     use crate::ios::tests::{device_file, shell_file};
 
@@ -597,6 +651,43 @@ mod tests {
         // 176 bytes of __LINKEDIT before the signature, then room for it,
         // 8 bytes more padded to 16, which the 16 KiB in memory don't hold.
         assert_eq!(layout(&signed), (32_944, 20_016, 32_768, 176 + 20_016));
+    }
+
+    #[test]
+    fn reads_the_architectures_of_a_program_or_a_library() {
+        let (arm64, x86_64) = (0x0100_000c, 0x0100_0007);
+
+        assert_eq!(architectures(&device()).unwrap(), [(arm64, MH_EXECUTE)]);
+        assert_eq!(
+            architectures(&simulator()).unwrap(),
+            [(x86_64, MH_EXECUTE), (arm64, MH_EXECUTE)]
+        );
+        assert_eq!(
+            architectures(&shell_file(
+                "OmniBuildShell.app/Frameworks/ShellKit.framework/ShellKit"
+            ))
+            .unwrap()
+            .iter()
+            .map(|&(cpu, kind)| (cpu_name(cpu), kind))
+            .collect::<Vec<_>>(),
+            [
+                ("x86_64".to_owned(), MH_DYLIB),
+                ("arm64".to_owned(), MH_DYLIB)
+            ]
+        );
+        // A 32-bit file's header, for x86.
+        let x86 = [MH_MAGIC, 7, 3, MH_DYLIB].map(u32::to_le_bytes).concat();
+        assert_eq!(architectures(&x86).unwrap(), [(7, MH_DYLIB)]);
+        assert_eq!(cpu_name(0x0200_000c), "arm64_32");
+        assert_eq!(cpu_name(7), "CPU type 0x7");
+        for (file, message) in [
+            (b"!<arch>\n".to_vec(), "it isn't a Mach-O file"),
+            (b"a text file, at length".to_vec(), "it isn't a Mach-O file"),
+            (device()[..12].to_vec(), "it isn't a Mach-O file"),
+            (simulator()[..30].to_vec(), "it's truncated"),
+        ] {
+            assert_eq!(architectures(&file).unwrap_err().to_string(), message);
+        }
     }
 
     #[test]
