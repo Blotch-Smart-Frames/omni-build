@@ -109,23 +109,63 @@ export interface ProvisionedEvent {
   message: string;
 }
 
-/**
- * `upload` uploaded the app to its store: an app bundle to Google Play,
- * released to `track`, or as a draft there, to roll out in the Play Console.
- */
-export interface UploadedEvent {
+/** What every `uploaded` event has, whichever store it's from. */
+interface UploadedApp {
   event: 'uploaded';
   app: string;
   /** The app's ID. */
   id: string;
   /** Its version, as people see it, if it has one as text. */
   version?: string;
-  /** Its build number: an Android app's version code. */
+  /**
+   * Its build number: an Android app's version code, or an iOS app's
+   * `CFBundleVersion`.
+   */
   build: string;
+  message: string;
+}
+
+/**
+ * `upload` uploaded an app bundle to Google Play, and released it to `track`,
+ * or as a draft there, to roll out in the Play Console.
+ */
+export interface UploadedToGooglePlay extends UploadedApp {
   store: 'google-play';
   /** The track, as `--track` took it. */
   track: string;
   draft: boolean;
+}
+
+/**
+ * `upload` uploaded an iOS app to App Store Connect, which took it: TestFlight
+ * has it once Apple has processed it.
+ */
+export interface UploadedToAppStoreConnect extends UploadedApp {
+  store: 'app-store-connect';
+}
+
+/** `upload` uploaded the app to its store. */
+export type UploadedEvent = UploadedToGooglePlay | UploadedToAppStoreConnect;
+
+/**
+ * `upload` uploaded the app to App Store Connect, which checks it before it
+ * takes it, and OmniBuild waits for its answer, which takes a few minutes.
+ */
+export interface ProcessingEvent {
+  event: 'processing';
+  app: string;
+  message: string;
+}
+
+/**
+ * App Store Connect took the app, or refused it, with a warning: about
+ * something to fix before the app is released, which TestFlight doesn't need.
+ */
+export interface UploadWarningEvent {
+  event: 'upload-warning';
+  /** The number of its kind (`90078`), as Transporter reports them. */
+  code: string;
+  description: string;
   message: string;
 }
 
@@ -220,6 +260,8 @@ export type OmniBuildEvent =
   | ProfileCreatedEvent
   | ProvisionedEvent
   | UploadedEvent
+  | ProcessingEvent
+  | UploadWarningEvent
   | AuthorizingEvent
   | ModuleFoundEvent
   | RepackagedEvent

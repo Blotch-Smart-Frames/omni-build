@@ -1636,11 +1636,20 @@ fn service_account(dir: &Path, url: &str) -> String {
     path.to_str().unwrap().to_owned()
 }
 
-/// Runs omni against Google Play's API at `url`.
+/// Runs omni against Google Play's API at `url`, and App Store Connect's
+/// nowhere it can reach.
 fn omni_build_uploading(url: &str, args: &[&str]) -> Output {
+    let nothing_there = format!(
+        "http://{}",
+        TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+    );
     Command::new(env!("CARGO_BIN_EXE_omni"))
         .args(args)
         .env("OMNI_BUILD_GOOGLE_PLAY_URL", url)
+        .env("OMNI_BUILD_APP_STORE_CONNECT_URL", nothing_there)
         .output()
         .expect("the omni binary should start")
 }
@@ -1732,11 +1741,25 @@ fn upload_reports_what_went_wrong() {
         ),
         (
             vec!["upload", not_zip, "--service-account", &key],
-            format!("error: {not_zip} isn't an app bundle (AAB)\n"),
+            format!(
+                "error: {not_zip} isn't an app bundle (AAB), or an iOS app built for devices (an .ipa)\n"
+            ),
+        ),
+        (
+            vec!["upload", SHELL_APP, "--api-key", API_KEY],
+            "error: App Store Connect takes builds for iOS devices, and the app's CFBundleSupportedPlatforms is [iPhoneSimulator]\n".to_owned(),
         ),
         (
             vec!["upload", SHELL_IPA, "--service-account", &key],
-            format!("error: {SHELL_IPA} isn't an app bundle (AAB)\n"),
+            "error: an upload to App Store Connect needs an API key: give it with --api-key, and a team key's issuer ID with --api-issuer\n".to_owned(),
+        ),
+        (
+            vec!["upload", SHELL_IPA, "--api-key", "missing.p8"],
+            "error: couldn't read the API key missing.p8: ".to_owned(),
+        ),
+        (
+            vec!["upload", SHELL_IPA, "--api-key", API_KEY],
+            "error: couldn't list the account's apps: couldn't reach App Store Connect: ".to_owned(),
         ),
         (
             vec!["upload", SHELL_AAB],
@@ -1766,4 +1789,130 @@ fn upload_reports_what_went_wrong() {
         assert_eq!(output.status.code(), Some(1));
         assert!(stderr(&output).starts_with(&message), "{}", stderr(&output));
     }
+}
+
+/// A made-up App Store Connect, whose account has an app,
+/// `dev.omnibuild.shell`, and takes an upload of it in one part, which it
+/// takes at once, with a warning. Returns its URL, and each request it
+/// received, as its method and path.
+fn app_store_connect_for_uploads() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{BufRead, BufReader};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received = Arc::clone(&requests);
+    let own = url.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut reader = BufReader::new(stream.unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let request = line.trim_end().rsplit_once(' ').unwrap().0.to_owned();
+            let mut length = 0;
+            while line != "\r\n" {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if let Some(value) = line.to_lowercase().strip_prefix("content-length: ") {
+                    length = value.trim().parse().unwrap();
+                }
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            let path = request.split(['?', ' ']).nth(1).unwrap();
+            let data = match path {
+                "/v1/apps" => serde_json::json!([
+                    { "type": "apps", "id": "A1", "attributes": { "bundleId": "dev.omnibuild.shell" } },
+                ]),
+                "/v1/buildUploads" => {
+                    serde_json::json!({ "type": "buildUploads", "id": "U1", "attributes": {} })
+                }
+                "/v1/buildUploadFiles" => {
+                    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    let operation = serde_json::json!({
+                        "method": "PUT",
+                        "url": format!("{own}/storage"),
+                        "offset": 0,
+                        "length": body["data"]["attributes"]["fileSize"],
+                    });
+                    let attributes = serde_json::json!({ "uploadOperations": [operation] });
+                    serde_json::json!({ "type": "buildUploadFiles", "id": "F1", "attributes": attributes })
+                }
+                "/v1/buildUploads/U1" => {
+                    let warning = serde_json::json!({ "code": "90078", "description": "Missing Push Notification Entitlement." });
+                    let state = serde_json::json!({ "state": "COMPLETE", "warnings": [warning] });
+                    serde_json::json!({ "type": "buildUploads", "id": "U1", "attributes": { "state": state } })
+                }
+                // The upload's file, committed, and its part, stored.
+                _ => {
+                    serde_json::json!({ "type": "buildUploadFiles", "id": "F1", "attributes": {} })
+                }
+            };
+            let body = serde_json::json!({ "data": data }).to_string();
+            received.lock().unwrap().push(request);
+            write!(
+                reader.get_mut(),
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    (url, requests)
+}
+
+#[test]
+fn uploads_an_ios_app_to_app_store_connect() {
+    let (url, requests) = app_store_connect_for_uploads();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_omni"))
+        .args([
+            "upload",
+            SHELL_IPA,
+            "--api-key",
+            API_KEY,
+            "--api-issuer",
+            "issuer",
+            "--json",
+        ])
+        .env("OMNI_BUILD_APP_STORE_CONNECT_URL", &url)
+        .output()
+        .expect("the omni binary should start");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        events(&output),
+        [
+            serde_json::json!({
+                "event": "upload-warning",
+                "code": "90078",
+                "description": "Missing Push Notification Entitlement.",
+                "message": "App Store Connect warns: Missing Push Notification Entitlement. (90078)",
+            }),
+            serde_json::json!({
+                "event": "uploaded",
+                "app": SHELL_IPA,
+                "id": "dev.omnibuild.shell",
+                "version": "1.0.0",
+                "build": "1",
+                "store": "app-store-connect",
+                "message": format!("Uploaded {SHELL_IPA}, dev.omnibuild.shell 1.0.0 (1), to App Store Connect, which took it: TestFlight has it for testers once Apple has processed it"),
+            }),
+        ]
+    );
+    assert_eq!(
+        *requests.lock().unwrap(),
+        [
+            "GET /v1/apps?filter%5BbundleId%5D=dev.omnibuild.shell&limit=200",
+            "POST /v1/buildUploads",
+            "POST /v1/buildUploadFiles",
+            "PUT /storage",
+            "PATCH /v1/buildUploadFiles/F1",
+            "GET /v1/buildUploads/U1",
+        ]
+    );
 }

@@ -1,10 +1,10 @@
 //! App Store Connect's API, through which OmniBuild manages what an Apple
-//! developer account has for signing apps: certificates, App IDs, devices
-//! and provisioning profiles. Requests carry a token the user's API key
-//! signs, a key the account's Admin creates in App Store Connect, under
-//! Users and Access > Integrations: a P-256 key, as a `.p8` file, its ID,
-//! and for a team's key, the team's issuer ID. Resources are JSON:API
-//! documents.
+//! developer account has for signing apps (certificates, App IDs, devices
+//! and provisioning profiles), and uploads apps to it. Requests carry a
+//! token the user's API key signs, a key the account's Admin creates in App
+//! Store Connect, under Users and Access > Integrations: a P-256 key, as a
+//! `.p8` file, its ID, and for a team's key, the team's issuer ID.
+//! Resources are JSON:API documents.
 
 use std::fs;
 use std::path::Path;
@@ -118,10 +118,31 @@ struct Page {
     links: Links,
 }
 
-/// A resource that was created, as JSON.
+/// A document of one resource, as JSON.
 #[derive(Deserialize)]
-struct Created {
+struct Single {
     data: Value,
+}
+
+/// Where and how to send a part of a file App Store Connect has reserved
+/// room for: to Apple's storage, which the operation's own URL and headers
+/// authorize.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadOperation {
+    pub method: String,
+    pub url: String,
+    /// Where in the file the part starts, in bytes.
+    pub offset: usize,
+    pub length: usize,
+    #[serde(default)]
+    pub request_headers: Vec<Header>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Header {
+    pub name: String,
+    pub value: String,
 }
 
 #[derive(Default, Deserialize)]
@@ -182,6 +203,52 @@ impl Client {
         serde_json::from_value(created).context(UNDOCUMENTED)
     }
 
+    /// The resource at `path`, such as `/v1/buildUploads/<ID>`.
+    pub fn get<A: DeserializeOwned>(&self, path: &str) -> Result<Resource<A>> {
+        let resource = self.get_json(path)?;
+        serde_json::from_value(resource).context(UNDOCUMENTED)
+    }
+
+    /// Changes the resource at `path` as `data` describes, and returns it
+    /// as App Store Connect has it then.
+    pub fn update<A: DeserializeOwned>(&self, path: &str, data: &Value) -> Result<Resource<A>> {
+        let updated = self.update_json(path, data)?;
+        serde_json::from_value(updated).context(UNDOCUMENTED)
+    }
+
+    /// Sends the part of `file` that `operation` asks for, where it says.
+    /// Not with the API's token, which Apple's storage doesn't need, and
+    /// with time limits for an upload.
+    pub fn upload(&self, operation: &UploadOperation, file: &[u8]) -> Result<()> {
+        let part = file
+            .get(operation.offset..operation.offset.saturating_add(operation.length))
+            .context("App Store Connect asked for a part of the app beyond its end")?;
+        let request = match operation.method.as_str() {
+            "PUT" => self.agent.put(&operation.url),
+            "POST" => self.agent.post(&operation.url),
+            "PATCH" => self.agent.patch(&operation.url),
+            method => bail!(
+                "App Store Connect asked for a part of the app by {method}, which OmniBuild doesn't send"
+            ),
+        };
+        let request = operation
+            .request_headers
+            .iter()
+            .fold(http::upload(request), |request, header| {
+                request.header(&header.name, &header.value)
+            });
+        let response = request
+            .send(part)
+            .context("couldn't reach Apple's storage")?;
+        if !response.status().is_success() {
+            bail!(
+                "Apple's storage refused a part of the app ({})",
+                response.status().as_u16()
+            );
+        }
+        Ok(())
+    }
+
     /// Every resource `list` gives, as JSON.
     fn list_json(&self, path: &str, filters: &[(&str, &str)]) -> Result<Vec<Value>> {
         let first = self
@@ -215,8 +282,28 @@ impl Client {
             .header("Authorization", self.authorization())
             .content_type("application/json")
             .send(json!({ "data": data }).to_string());
-        let created: Created = serde_json::from_value(read(response)?).context(UNDOCUMENTED)?;
-        Ok(created.data)
+        single(response)
+    }
+
+    /// The resource `get` gets, as JSON.
+    fn get_json(&self, path: &str) -> Result<Value> {
+        let response = self
+            .agent
+            .get(format!("{}{path}", self.url))
+            .header("Authorization", self.authorization())
+            .call();
+        single(response)
+    }
+
+    /// The resource `update` changes, as JSON.
+    fn update_json(&self, path: &str, data: &Value) -> Result<Value> {
+        let response = self
+            .agent
+            .patch(format!("{}{path}", self.url))
+            .header("Authorization", self.authorization())
+            .content_type("application/json")
+            .send(json!({ "data": data }).to_string());
+        single(response)
     }
 
     /// The header that authenticates a request made now.
@@ -227,6 +314,13 @@ impl Client {
             .as_secs();
         format!("Bearer {}", self.key.token(now))
     }
+}
+
+/// The resource App Store Connect answered with, as JSON, or why it
+/// refused.
+fn single(response: Result<Response<ureq::Body>, ureq::Error>) -> Result<Value> {
+    let single: Single = serde_json::from_value(read(response)?).context(UNDOCUMENTED)?;
+    Ok(single.data)
 }
 
 /// A page of a list App Store Connect answered with, or why it refused.
@@ -295,7 +389,7 @@ pub mod tests {
     use serde::Deserialize;
     use serde_json::{Value, json};
 
-    use super::{ApiKey, Client, Resource};
+    use super::{ApiKey, Client, Header, Resource, UploadOperation};
     use crate::http::tests::{read_request, serve};
 
     /// The test API key, as App Store Connect would name it.
@@ -468,6 +562,108 @@ pub mod tests {
             .unwrap();
 
         assert_eq!(format!("{error:#}"), "App Store Connect refused it (500)");
+    }
+
+    #[test]
+    fn gets_and_updates_a_resource() {
+        let (url, requests) = serve(|request, _| {
+            let udid = request.body["data"]["attributes"]["udid"]
+                .as_str()
+                .unwrap_or("UDID5");
+            let device = json!({ "type": "devices", "id": "D5", "attributes": { "udid": udid } });
+            (200, document(&device))
+        });
+        let client = client(&url);
+
+        let got: Resource<Device> = client.get("/v1/devices/D5").unwrap();
+        let updated: Resource<Device> = client
+            .update(
+                "/v1/devices/D5",
+                &json!({ "type": "devices", "id": "D5", "attributes": { "udid": "UDID6" } }),
+            )
+            .unwrap();
+
+        assert_eq!(got.attributes.udid, "UDID5");
+        assert_eq!(updated.attributes.udid, "UDID6");
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests[0].method, "GET");
+        assert_eq!(requests[1].method, "PATCH");
+        assert_eq!(requests[1].path, "/v1/devices/D5");
+        assert!(requests[1].authorization.starts_with("Bearer "));
+    }
+
+    fn operation(method: &str, url: &str, offset: usize, length: usize) -> UploadOperation {
+        UploadOperation {
+            method: method.to_owned(),
+            url: url.to_owned(),
+            offset,
+            length,
+            request_headers: vec![Header {
+                name: "Content-MD5".to_owned(),
+                value: "a digest".to_owned(),
+            }],
+        }
+    }
+
+    #[test]
+    fn uploads_a_part_of_a_file_as_app_store_connect_asks() {
+        let (url, requests) = serve(|_, _| (200, String::new()));
+        let client = client(&url);
+
+        for method in ["PUT", "POST", "PATCH"] {
+            client
+                .upload(&operation(method, &format!("{url}/part"), 3, 3), b"an app")
+                .unwrap();
+        }
+
+        let requests = requests.lock().unwrap();
+        let methods: Vec<_> = requests
+            .iter()
+            .map(|request| request.method.as_str())
+            .collect();
+        assert_eq!(methods, ["PUT", "POST", "PATCH"]);
+        for request in requests.iter() {
+            assert_eq!(request.bytes, b"app");
+            assert_eq!(request.headers["content-md5"], "a digest");
+            // Apple's storage gets the operation's own authorization, not
+            // the API's token.
+            assert_eq!(request.authorization, "");
+        }
+    }
+
+    #[test]
+    fn says_why_it_couldnt_upload_a_part() {
+        let (url, _) = serve(|_, _| (403, "<Error>AccessDenied</Error>".to_owned()));
+        // A port nothing listens on any more.
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let client = client(&url);
+        let error =
+            |operation| format!("{:#}", client.upload(&operation, b"an app").err().unwrap());
+
+        assert_eq!(
+            error(operation("PUT", &url, 0, 6)),
+            "Apple's storage refused a part of the app (403)"
+        );
+        assert_eq!(
+            error(operation("DELETE", &url, 0, 6)),
+            "App Store Connect asked for a part of the app by DELETE, which OmniBuild doesn't send"
+        );
+        assert_eq!(
+            error(operation("PUT", &url, 3, 4)),
+            "App Store Connect asked for a part of the app beyond its end"
+        );
+        assert_eq!(
+            error(operation("PUT", &url, 3, usize::MAX)),
+            "App Store Connect asked for a part of the app beyond its end"
+        );
+        assert!(
+            error(operation("PUT", &format!("http://127.0.0.1:{port}"), 0, 6))
+                .starts_with("couldn't reach Apple's storage: ")
+        );
     }
 
     #[test]

@@ -70,18 +70,17 @@ pub enum Event {
         profiles: Vec<String>,
     },
     /// `upload` uploaded the app to its store.
-    Uploaded {
-        app: String,
-        /// The app's ID.
-        id: String,
-        /// Its version, as people see it, if it has one as text.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        version: Option<String>,
-        /// Its build number: an Android app's version code.
-        build: String,
-        /// Which store, and what became of the app there.
-        #[serde(flatten)]
-        store: Store,
+    Uploaded(UploadedApp),
+    /// `upload` uploaded the app to App Store Connect, which checks it
+    /// before it takes it, and OmniBuild waits for its answer.
+    Processing { app: String },
+    /// App Store Connect took the app, or refused it, with a warning: about
+    /// something the app should fix before it's released, which TestFlight
+    /// doesn't need.
+    UploadWarning {
+        /// The number of its kind (`90078`), as Transporter reports them.
+        code: String,
+        description: String,
     },
     /// The device asks its user whether to allow this computer, and
     /// OmniBuild waits for the answer.
@@ -156,6 +155,52 @@ pub enum Platform {
     Ios,
 }
 
+/// An app `upload` uploaded.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct UploadedApp {
+    pub app: String,
+    /// The app's ID.
+    pub id: String,
+    /// Its version, as people see it, if it has one as text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Its build number: an Android app's version code, or an iOS app's
+    /// `CFBundleVersion`.
+    pub build: String,
+    /// Which store, and what became of the app there.
+    #[serde(flatten)]
+    pub store: Store,
+}
+
+impl UploadedApp {
+    /// The sentence a person reads.
+    fn message(&self) -> String {
+        let Self {
+            app,
+            id,
+            version,
+            build,
+            store,
+        } = self;
+        let release = match version {
+            Some(version) => format!("{id} {version} ({build})"),
+            None => format!("{id} ({build})"),
+        };
+        match store {
+            Store::GooglePlay { track, draft: true } => format!(
+                "Uploaded {app}, {release}, to Google Play, as a draft release on its {track} track: roll it out in the Play Console"
+            ),
+            Store::GooglePlay {
+                track,
+                draft: false,
+            } => format!("Released {app}, {release}, to Google Play's {track} track"),
+            Store::AppStoreConnect => format!(
+                "Uploaded {app}, {release}, to App Store Connect, which took it: TestFlight has it for testers once Apple has processed it"
+            ),
+        }
+    }
+}
+
 /// The store `upload` uploaded an app to, and what became of it there.
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(tag = "store", rename_all = "kebab-case")]
@@ -167,26 +212,8 @@ pub enum Store {
         /// Whether the release is a draft, to roll out in the Play Console.
         draft: bool,
     },
-}
-
-impl Store {
-    /// The sentence a person reads for `app`, the app `id`, with its
-    /// version and build, uploaded here.
-    fn uploaded(&self, app: &str, id: &str, version: Option<&str>, build: &str) -> String {
-        let release = match version {
-            Some(version) => format!("{id} {version} ({build})"),
-            None => format!("{id} ({build})"),
-        };
-        match self {
-            Self::GooglePlay { track, draft: true } => format!(
-                "Uploaded {app}, {release}, to Google Play, as a draft release on its {track} track: roll it out in the Play Console"
-            ),
-            Self::GooglePlay {
-                track,
-                draft: false,
-            } => format!("Released {app}, {release}, to Google Play's {track} track"),
-        }
-    }
+    /// Taken by App Store Connect, which processes it for TestFlight.
+    AppStoreConnect,
 }
 
 /// The kind of file an app is in.
@@ -260,13 +287,13 @@ impl Event {
                 "Wrote {} provisioning profiles for the app to {out}, which allow \"{certificate}\" in {keystore}, until {expires}. Sign the app with --signing-key {keystore} --profile {out}",
                 distribution.name()
             ),
-            Self::Uploaded {
-                app,
-                id,
-                version,
-                build,
-                store,
-            } => store.uploaded(app, id, version.as_deref(), build),
+            Self::Uploaded(upload) => upload.message(),
+            Self::Processing { app } => format!(
+                "App Store Connect has {app}, and checks it before it takes it, which takes a few minutes"
+            ),
+            Self::UploadWarning { code, description } => {
+                format!("App Store Connect warns: {description} ({code})")
+            }
             Self::Authorizing { device } => format!(
                 "{device} asks whether to allow debugging from this computer. Allow it on the device."
             ),
@@ -317,7 +344,7 @@ impl Event {
             } | Self::KeyRequested { .. }
                 | Self::CertificateImported { .. }
                 | Self::Provisioned { .. }
-                | Self::Uploaded { .. }
+                | Self::Uploaded(_)
                 | Self::Repackaged { .. }
                 | Self::Installed { .. }
                 | Self::Listening { .. }
@@ -378,7 +405,7 @@ impl Reporter {
 
 #[cfg(test)]
 mod tests {
-    use super::{Event, Format, KeyKind, Line, Platform, Reporter, Store};
+    use super::{Event, Format, KeyKind, Line, Platform, Reporter, Store, UploadedApp};
     use crate::ios::Distribution;
 
     fn repackaged() -> Event {
@@ -462,7 +489,7 @@ mod tests {
     }
 
     fn uploaded(version: Option<&str>, draft: bool) -> Event {
-        Event::Uploaded {
+        Event::Uploaded(UploadedApp {
             app: "app.aab".to_owned(),
             id: "dev.example.app".to_owned(),
             version: version.map(str::to_owned),
@@ -471,7 +498,7 @@ mod tests {
                 track: "internal".to_owned(),
                 draft,
             },
-        }
+        })
     }
 
     #[test]
@@ -495,6 +522,44 @@ mod tests {
     }
 
     #[test]
+    fn tells_people_what_app_store_connect_does_with_an_app() {
+        let people = Reporter::new(false);
+
+        assert_eq!(
+            people.line(&Event::Uploaded(UploadedApp {
+                app: "app.ipa".to_owned(),
+                id: "dev.example.app".to_owned(),
+                version: Some("1.2.0".to_owned()),
+                build: "42".to_owned(),
+                store: Store::AppStoreConnect,
+            })),
+            Line::Stdout(
+                "Uploaded app.ipa, dev.example.app 1.2.0 (42), to App Store Connect, which took it: TestFlight has it for testers once Apple has processed it"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            people.line(&Event::Processing {
+                app: "app.ipa".to_owned()
+            }),
+            Line::Stderr(
+                "App Store Connect has app.ipa, and checks it before it takes it, which takes a few minutes"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            people.line(&Event::UploadWarning {
+                code: "90078".to_owned(),
+                description: "Missing Push Notification Entitlement.".to_owned(),
+            }),
+            Line::Stderr(
+                "App Store Connect warns: Missing Push Notification Entitlement. (90078)"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
     fn tells_build_tools_what_it_uploaded() {
         let tools = Reporter::new(true);
 
@@ -509,6 +574,31 @@ mod tests {
             tools.line(&uploaded(None, true)),
             Line::Stdout(line) if line.starts_with(
                 r#"{"event":"uploaded","app":"app.aab","id":"dev.example.app","build":"42","store":"google-play","track":"internal","draft":true,"message":"Uploaded "#
+            )
+        ));
+        assert!(matches!(
+            tools.line(&Event::Uploaded(UploadedApp {
+                app: "app.ipa".to_owned(),
+                id: "dev.example.app".to_owned(),
+                version: Some("1.2.0".to_owned()),
+                build: "42".to_owned(),
+                store: Store::AppStoreConnect,
+            })),
+            Line::Stdout(line) if line.starts_with(
+                r#"{"event":"uploaded","app":"app.ipa","id":"dev.example.app","version":"1.2.0","build":"42","store":"app-store-connect","message":"Uploaded "#
+            )
+        ));
+        assert!(matches!(
+            tools.line(&Event::Processing { app: "app.ipa".to_owned() }),
+            Line::Stdout(line) if line.starts_with(r#"{"event":"processing","app":"app.ipa","message":"#)
+        ));
+        assert!(matches!(
+            tools.line(&Event::UploadWarning {
+                code: "90078".to_owned(),
+                description: "Missing Push Notification Entitlement.".to_owned(),
+            }),
+            Line::Stdout(line) if line.starts_with(
+                r#"{"event":"upload-warning","code":"90078","description":"Missing Push Notification Entitlement.","message":"#
             )
         ));
     }

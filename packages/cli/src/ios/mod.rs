@@ -18,6 +18,7 @@ mod modules;
 mod profile;
 mod provisioning;
 mod signing;
+mod upload;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -34,6 +35,7 @@ use info_plist::InfoPlist;
 use profile::Profile;
 pub use provisioning::{Distribution, Provisioner};
 use signing::{Claims, Identity};
+pub use upload::{PATIENCE, POLL, Uploader};
 
 /// The platforms in `CFBundleSupportedPlatforms` of a build for the
 /// Simulator, and of one for devices.
@@ -162,6 +164,49 @@ pub fn repackage(
     });
     let entries = signing::sign(entries, bundle, &info, identity.as_ref())?;
     Ok(zip::write(&entries).bytes)
+}
+
+/// What App Store Connect files an upload of an app under, as its
+/// Info.plist says.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Release {
+    /// Its bundle ID, `CFBundleIdentifier`.
+    pub id: String,
+    /// Its version, as people see it, `CFBundleShortVersionString`.
+    pub version: String,
+    /// Its build number, `CFBundleVersion`, which each upload of a version
+    /// needs anew.
+    pub build: String,
+}
+
+/// The release of the app in `entries`, in the folder `bundle`: a build for
+/// devices, which is what App Store Connect takes.
+pub fn release(entries: &[Entry], bundle: &str) -> Result<Release> {
+    let name = format!("{bundle}Info.plist");
+    let info = entries
+        .iter()
+        .find(|entry| entry.name == name)
+        .with_context(|| format!("the app has no {name}"))?
+        .contents()
+        .and_then(|contents| InfoPlist::parse(&contents))
+        .with_context(|| format!("couldn't read the app's {name}"))?;
+    let platforms = info.platforms();
+    if !platforms.contains(&DEVICES) {
+        bail!(
+            "App Store Connect takes builds for iOS devices, and the app's CFBundleSupportedPlatforms is [{}]",
+            platforms.join(", ")
+        );
+    }
+    let value = |key: &str| {
+        info.string(key)
+            .map(str::to_owned)
+            .with_context(|| format!("the app's {name} has no {key}"))
+    };
+    Ok(Release {
+        id: value("CFBundleIdentifier")?,
+        version: value("CFBundleShortVersionString")?,
+        build: value("CFBundleVersion")?,
+    })
 }
 
 /// A bundle a build for devices signs with a provisioning profile of its
@@ -453,7 +498,7 @@ pub mod tests {
     use super::asset_catalog::tests::icon_bitmap;
     use super::code_signature::tests::{blobs, identity};
     use super::profile::tests::{PROFILE, app_clip_profile};
-    use super::{InfoPlist, bundle, claims, signed_bundles};
+    use super::{InfoPlist, Release, bundle, claims, release, signed_bundles};
     use crate::bytes::Reader;
     use crate::config::{App, Bundle, Entitlement, Ios, Translation};
     use crate::icon::tests::solid_png;
@@ -554,6 +599,65 @@ pub mod tests {
     /// The file's Unix mode, from its zip attributes.
     fn mode(entry: &Entry) -> u32 {
         entry.attributes >> 16
+    }
+
+    #[test]
+    fn reads_what_app_store_connect_files_an_upload_under() {
+        let ipa = zip::read(SHELL_IPA).unwrap();
+
+        assert_eq!(
+            release(&ipa, "Payload/OmniBuildShell.app/").unwrap(),
+            Release {
+                id: "dev.omnibuild.shell".to_owned(),
+                version: "1.0.0".to_owned(),
+                build: "1".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn says_why_it_cant_read_what_app_store_connect_files_an_upload_under() {
+        let app = |keys: &str| {
+            let info = format!(
+                "<plist><dict><key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>{keys}</dict></plist>"
+            );
+            vec![entry(
+                "Payload/A.app/Info.plist",
+                Method::Stored,
+                info.as_bytes(),
+            )]
+        };
+        let error = |entries: &[Entry], bundle: &str| {
+            format!("{:#}", release(entries, bundle).unwrap_err())
+        };
+        let id = "<key>CFBundleIdentifier</key><string>dev.example.app</string>";
+        let version = "<key>CFBundleShortVersionString</key><string>1.2.0</string>";
+
+        assert_eq!(
+            error(&app(""), "Payload/Gone.app/"),
+            "the app has no Payload/Gone.app/Info.plist"
+        );
+        assert!(
+            error(
+                &[entry("Payload/A.app/Info.plist", Method::Stored, b"plist")],
+                "Payload/A.app/"
+            )
+            .starts_with("couldn't read the app's Payload/A.app/Info.plist: ")
+        );
+        assert_eq!(
+            error(&zip::read(SHELL_APP).unwrap(), "OmniBuildShell.app/"),
+            "App Store Connect takes builds for iOS devices, and the app's CFBundleSupportedPlatforms is [iPhoneSimulator]"
+        );
+        for (keys, missing) in [
+            ("", "CFBundleIdentifier"),
+            (id, "CFBundleShortVersionString"),
+            (&format!("{id}{version}"), "CFBundleVersion"),
+        ] {
+            assert_eq!(
+                error(&app(keys), "Payload/A.app/"),
+                format!("the app's Payload/A.app/Info.plist has no {missing}")
+            );
+        }
     }
 
     #[test]
