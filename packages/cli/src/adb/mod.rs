@@ -8,7 +8,7 @@ mod connection;
 mod key;
 mod pairing;
 mod spake2;
-mod tls;
+pub mod tls;
 mod usb;
 
 use std::fmt;

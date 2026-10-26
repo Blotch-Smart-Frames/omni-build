@@ -708,7 +708,13 @@ fn install_reports_what_went_wrong() {
         ),
         (
             vec!["install", not_apk],
-            format!("error: {not_apk} isn't an APK\n"),
+            format!("error: {not_apk} isn't an APK, or an iOS app built for devices (an .ipa)\n"),
+        ),
+        (
+            vec!["install", SHELL_APP],
+            format!(
+                "error: {SHELL_APP} is a zipped .app, built for the Simulator: an iPhone or iPad installs an app built for devices, an .ipa\n"
+            ),
         ),
         (
             vec!["install", SHELL_AAB],
@@ -1914,5 +1920,353 @@ fn uploads_an_ios_app_to_app_store_connect() {
             "PATCH /v1/buildUploadFiles/F1",
             "GET /v1/buildUploads/U1",
         ]
+    );
+}
+
+/// A message the made-up usbmux daemon reads: a header of four numbers,
+/// little-endian, then a property list.
+fn read_usbmux(stream: &mut TcpStream) -> plist::Dictionary {
+    let mut header = [0; 16];
+    stream.read_exact(&mut header).unwrap();
+    let length = u32::from_le_bytes(header[..4].try_into().unwrap()) as usize;
+    let mut body = vec![0; length - 16];
+    stream.read_exact(&mut body).unwrap();
+    plist::Value::from_reader(std::io::Cursor::new(body))
+        .unwrap()
+        .into_dictionary()
+        .unwrap()
+}
+
+/// `message` as a property list, in XML.
+fn plist_bytes(message: &plist::Dictionary) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    plist::Value::Dictionary(message.clone())
+        .to_writer_xml(&mut bytes)
+        .unwrap();
+    bytes
+}
+
+fn write_usbmux(stream: &mut TcpStream, message: &plist::Dictionary) {
+    let body = plist_bytes(message);
+    let mut packet = Vec::new();
+    for field in [16 + u32::try_from(body.len()).unwrap(), 1, 8, 1] {
+        packet.extend(field.to_le_bytes());
+    }
+    packet.extend(body);
+    stream.write_all(&packet).unwrap();
+}
+
+/// A message lockdownd or a service reads, with its length before it,
+/// big-endian, or none if the stream ends.
+fn read_service(stream: &mut TcpStream) -> Option<plist::Dictionary> {
+    let mut length = [0; 4];
+    stream.read_exact(&mut length).ok()?;
+    let mut body = vec![0; u32::from_be_bytes(length) as usize];
+    stream.read_exact(&mut body).unwrap();
+    plist::Value::from_reader(std::io::Cursor::new(body))
+        .unwrap()
+        .into_dictionary()
+}
+
+fn write_service(stream: &mut TcpStream, message: &plist::Dictionary) {
+    let body = plist_bytes(message);
+    stream
+        .write_all(&u32::try_from(body.len()).unwrap().to_be_bytes())
+        .unwrap();
+    stream.write_all(&body).unwrap();
+}
+
+fn dictionary<const N: usize>(fields: [(&str, plist::Value); N]) -> plist::Dictionary {
+    fields
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value))
+        .collect()
+}
+
+/// The made-up iPhone's UDID.
+const IPHONE: &str = "00008030-001A2B3C4D5E6F7A";
+
+/// A made-up usbmux daemon, as the system runs, with a made-up iPhone
+/// plugged in, which asks its user whether to trust this computer once,
+/// then talks in the clear, and installs the app it's given, unless it
+/// `refuses`. Returns the daemon's address, and the app the phone
+/// installed, once it has.
+fn iphone(refuses: bool) -> (String, Arc<std::sync::Mutex<Option<Vec<u8>>>>) {
+    use rsa::pkcs1::EncodeRsaPublicKey;
+    use rsa::pkcs8::DecodePrivateKey;
+
+    let pem = fs::read_to_string(IDENTITY).unwrap();
+    let end = "-----END PRIVATE KEY-----";
+    let key =
+        rsa::RsaPrivateKey::from_pkcs8_pem(&pem[..pem.find(end).unwrap() + end.len()]).unwrap();
+    let public_key = key
+        .to_public_key()
+        .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
+        .unwrap()
+        .into_bytes();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    let installed = Arc::new(std::sync::Mutex::new(None));
+    let phone = Arc::new(Phone {
+        public_key,
+        asked: std::sync::Mutex::new(false),
+        app: std::sync::Mutex::new(Vec::new()),
+        installed: Arc::clone(&installed),
+        refuses,
+    });
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let request = read_usbmux(&mut stream);
+            let result = |number: i64| {
+                dictionary([("MessageType", "Result".into()), ("Number", number.into())])
+            };
+            let answer = match request["MessageType"].as_string().unwrap() {
+                "ListDevices" => {
+                    let properties = dictionary([
+                        ("ConnectionType", "USB".into()),
+                        ("SerialNumber", IPHONE.into()),
+                    ]);
+                    let device =
+                        dictionary([("DeviceID", 3.into()), ("Properties", properties.into())]);
+                    dictionary([("DeviceList", vec![plist::Value::from(device)].into())])
+                }
+                "ReadPairRecord" => result(2),
+                "ReadBUID" => dictionary([("BUID", "BUID-1".into())]),
+                "SavePairRecord" => result(0),
+                // Connect: the connection is the phone's from then on.
+                _ => {
+                    write_usbmux(&mut stream, &result(0));
+                    let port = u16::from_be_bytes(
+                        u16::try_from(request["PortNumber"].as_unsigned_integer().unwrap())
+                            .unwrap()
+                            .to_ne_bytes(),
+                    );
+                    let phone = Arc::clone(&phone);
+                    std::thread::spawn(move || phone.serve(port, stream));
+                    continue;
+                }
+            };
+            write_usbmux(&mut stream, &answer);
+        }
+    });
+    (address, installed)
+}
+
+/// The made-up iPhone behind `iphone`'s daemon.
+struct Phone {
+    /// Its public key, as lockdownd gives it.
+    public_key: Vec<u8>,
+    /// Whether it has asked its user whether to trust this computer.
+    asked: std::sync::Mutex<bool>,
+    /// What AFC has had written to it: the app.
+    app: std::sync::Mutex<Vec<u8>>,
+    /// The app it installed, once it has.
+    installed: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    /// Whether it refuses to install it.
+    refuses: bool,
+}
+
+impl Phone {
+    /// Answers on `stream`, a connection to `port`, as the service there.
+    fn serve(&self, port: u16, mut stream: TcpStream) {
+        match port {
+            62078 => {
+                while let Some(request) = read_service(&mut stream) {
+                    let answer = self.lockdown(&request);
+                    write_service(&mut stream, &answer);
+                }
+            }
+            1000 => self.afc(stream),
+            _ => {
+                let request = read_service(&mut stream).unwrap();
+                assert_eq!(request["Command"], "Install".into());
+                let answer = if self.refuses {
+                    dictionary([("Error", "ApplicationVerificationFailed".into())])
+                } else {
+                    *self.installed.lock().unwrap() = Some(self.app.lock().unwrap().clone());
+                    dictionary([("Status", "Complete".into())])
+                };
+                write_service(&mut stream, &answer);
+            }
+        }
+    }
+
+    /// lockdownd's answer to `request`: in the clear, as the computer's
+    /// TLS is the unit tests'.
+    fn lockdown(&self, request: &plist::Dictionary) -> plist::Dictionary {
+        let name = request["Request"].as_string().unwrap();
+        let mut asked = self.asked.lock().unwrap();
+        let (key, value): (&str, plist::Value) = match name {
+            "QueryType" => ("Type", "com.apple.mobile.lockdown".into()),
+            "GetValue" => (
+                "Value",
+                dictionary([
+                    (
+                        "DevicePublicKey",
+                        plist::Value::Data(self.public_key.clone()),
+                    ),
+                    ("DeviceName", "Jane's iPhone".into()),
+                ])
+                .into(),
+            ),
+            "Pair" if !*asked => {
+                *asked = true;
+                ("Error", "PairingDialogResponsePending".into())
+            }
+            "Pair" => ("EscrowBag", plist::Value::Data(b"bag".to_vec())),
+            "StartSession" => ("EnableSessionSSL", false.into()),
+            _ => {
+                let afc = request["Service"] == "com.apple.afc".into();
+                ("Port", if afc { 1000 } else { 1001 }.into())
+            }
+        };
+        dictionary([("Request", name.into()), (key, value)])
+    }
+
+    /// AFC: every request succeeds, a file's open gets a handle, and what's
+    /// written is the app.
+    fn afc(&self, mut stream: TcpStream) {
+        let mut header = [0; 40];
+        while stream.read_exact(&mut header).is_ok() {
+            let field = |at: usize| u64::from_le_bytes(header[at..at + 8].try_into().unwrap());
+            let mut rest = vec![0; usize::try_from(field(8)).unwrap() - 40];
+            stream.read_exact(&mut rest).unwrap();
+            let (operation, value) = match field(32) {
+                // An open, answered with a handle.
+                0x0d => (0x0e, 1),
+                // A write, of the app's next part.
+                0x10 => {
+                    let data = &rest[usize::try_from(field(16)).unwrap() - 40..];
+                    self.app.lock().unwrap().extend_from_slice(data);
+                    (1, 0)
+                }
+                _ => (1, 0),
+            };
+            let mut packet = b"CFA6LPAA".to_vec();
+            for value in [48, 48, field(24), operation, value] {
+                packet.extend(u64::to_le_bytes(value));
+            }
+            stream.write_all(&packet).unwrap();
+        }
+    }
+}
+
+/// Runs omni with the usbmux daemon at `address`.
+fn omni_build_with_usbmux(address: &str, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_omni"))
+        .args(args)
+        .env("USBMUXD_SOCKET_ADDRESS", address)
+        .output()
+        .expect("the omni binary should start")
+}
+
+#[test]
+fn installs_an_ios_app_on_an_iphone_once_its_user_trusts_this_computer() {
+    let (address, installed) = iphone(false);
+
+    let output = omni_build_with_usbmux(&address, &["install", SHELL_IPA, "--json"]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        events(&output),
+        [
+            serde_json::json!({
+                "event": "trusting",
+                "device": format!("Jane's iPhone ({IPHONE})"),
+                "message": format!("Jane's iPhone ({IPHONE}) asks whether to trust this computer. Tap Trust on it, and enter its passcode."),
+            }),
+            serde_json::json!({
+                "event": "installed",
+                "app": SHELL_IPA,
+                "device": IPHONE,
+                "model": "Jane's iPhone",
+                "message": format!("Installed {SHELL_IPA} on Jane's iPhone ({IPHONE})"),
+            }),
+        ]
+    );
+    assert_eq!(
+        installed.lock().unwrap().as_deref(),
+        Some(&fs::read(SHELL_IPA).unwrap()[..])
+    );
+}
+
+#[test]
+fn install_reports_why_the_iphone_refused_the_app() {
+    let (address, installed) = iphone(true);
+
+    let output = omni_build_with_usbmux(&address, &["install", SHELL_IPA]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).ends_with(&format!(
+            "error: couldn't install the app on Jane's iPhone ({IPHONE}): the device refused the app (ApplicationVerificationFailed)\n"
+        )),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(*installed.lock().unwrap(), None);
+}
+
+#[test]
+fn says_when_it_cant_connect_to_the_iphone() {
+    // A daemon whose iPhone refuses every connection, as one does that's
+    // being unplugged.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let request = read_usbmux(&mut stream);
+            let answer = if request["MessageType"] == "ListDevices".into() {
+                let properties = dictionary([
+                    ("ConnectionType", "USB".into()),
+                    ("SerialNumber", IPHONE.into()),
+                ]);
+                let device =
+                    dictionary([("DeviceID", 3.into()), ("Properties", properties.into())]);
+                dictionary([("DeviceList", vec![plist::Value::from(device)].into())])
+            } else {
+                dictionary([("MessageType", "Result".into()), ("Number", 3.into())])
+            };
+            write_usbmux(&mut stream, &answer);
+        }
+    });
+
+    let output = omni_build_with_usbmux(&address, &["install", SHELL_IPA]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "error: couldn't connect to {IPHONE}: couldn't connect to port 62078 on the device: the device refused the connection\n"
+        )
+    );
+}
+
+#[test]
+fn says_when_no_iphone_is_connected() {
+    // A daemon with no device.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    std::thread::spawn(move || {
+        let mut stream = listener.accept().unwrap().0;
+        read_usbmux(&mut stream);
+        write_usbmux(
+            &mut stream,
+            &dictionary([("DeviceList", plist::Value::Array(Vec::new()))]),
+        );
+    });
+
+    let output = omni_build_with_usbmux(&address, &["install", SHELL_IPA]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr(&output),
+        "error: no iPhone or iPad is connected to this computer: plug one in, and unlock it\n"
     );
 }

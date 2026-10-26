@@ -1,13 +1,13 @@
 ---
 title: Installing on a device
-description: Install an APK on an Android phone, emulator or device on the network with omni install, over ADB, without the Android SDK, pair with a phone for wireless debugging with omni pair, or have one take apps over Wi-Fi with omni tcpip.
+description: Install an APK on an Android phone, emulator or device on the network with omni install, over ADB, without the Android SDK, or an iOS app on an iPhone or iPad without Xcode, pair with a phone for wireless debugging with omni pair, or have one take apps over Wi-Fi with omni tcpip.
 ---
 
 # Installing on a device
 
 :::warning[Phase 1]
 
-Android phones plugged in by USB, Android emulators, and Android devices on the network, with Android 11's wireless debugging or listening for ADB. OmniBuild doesn't find phones with wireless debugging on the network by itself yet: name them by the address they show. On iOS, install through TestFlight for now. Install OmniBuild from npm, as [Installation](./installation.md) shows.
+Android phones plugged in by USB, Android emulators, and Android devices on the network, with Android 11's wireless debugging or listening for ADB. OmniBuild doesn't find phones with wireless debugging on the network by itself yet: name them by the address they show. iPhones and iPads, through the system's usbmux daemon: tested against made-up devices, but no real iPhone has taken an app from OmniBuild yet. Install OmniBuild from npm, as [Installation](./installation.md) shows.
 
 :::
 
@@ -72,3 +72,24 @@ A device lets a computer install apps only once it trusts the computer's key. Om
 OmniBuild gives the device's reason, such as `INSTALL_FAILED_OLDER_SDK` for an app that needs a newer version of Android. The one you'll meet first is `INSTALL_FAILED_UPDATE_INCOMPATIBLE`: the device has the app signed with another key, such as the Android SDK's debug key when Android Studio installed it, and Android only updates an app with the key it was signed with. Uninstall it from the device, and install again.
 
 An app bundle (AAB) doesn't install: it's for Google Play, which makes the APKs each device installs from it. To try an app on a device, [repackage](./repackaging.md) the APK shell.
+
+## iPhones and iPads
+
+```sh
+omni install app.ipa                                      # on the one iPhone or iPad plugged in
+omni install app.ipa --device 00008030-001A2B3C4D5E6F7A   # on one of several, by its UDID
+```
+
+`install` installs an iOS app built for devices, an `.ipa`, as Xcode and Finder do, through the services on the device that the system's own tools use, with no Xcode:
+
+- The system's **usbmux daemon** reaches the device. macOS runs Apple's. Windows has Apple's once Apple Devices, from the Microsoft Store, or iTunes is installed, which brings the iPhone's USB driver too. Linux has libimobiledevice's, in the `usbmuxd` package. OmniBuild talks to it, as libimobiledevice does. It reaches an iPhone plugged in by USB, or one the system syncs with over Wi-Fi. Without `--device`, OmniBuild installs on the one plugged in, or else the one on Wi-Fi.
+- The first time, the device asks its user whether to **trust this computer**: unlock it, tap **Trust**, and enter its passcode. OmniBuild pairs with it, and the daemon keeps the pair record where the system's own tools find it, so a device that trusts Finder on this Mac trusts OmniBuild, and the other way round. A device that's forgotten this computer, as it does when its user resets its trust settings, asks again.
+- OmniBuild copies the app to the device, through **AFC**, the service that shares files with a computer, and has the device's **installation proxy** install it, replacing an app with its ID.
+
+It doesn't need iOS 17's developer tunnel, which only debugging and the developer services behind it need.
+
+### What an app needs
+
+A device installs an app only if it's signed for that device: with a provisioning profile that lists it, a development or ad hoc profile, from an account the device is registered on. `omni provision --distribution development` or `--distribution ad-hoc` gets one that lists every device on the account, and `repackage --profile` signs the app with it. An App Store profile lists no devices: such an app installs through TestFlight. On iOS 16 and later, an app signed for development opens only once **Developer Mode** is on, under **Settings › Privacy & Security**. An ad hoc one needs no Developer Mode.
+
+OmniBuild gives the device's reason when it refuses an app, such as `ApplicationVerificationFailed` when no profile in the app lists the device.

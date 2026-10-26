@@ -7,13 +7,12 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
-use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureScheme, StreamOwned};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
+use rustls::{ClientConfig, ClientConnection, StreamOwned};
 
 use super::connection::Stream;
 use super::key::AdbKey;
+use crate::tls::AnyDevice;
 
 /// A TLS connection to a device.
 pub type Tls<'a> = StreamOwned<ClientConnection, Box<dyn Stream + 'a>>;
@@ -47,49 +46,6 @@ pub fn connect<'a>(mut stream: Box<dyn Stream + 'a>, key: &AdbKey) -> Result<Tls
     Ok(StreamOwned::new(connection, stream))
 }
 
-/// What OmniBuild checks of a device's certificate: nothing, as adb, since
-/// nobody vouches for a device's key. What proves a device is the one
-/// whose user allowed this computer is pairing, whose key exchange works
-/// only with the code the device shows. The device's signature of the
-/// handshake is still checked, which proves it holds the key it sent.
-#[derive(Debug)]
-struct AnyDevice(WebPkiSupportedAlgorithms);
-
-impl ServerCertVerifier for AnyDevice {
-    fn verify_server_cert(
-        &self,
-        _: &CertificateDer<'_>,
-        _: &[CertificateDer<'_>],
-        _: &ServerName<'_>,
-        _: &[u8],
-        _: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        certificate: &CertificateDer<'_>,
-        signature: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls12_signature(message, certificate, signature, &self.0)
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        certificate: &CertificateDer<'_>,
-        signature: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls13_signature(message, certificate, signature, &self.0)
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.0.supported_schemes()
-    }
-}
-
 #[cfg(test)]
 pub mod tests {
     use std::io::{Read, Write};
@@ -98,25 +54,17 @@ pub mod tests {
     use std::sync::{Arc, LazyLock};
     use std::thread::JoinHandle;
 
-    use rsa::pkcs8::DecodePrivateKey;
-    use rsa::signature::{RandomizedSigner, SignatureEncoding};
-    use rsa::{RsaPrivateKey, pss};
-    use rustls::client::danger::ServerCertVerifier;
-    use rustls::internal::msgs::codec::Codec;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use rustls::server::WebPkiClientVerifier;
-    use rustls::{
-        DigitallySignedStruct, RootCertStore, ServerConfig, ServerConnection, StreamOwned,
-    };
-    use sha2::Sha256;
+    use rustls::{RootCertStore, ServerConfig, ServerConnection, StreamOwned};
 
-    use super::{AnyDevice, connect};
+    use super::connect;
     use crate::adb::key::AdbKey;
 
     const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/adb");
     static KEY: LazyLock<AdbKey> = LazyLock::new(|| fixture("adbkey"));
     /// A key of a device's own, which it makes its certificate with.
-    static DEVICE_KEY: LazyLock<AdbKey> = LazyLock::new(|| fixture("devicekey"));
+    pub static DEVICE_KEY: LazyLock<AdbKey> = LazyLock::new(|| fixture("devicekey"));
 
     fn fixture(name: &str) -> AdbKey {
         AdbKey::at(&Path::new(FIXTURES).join(name), "omnibuild@test")
@@ -237,30 +185,5 @@ pub mod tests {
                 .starts_with("couldn't make an encrypted connection to the device: "),
             "{error:#}"
         );
-    }
-
-    #[test]
-    fn checks_a_devices_signature_of_the_handshake() {
-        let device = AnyDevice(rustls_rustcrypto::provider().signature_verification_algorithms);
-        let key = RsaPrivateKey::from_pkcs8_der(&DEVICE_KEY.private_key()).unwrap();
-        let signature = pss::SigningKey::<Sha256>::new(key)
-            .sign_with_rng(&mut rsa::rand_core::OsRng, b"handshake")
-            .to_vec();
-        // RSA-PSS with SHA-256's number, the signature's length, and the
-        // signature, as TLS sends them.
-        let mut encoded = vec![0x08, 0x04];
-        encoded.extend(u16::try_from(signature.len()).unwrap().to_be_bytes());
-        encoded.extend(signature);
-        let signed = DigitallySignedStruct::read_bytes(&encoded).unwrap();
-        let certificate = CertificateDer::from(DEVICE_KEY.certificate());
-
-        // The same in TLS 1.2, which OmniBuild doesn't offer.
-        for verify in [
-            AnyDevice::verify_tls12_signature,
-            AnyDevice::verify_tls13_signature,
-        ] {
-            assert!(verify(&device, b"handshake", &certificate, &signed).is_ok());
-            assert!(verify(&device, b"forged", &certificate, &signed).is_err());
-        }
     }
 }

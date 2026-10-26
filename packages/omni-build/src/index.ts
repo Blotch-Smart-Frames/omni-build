@@ -180,6 +180,17 @@ export interface AuthorizingEvent {
 }
 
 /**
+ * An iPhone or iPad asks its user whether to trust this computer, and
+ * OmniBuild waits for the answer: a tool should show the message.
+ */
+export interface TrustingEvent {
+  event: 'trusting';
+  /** The device's name and UDID. */
+  device: string;
+  message: string;
+}
+
+/**
  * `repackage` found a native module among the app's dependencies, or theirs,
  * with something for the shell's platform, which it adds to the app.
  */
@@ -206,9 +217,12 @@ export interface RepackagedEvent {
 export interface InstalledEvent {
   event: 'installed';
   app: string;
-  /** The device's name, as `--device` takes it. */
+  /** The device's name, as `--device` takes it: an iPhone's UDID. */
   device: string;
-  /** The device's model, as its user knows it, if it says. */
+  /**
+   * The device's model, as its user knows it, or an iPhone's own name, if it
+   * says.
+   */
   model?: string;
   message: string;
 }
@@ -263,6 +277,7 @@ export type OmniBuildEvent =
   | ProcessingEvent
   | UploadWarningEvent
   | AuthorizingEvent
+  | TrustingEvent
   | ModuleFoundEvent
   | RepackagedEvent
   | InstalledEvent

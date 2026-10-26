@@ -423,7 +423,7 @@ pub fn attribute(name: &Name, oid: ObjectIdentifier) -> Option<String> {
 }
 
 /// A new RSA key.
-fn new_key() -> RsaPrivateKey {
+pub fn new_key() -> RsaPrivateKey {
     RsaPrivateKey::new(&mut OsRng, KEY_BITS).expect("the system's random source works")
 }
 
