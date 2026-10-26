@@ -11,9 +11,11 @@ mod icon;
 mod ios;
 mod key;
 mod keystore;
+mod mobile_device;
 mod modules;
 mod payload;
 mod report;
+mod tls;
 mod zip;
 
 use std::fs;
@@ -44,6 +46,10 @@ const KEY_PASSWORD: &str = "OMNI_BUILD_KEY_PASSWORD";
 const APP_STORE_CONNECT_URL: &str = "OMNI_BUILD_APP_STORE_CONNECT_URL";
 /// Where Google Play's API is, if not at Google, for the same tests.
 const GOOGLE_PLAY_URL: &str = "OMNI_BUILD_GOOGLE_PLAY_URL";
+/// Where the usbmux daemon listens, if not where the system's does, as
+/// libusbmuxd reads it: an address and port, or a socket's path. The CLI's
+/// tests point it at one of their own.
+const USBMUXD_SOCKET_ADDRESS: &str = "USBMUXD_SOCKET_ADDRESS";
 
 /// Build, sign, install and ship iOS and Android apps with no native toolchain.
 #[derive(Debug, Parser)]
@@ -201,19 +207,24 @@ struct ApiKeyArgs {
     issuer: Option<String>,
 }
 
-/// Install an APK on an Android device or emulator, over ADB, with no
-/// Android SDK.
+/// Install an app on a device: an APK on an Android device or emulator,
+/// over ADB, with no Android SDK, or an iOS app on an iPhone or iPad, with
+/// no Xcode, through the usbmux daemon the system runs for them. An iPhone
+/// asks its user to trust this computer the first time.
 #[derive(Debug, Args)]
 struct Install {
-    /// The app: an APK. Google Play makes the APKs a device installs from
-    /// an app bundle (AAB).
+    /// The app: an APK, or an iOS app built for devices (an `.ipa`), signed
+    /// with a provisioning profile that lists the device. Google Play makes
+    /// the APKs a device installs from an app bundle (AAB).
     app: PathBuf,
     /// The device to install on: a phone plugged in by USB, by its serial
     /// number, as `adb devices` shows it, an emulator, by its name
     /// (`emulator-5554`), or a device on the network, by its address and
     /// port (`192.168.1.20:5555`): with wireless debugging, the IP address
-    /// and port it shows there, once paired with `omni pair`. Without it,
-    /// the one phone plugged in or emulator running on this computer.
+    /// and port it shows there, once paired with `omni pair`. An iPhone or
+    /// iPad, by its UDID. Without it, the one phone plugged in or emulator
+    /// running on this computer, or for an iOS app, the one iPhone or iPad
+    /// plugged in, or else the one on Wi-Fi.
     #[arg(long, short)]
     device: Option<String>,
 }
@@ -573,12 +584,16 @@ fn upload_to_app_store_connect(
 fn install(args: &Install, reporter: &Reporter) -> Result<()> {
     let path = args.app.display();
     let app = fs::read(&args.app).with_context(|| format!("couldn't read the app {path}"))?;
-    match zip::read(&app).ok().as_deref().and_then(android::layout) {
+    let entries = zip::read(&app).unwrap_or_default();
+    if let Some(bundle) = ios::bundle(&entries) {
+        return install_on_iphone(args, &app, &bundle, reporter);
+    }
+    match android::layout(&entries) {
         Some(layout) if !layout.bundle => {}
         Some(_) => bail!(
             "{path} is an app bundle (AAB), which is for Google Play: it makes the APKs a device installs from it. Repackage an APK shell to install the app on a device"
         ),
-        None => bail!("{path} isn't an APK"),
+        None => bail!("{path} isn't an APK, or an iOS app built for devices (an .ipa)"),
     }
     let key = adb_key(reporter)?;
     let mut device = adb::Device::connect(
@@ -593,6 +608,40 @@ fn install(args: &Install, reporter: &Reporter) -> Result<()> {
         app: path.to_string(),
         device: device.serial().to_owned(),
         model: device.model().map(str::to_owned),
+    });
+    Ok(())
+}
+
+/// Installs `app`, the iOS app whose bundle is the folder `bundle` in it,
+/// on an iPhone or iPad.
+fn install_on_iphone(args: &Install, app: &[u8], bundle: &str, reporter: &Reporter) -> Result<()> {
+    let path = args.app.display();
+    if !bundle.starts_with("Payload/") {
+        bail!(
+            "{path} is a zipped .app, built for the Simulator: an iPhone or iPad installs an app built for devices, an .ipa"
+        );
+    }
+    let address = std::env::var(USBMUXD_SOCKET_ADDRESS).ok();
+    let usbmux = mobile_device::Usbmux::new(
+        mobile_device::Address::new(address.as_deref()),
+        mobile_device::TIMEOUT,
+    );
+    let trusting = |device: &str| {
+        reporter.report(&Event::Trusting {
+            device: device.to_owned(),
+        });
+    };
+    let mut device = mobile_device::Device::connect(
+        usbmux,
+        args.device.as_deref(),
+        &trusting,
+        &mobile_device::PATIENCE,
+    )?;
+    device.install(app)?;
+    reporter.report(&Event::Installed {
+        app: path.to_string(),
+        device: device.udid().to_owned(),
+        model: device.name().map(str::to_owned),
     });
     Ok(())
 }

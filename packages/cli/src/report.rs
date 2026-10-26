@@ -85,6 +85,12 @@ pub enum Event {
     /// The device asks its user whether to allow this computer, and
     /// OmniBuild waits for the answer.
     Authorizing { device: String },
+    /// An iPhone or iPad asks its user whether to trust this computer, and
+    /// OmniBuild waits for the answer.
+    Trusting {
+        /// The device's name and UDID.
+        device: String,
+    },
     /// `repackage` found a native module among the app's dependencies, or
     /// theirs, with something for the shell's platform, which it adds to
     /// the app.
@@ -296,6 +302,9 @@ impl Event {
             }
             Self::Authorizing { device } => format!(
                 "{device} asks whether to allow debugging from this computer. Allow it on the device."
+            ),
+            Self::Trusting { device } => format!(
+                "{device} asks whether to trust this computer. Tap Trust on it, and enter its passcode."
             ),
             Self::ModuleFound { name, version } => {
                 format!("Found the native module {name} {version} among the app's dependencies")
@@ -702,6 +711,15 @@ mod tests {
             }),
             Line::Stderr(
                 "192.168.1.20:5555 asks whether to allow debugging from this computer. Allow it on the device."
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            people.line(&Event::Trusting {
+                device: "Jane's iPhone (00008030-001A2B3C4D5E6F7A)".to_owned()
+            }),
+            Line::Stderr(
+                "Jane's iPhone (00008030-001A2B3C4D5E6F7A) asks whether to trust this computer. Tap Trust on it, and enter its passcode."
                     .to_owned()
             )
         );
