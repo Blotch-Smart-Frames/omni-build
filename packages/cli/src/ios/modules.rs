@@ -590,7 +590,8 @@ pub mod tests {
                     couldnt(&format!(
                         "couldn't read the framework {}: ",
                         xcframework
-                            .join("ios-arm64_x86_64-simulator/Haptics.framework")
+                            .join("ios-arm64_x86_64-simulator")
+                            .join("Haptics.framework")
                             .display()
                     )),
                 ),

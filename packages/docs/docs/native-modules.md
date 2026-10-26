@@ -83,7 +83,7 @@ Not yet: Android resources and manifest entries other than permissions, such as 
 
 ### Building one
 
-A module's iOS code is a framework target, built as a dynamic framework for devices and for the Simulator, then put together with `xcodebuild -create-xcframework`. Its Android code is a library module's classes, compiled by Gradle, then by d8 into DEX without the libraries it uses, for the shell's oldest Android (`--min-api`). A workflow that builds both, as the [Shell workflow](./shells.md) builds shells, is to come.
+A module's iOS code is a framework target, built as a dynamic framework for devices and for the Simulator, then put together with `xcodebuild -create-xcframework -allow-internal-distribution`: nothing compiles against a module's framework, so it needs no Swift interface, which `-create-xcframework` otherwise asks for. Its Android code is a library module's classes, compiled by Gradle, then by d8 into DEX without the libraries it uses, for the shell's oldest Android (`--min-api`). A workflow that builds both, as the [Shell workflow](./shells.md) builds shells, is to come.
 
 A module's classes have to be ones the shell finds by name: on iOS, give a Swift class an Objective-C name, `@objc(Haptics)`, which `NSClassFromString("Haptics")` finds, and on Android keep its name from R8. What a class has to do to be registered is the shell's runtime's business.
 
