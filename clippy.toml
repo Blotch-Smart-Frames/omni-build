@@ -1,3 +1,10 @@
 # Words clippy's doc_markdown lint would otherwise want in backticks as code.
 # ".." keeps clippy's own list (GitHub, macOS, ...).
-doc-valid-idents = ["OmniBuild", "AndroidX", "FileProvider", "BoringSSL", ".."]
+doc-valid-idents = [
+  "OmniBuild",
+  "AndroidX",
+  "FileProvider",
+  "BoringSSL",
+  "TestFlight",
+  "..",
+]

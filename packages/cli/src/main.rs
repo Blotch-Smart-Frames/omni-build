@@ -30,7 +30,7 @@ use google_play::ServiceAccount;
 use ios::{Distribution, Provisioner};
 use key::{SigningKey, debug_key_path, display_name};
 use modules::Module;
-use report::{Event, Format, KeyKind, Platform, Reporter, Store};
+use report::{Event, Format, KeyKind, Platform, Reporter, Store, UploadedApp};
 use x509_cert::name::Name;
 
 /// How the error for a file that's none of the shells OmniBuild knows
@@ -145,11 +145,15 @@ struct Provision {
 }
 
 /// Upload an app to its store, for its testers: an Android app bundle (AAB)
-/// to Google Play, released to a track, as a Google Cloud service account.
+/// to Google Play, released to a track, as a Google Cloud service account,
+/// or an iOS app to App Store Connect, for TestFlight, with an App Store
+/// Connect API key. OmniBuild waits while App Store Connect checks the app,
+/// which takes a few minutes, and says whether it took it.
 #[derive(Debug, Args)]
 struct Upload {
     /// The app: an Android app bundle (AAB), signed with the app's upload
-    /// key, as `repackage --signing-key` writes one.
+    /// key, or an iOS app built for devices (an `.ipa`), signed with an App
+    /// Store provisioning profile, as `repackage --signing-key` writes them.
     app: PathBuf,
     /// The key of the Google Cloud service account to upload as: the JSON
     /// file Google Cloud creates for it. The Play Console has to have
@@ -166,6 +170,19 @@ struct Upload {
     /// Play takes only drafts of a draft app, one it hasn't published yet.
     #[arg(long)]
     draft: bool,
+    /// For an iOS app: the App Store Connect API key to upload with, as
+    /// `provision` takes one, with a role that may upload builds, such as
+    /// App Manager. Its file, as App Store Connect gives it:
+    /// `AuthKey_<key ID>.p8`.
+    #[arg(long, value_name = "FILE")]
+    api_key: Option<PathBuf>,
+    /// The API key's ID, if its file isn't named by it.
+    #[arg(long, value_name = "ID", requires = "api_key")]
+    api_key_id: Option<String>,
+    /// The issuer ID, which App Store Connect shows above a team's keys,
+    /// for a team key. An individual key has none.
+    #[arg(long, value_name = "ISSUER", requires = "api_key")]
+    api_issuer: Option<String>,
 }
 
 /// An App Store Connect API key, which an account's Admin creates in App
@@ -480,12 +497,17 @@ fn upload(args: &Upload, reporter: &Reporter) -> Result<()> {
     let path = args.app.display();
     let app = fs::read(&args.app).with_context(|| format!("couldn't read the app {path}"))?;
     let entries = zip::read(&app).unwrap_or_default();
+    if let Some(bundle) = ios::bundle(&entries) {
+        return upload_to_app_store_connect(args, &app, &entries, &bundle, reporter);
+    }
     let layout = match android::layout(&entries) {
         Some(layout) if layout.bundle => layout,
         Some(_) => bail!(
             "{path} is an APK, and Google Play takes app bundles (AAB), from which it makes the APKs each device installs: repackage an AAB shell to upload the app"
         ),
-        None => bail!("{path} isn't an app bundle (AAB)"),
+        None => {
+            bail!("{path} isn't an app bundle (AAB), or an iOS app built for devices (an .ipa)")
+        }
     };
     let identity = android::identity(&entries, layout)?;
     let account = args.service_account.as_deref().context(
@@ -500,7 +522,7 @@ fn upload(args: &Upload, reporter: &Reporter) -> Result<()> {
         &args.track,
         args.draft,
     )?;
-    reporter.report(&Event::Uploaded {
+    reporter.report(&Event::Uploaded(UploadedApp {
         app: path.to_string(),
         id: identity.id,
         version: identity.version,
@@ -509,7 +531,42 @@ fn upload(args: &Upload, reporter: &Reporter) -> Result<()> {
             track: args.track.clone(),
             draft: args.draft,
         },
-    });
+    }));
+    Ok(())
+}
+
+/// Uploads `app`, the iOS app in `entries`, in the folder `bundle`, to App
+/// Store Connect.
+fn upload_to_app_store_connect(
+    args: &Upload,
+    app: &[u8],
+    entries: &[zip::Entry],
+    bundle: &str,
+    reporter: &Reporter,
+) -> Result<()> {
+    let release = ios::release(entries, bundle)?;
+    let file = args.api_key.as_deref().context(
+        "an upload to App Store Connect needs an API key: give it with --api-key, and a team key's issuer ID with --api-issuer",
+    )?;
+    let key = ApiKey::read(file, args.api_key_id.as_deref(), args.api_issuer.as_deref())?;
+    let url = std::env::var(APP_STORE_CONNECT_URL);
+    let url = url.as_deref().unwrap_or(app_store_connect::URL);
+    // App Store Connect shows the upload by its file's name.
+    let name = args.app.file_name().unwrap_or_default().to_string_lossy();
+    ios::Uploader {
+        client: &Client::new(key, url),
+        report: &|event| reporter.report(&event),
+        poll: ios::POLL,
+        patience: ios::PATIENCE,
+    }
+    .upload(&name, app, &release)?;
+    reporter.report(&Event::Uploaded(UploadedApp {
+        app: args.app.display().to_string(),
+        id: release.id,
+        version: Some(release.version),
+        build: release.build,
+        store: Store::AppStoreConnect,
+    }));
     Ok(())
 }
 
