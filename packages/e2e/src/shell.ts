@@ -44,31 +44,52 @@ export const GRADLE_PROJECTS: Record<ShellName, string> = {
 };
 
 /**
- * The native module the tests add to the fixture's apps, as an app gets one
- * from npm: a Swift framework and a Kotlin library (`fixtures/module`), which
- * the Module workflow builds as it builds a module's binaries for its
- * author, and a package.json that names them. The fixture shells register
- * it by name, as their runtime, `omnibuild-e2e@1`, registers a module, and
- * report what it says.
+ * A native module the tests add to an app, as an app gets one from npm: a
+ * Swift framework and a Kotlin library (`fixtures/module`,
+ * `fixtures/web-module`), which the Module workflow builds as it builds a
+ * module's binaries for its author, and a package.json that names them.
  */
-export const MODULE = {
-  name: 'OmniBuildModule',
-  /** The package npm would install it as, which `app/package.json` names. */
-  packageName: 'omnibuild-e2e-module',
+export interface Module {
+  /** Its framework's, and so the Module workflow's artifact's. */
+  name: string;
+  /** The package npm would install it as, which the app's package.json names. */
+  packageName: string;
+  packageJson: string;
+  xcodeProject: string;
+  gradleProject: string;
+  /** Its Android library module, in the Gradle project. */
+  library: string;
+}
+
+const module = (folder: string, name: string, packageName: string): Module => ({
+  name,
+  packageName,
   packageJson: fileURLToPath(
-    new URL('../fixtures/module/package.json', import.meta.url),
+    new URL(`../fixtures/${folder}/package.json`, import.meta.url),
   ),
   xcodeProject: fileURLToPath(
-    new URL(
-      '../fixtures/module/ios/OmniBuildModule.xcodeproj',
-      import.meta.url,
-    ),
+    new URL(`../fixtures/${folder}/ios/${name}.xcodeproj`, import.meta.url),
   ),
   gradleProject: fileURLToPath(
-    new URL('../fixtures/module/android/', import.meta.url),
+    new URL(`../fixtures/${folder}/android/`, import.meta.url),
   ),
-  /** Its Android library module, in the Gradle project. */
   library: 'module',
+});
+
+/**
+ * The native module each shell's app gets, built for the shell's runtime.
+ * The fixture registers its module by name, as its runtime, `omnibuild-e2e@1`,
+ * registers one, and reports what it says. The WebView shell gives the web
+ * app's page its module, `Echo`, through `window.omniBuild`, as its runtime,
+ * `webview@1`, has them, and the page reports what it answers.
+ */
+export const MODULES: Record<ShellName, Module> = {
+  OmniBuildShell: module('module', 'OmniBuildModule', 'omnibuild-e2e-module'),
+  WebViewShell: module(
+    'web-module',
+    'OmniBuildWebModule',
+    'omnibuild-e2e-web-module',
+  ),
 };
 
 /**

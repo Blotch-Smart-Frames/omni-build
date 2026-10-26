@@ -132,7 +132,7 @@ describe('build', () => {
       ...artifacts,
       buildDir: 'build',
       outDir: 'out',
-      moduleDir: 'module',
+      modulesDir: 'modules',
     });
 
     const building = (project: string, name: string) => [
@@ -155,16 +155,22 @@ describe('build', () => {
       'out/WebViewShell-release.apk',
       'out/WebViewShell-release.aab',
     ]);
-    expect(buildAndroidModule).toHaveBeenCalledWith({
-      project: fileURLToPath(
-        new URL('../fixtures/module/android/', import.meta.url),
-      ),
-      library: 'module',
-      out: 'module',
-      work: path.join('build', 'android', 'OmniBuildModule'),
-      env: expect.objectContaining({ ANDROID_HOME: '/sdk' }),
-      log: 'commands.log',
-    });
+    const module = (folder: string, name: string) => [
+      {
+        project: fileURLToPath(
+          new URL(`../fixtures/${folder}/android/`, import.meta.url),
+        ),
+        library: 'module',
+        out: path.join('modules', name),
+        work: path.join('build', 'android', name),
+        env: expect.objectContaining({ ANDROID_HOME: '/sdk' }),
+        log: 'commands.log',
+      },
+    ];
+    expect(vi.mocked(buildAndroidModule).mock.calls).toEqual([
+      module('module', 'OmniBuildModule'),
+      module('web-module', 'OmniBuildWebModule'),
+    ]);
   });
 });
 
@@ -174,7 +180,7 @@ describe('the Android SDK', () => {
       ...artifacts,
       buildDir: 'build',
       outDir: 'out',
-      moduleDir: 'module',
+      modulesDir: 'modules',
     });
     return vi.mocked(buildAndroid).mock.calls[0][0].env?.ANDROID_HOME;
   };

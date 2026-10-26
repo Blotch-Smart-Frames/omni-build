@@ -7,7 +7,7 @@ description: Add native code to an app with npm install, as prebuilt binaries Om
 
 :::warning[Phase 4]
 
-`omni repackage` adds native modules to apps, and the [Module workflow](#building-one) builds them, but no shell OmniBuild ships registers them yet: the WebView shell will. Until then, a shell has to register them itself, as [below](#shells-that-take-native-modules). The end-to-end tests' shell does, and runs a module on the iOS Simulator and Android emulators.
+`omni repackage` adds native modules to apps, the [Module workflow](#building-one) builds them, and the [WebView shell](./webview-shell.md#native-modules) gives a web app's page those built for it. The end-to-end tests run a module in the WebView shell and in a shell of their own on the iOS Simulator and Android emulators, but no module has run on a phone yet.
 
 :::
 

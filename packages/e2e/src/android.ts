@@ -18,7 +18,7 @@ import { type RunOptions, type RunResult, poll, run } from './process.ts';
 import { OPEN_URL, omniBuild, toolchainFree } from './repackage.ts';
 import { buildAndroid } from '../../shells/src/android.ts';
 import { buildAndroidModule } from '../../shells/src/module-android.ts';
-import { GRADLE_PROJECTS, MODULE, SHELLS, type ShellName } from './shell.ts';
+import { GRADLE_PROJECTS, MODULES, SHELLS, type ShellName } from './shell.ts';
 
 const BUILD_DIR = fileURLToPath(new URL('../build/', import.meta.url));
 /**
@@ -321,13 +321,14 @@ const verify: Platform['verify'] = async ({ app, artifactsDir, log }) => {
 
 /**
  * Builds each shell's release APK and app bundle with Gradle, as the Shell
- * workflow does in CI (packages/shells), and returns their paths. Then the
- * native module's DEX and native libraries, as the Module workflow does.
+ * workflow does in CI (packages/shells), and returns their paths. Then each
+ * shell's native module's DEX and native libraries, as the Module workflow
+ * does, in a folder of its own in `modulesDir`.
  */
 const build: Platform['build'] = async ({
   buildDir,
   outDir,
-  moduleDir,
+  modulesDir,
   log,
 }) => {
   const env = { ...process.env, ANDROID_HOME: androidSdk() };
@@ -344,14 +345,17 @@ const build: Platform['build'] = async ({
       })),
     );
   }
-  await buildAndroidModule({
-    project: MODULE.gradleProject,
-    library: MODULE.library,
-    out: moduleDir,
-    work: path.join(buildDir, 'android', MODULE.name),
-    env,
-    log,
-  });
+  for (const shell of SHELLS) {
+    const module = MODULES[shell];
+    await buildAndroidModule({
+      project: module.gradleProject,
+      library: module.library,
+      out: path.join(modulesDir, module.name),
+      work: path.join(buildDir, 'android', module.name),
+      env,
+      log,
+    });
+  }
   return shells;
 };
 

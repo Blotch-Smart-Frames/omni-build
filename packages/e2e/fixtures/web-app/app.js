@@ -19,8 +19,13 @@
   }
 
   // On screen, for the harness's screenshot, and on the console, where the
-  // harness reads it.
+  // harness reads it, once the file and the native module have answered.
+  var waiting = 2;
   var send = function () {
+    waiting -= 1;
+    if (waiting > 0) {
+      return;
+    }
     var shown = document.getElementById('report');
     shown.textContent = JSON.stringify(report, null, 2);
     console.log(JSON.stringify(report));
@@ -40,4 +45,29 @@
   };
   request.open('GET', 'message.txt');
   request.send();
+
+  // The native module the app has, Echo, called as a web app calls one:
+  // through window.omniBuild, which the shell gives each page of the
+  // payload. What it answers, then how a method it hasn't fails.
+  if (!window.omniBuild) {
+    report.modules = 'no window.omniBuild';
+    send();
+    return;
+  }
+  report.modules = window.omniBuild.modules.join(', ');
+  window.omniBuild
+    .call('Echo', 'echo', { text: 'hello' })
+    .then(function (answer) {
+      report.module = JSON.stringify(answer);
+      return window.omniBuild.call('Echo', 'shout');
+    })
+    .then(
+      function () {
+        report.moduleError = 'none';
+      },
+      function (error) {
+        report.moduleError = error.message;
+      }
+    )
+    .then(send);
 })();

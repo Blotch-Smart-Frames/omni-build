@@ -16,7 +16,7 @@ import type { Artifacts, Platform } from './run.ts';
 import { type RunOptions, poll, run } from './process.ts';
 import { buildIos } from '../../shells/src/ios.ts';
 import { buildIosModule } from '../../shells/src/module-ios.ts';
-import { MODULE, SHELLS, type ShellName, XCODE_PROJECTS } from './shell.ts';
+import { MODULES, SHELLS, type ShellName, XCODE_PROJECTS } from './shell.ts';
 
 /** The simulator the tests create and reuse, so a developer's own stay untouched. */
 const DEVICE_NAME = 'OmniBuild E2E';
@@ -49,13 +49,14 @@ interface SimctlList {
 /**
  * Builds each shell's release variants with Xcode, as the Shell workflow
  * does in CI (packages/shells): an app for the simulator, zipped, and one for
- * devices, an .ipa, unsigned. Returns their paths. Then the native module's
- * .xcframework, as the Module workflow does.
+ * devices, an .ipa, unsigned. Returns their paths. Then each shell's native
+ * module's .xcframework, as the Module workflow does, in a folder of its own
+ * in `modulesDir`.
  */
 const build: Platform['build'] = async ({
   buildDir,
   outDir,
-  moduleDir,
+  modulesDir,
   log,
 }) => {
   const shells: string[] = [];
@@ -71,13 +72,16 @@ const build: Platform['build'] = async ({
       })),
     );
   }
-  await buildIosModule({
-    project: MODULE.xcodeProject,
-    name: MODULE.name,
-    out: moduleDir,
-    work: path.join(buildDir, 'ios', MODULE.name),
-    log,
-  });
+  for (const shell of SHELLS) {
+    const module = MODULES[shell];
+    await buildIosModule({
+      project: module.xcodeProject,
+      name: module.name,
+      out: path.join(modulesDir, module.name),
+      work: path.join(buildDir, 'ios', module.name),
+      log,
+    });
+  }
   return shells;
 };
 
@@ -174,6 +178,7 @@ const verify: Platform['verify'] = ({ app, shell, log }) =>
           version: info.CFBundleShortVersionString,
           build: info.CFBundleVersion,
           message: readFileSync(path.join(bundle, 'message.txt'), 'utf8'),
+          modules: ((info.OmniBuildModules ?? []) as string[]).join(', '),
           applicationIdentifier: claimed(
             await entitlements(bundle),
             'application-identifier',

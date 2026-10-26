@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "The E2E web app's dependencies, which webview.json's packageJson names: the native module in fixtures/web-module, which the repackage stage installs in the node_modules beside app.json, where npm would hoist it",
+  "dependencies": {
+    "omnibuild-e2e-web-module": "1.0.0"
+  }
+}

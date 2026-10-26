@@ -421,15 +421,24 @@ jobs:
       omni-artifact: omni-build-x86_64-unknown-linux-musl
       retention-days: 7
 
-  # The native module the E2E tests add to the fixture's apps, built with the
+  # The native modules the E2E tests add to each shell's apps, built with the
   # Module workflow, as a module's author builds one, with the Xcode the
   # shells are built with: a module is built against its shell's runtime.
   module:
+    name: module (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: OmniBuildModule
+            folder: packages/e2e/fixtures/module
+          - name: OmniBuildWebModule
+            folder: packages/e2e/fixtures/web-module
     uses: ./.github/workflows/module.yml
     with:
-      name: OmniBuildModule
-      xcode-project: packages/e2e/fixtures/module/ios/OmniBuildModule.xcodeproj
-      gradle-project: packages/e2e/fixtures/module/android
+      name: ${{ matrix.name }}
+      xcode-project: ${{ matrix.folder }}/ios/${{ matrix.name }}.xcodeproj
+      gradle-project: ${{ matrix.folder }}/android
       gradle-library: module
       developer-dir: /Applications/Xcode_26.6.app/Contents/Developer
       retention-days: 7
@@ -480,12 +489,17 @@ jobs:
         with:
           name: shell-WebViewShell
           path: e2e/shells
+      # Each in a folder of its name, as --modules takes them.
       - uses: actions/download-artifact@v8
         with:
           name: module-OmniBuildModule
-          path: e2e/module
-      - run: node packages/e2e/src/cli.ts repackage --platform ios --shell e2e/shells/OmniBuildShell-release-simulator.zip --shell e2e/shells/OmniBuildShell-release.ipa --shell e2e/shells/WebViewShell-release-simulator.zip --shell e2e/shells/WebViewShell-release.ipa --module e2e/module --out e2e/repackaged
-      - run: node packages/e2e/src/cli.ts repackage --platform android --shell e2e/shells/OmniBuildShell-release.apk --shell e2e/shells/OmniBuildShell-release.aab --shell e2e/shells/WebViewShell-release.apk --shell e2e/shells/WebViewShell-release.aab --module e2e/module --out e2e/repackaged
+          path: e2e/modules/OmniBuildModule
+      - uses: actions/download-artifact@v8
+        with:
+          name: module-OmniBuildWebModule
+          path: e2e/modules/OmniBuildWebModule
+      - run: node packages/e2e/src/cli.ts repackage --platform ios --shell e2e/shells/OmniBuildShell-release-simulator.zip --shell e2e/shells/OmniBuildShell-release.ipa --shell e2e/shells/WebViewShell-release-simulator.zip --shell e2e/shells/WebViewShell-release.ipa --modules e2e/modules --out e2e/repackaged
+      - run: node packages/e2e/src/cli.ts repackage --platform android --shell e2e/shells/OmniBuildShell-release.apk --shell e2e/shells/OmniBuildShell-release.aab --shell e2e/shells/WebViewShell-release.apk --shell e2e/shells/WebViewShell-release.aab --modules e2e/modules --out e2e/repackaged
       - uses: actions/upload-artifact@v7
         with:
           name: e2e-repackaged-${{ matrix.os }}

@@ -30,6 +30,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- The runtime the shell registers native modules of, which a
+             module has to be built for: OmniBuild refuses one built for
+             another, and adds the rest to the app's code, listing them in
+             dev.omnibuild.modules for NativeModules to make. -->
+        <meta-data
+            android:name="dev.omnibuild.runtime"
+            android:value="webview@1" />
     </application>
 
 </manifest>

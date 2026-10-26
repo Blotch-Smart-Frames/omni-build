@@ -2,9 +2,9 @@
 
 The app shells OmniBuild ships: native apps that keep nothing about an app in their Swift or Kotlin code, so `omni repackage` makes any number of apps from one build, with no compiler. Each is a Swift project, as Xcode's iOS App template makes one, and a Kotlin project, as Android Studio's Empty Views Activity template makes one.
 
-| Shell                | What it runs                                                                                                                              |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| [`webview`](webview) | A web app: the payload's `index.html` and the files beside it, in a WebView that fills the screen ([docs](../docs/docs/webview-shell.md)) |
+| Shell                | What it runs                                                                                                                                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`webview`](webview) | A web app: the payload's `index.html` and the files beside it, in a WebView that fills the screen, whose pages call native modules built for `webview@1` ([docs](../docs/docs/webview-shell.md)) |
 
 Xcode and Gradle build them in OmniBuild's CI, never on a user's machine. Each release of OmniBuild has the WebView shell's variants and their manifest beside its archives, as the Shell workflow built and checked them. The same tool builds native modules' binaries for their authors, with the Module workflow.
 
