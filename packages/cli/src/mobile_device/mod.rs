@@ -458,8 +458,9 @@ pub mod tests {
             serve_afc(stream, &files, refused);
         } else {
             let answers = phone.lock().unwrap().installed.clone();
-            let request = serve_installer(stream, &answers);
-            phone.lock().unwrap().requests.push(request);
+            serve_installer(stream, &answers, &mut |request| {
+                phone.lock().unwrap().requests.push(request);
+            });
         }
     }
 

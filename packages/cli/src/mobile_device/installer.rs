@@ -45,20 +45,30 @@ pub mod tests {
     use crate::mobile_device::tests::{read_plist, write_plist};
     use crate::mobile_device::usbmux::tests::dictionary;
 
-    /// Answers an install request on `stream` as a device does, with
-    /// `answers`, and returns the request.
-    pub fn serve_installer(mut stream: impl Read + Write, answers: &[Dictionary]) -> Dictionary {
-        let request = read_plist(&mut stream);
+    /// Answers an install request on `stream` as a device does: hands it
+    /// to `received` first, before the computer can hear it's done, then
+    /// answers with `answers`.
+    pub fn serve_installer(
+        mut stream: impl Read + Write,
+        answers: &[Dictionary],
+        received: &mut dyn FnMut(Dictionary),
+    ) {
+        received(read_plist(&mut stream));
         for answer in answers {
             write_plist(&mut stream, answer);
         }
-        request
     }
 
     fn installing(answers: Vec<Dictionary>) -> (anyhow::Result<()>, Dictionary) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
-        let device = thread::spawn(move || serve_installer(listener.accept().unwrap().0, &answers));
+        let device = thread::spawn(move || {
+            let mut request = Dictionary::new();
+            serve_installer(listener.accept().unwrap().0, &answers, &mut |read| {
+                request = read;
+            });
+            request
+        });
         let result = install(
             Box::new(TcpStream::connect(address).unwrap()),
             "PublicStaging/app.ipa",
